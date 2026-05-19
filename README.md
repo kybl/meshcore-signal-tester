@@ -1,81 +1,80 @@
 # MeshCore RX Monitor
 
-Webová aplikace pro monitorování RX logů z MeshCore mesh sítě přes Bluetooth.
+Web application for monitoring RX logs from a MeshCore mesh network via Bluetooth.
 
-## ✨ Funkce
+## Features
 
-- **Bluetooth připojení**: Připojí se k MeshCore companion přes Web Bluetooth API
-- **Dekódování paketů**: Používá knihovnu `@michaelhart/meshcore-decoder` pro dekódování MeshCore paketů
-- **Vizualizace**: Každý zachycený hash zprávy je zobrazen jako boxík s historií repeaterů
-- **Automatické čištění**: Staré boxíky (starší než 5 minut) automaticky mizí
-- **Real-time statistiky**: Sledování počtu aktivních hashů, celkových RX a počtu repeaterů
+- **Bluetooth connection**: Connects to a MeshCore companion device via Web Bluetooth API
+- **Packet decoding**: Uses the `@michaelhart/meshcore-decoder` library to decode MeshCore packets
+- **Visualization**: Each captured message hash is displayed as a card with repeater history
+- **Auto-cleanup**: Old cards (older than 5 minutes) disappear automatically
+- **Real-time statistics**: Tracks active hash count, total RX count, and repeater count
 
-## 🚀 Jak používat
+## How to use
 
-1. Otevřete `index.html` ve webovém prohlížeči (Chrome, Edge nebo Opera)
-   - **Důležité**: Web Bluetooth API vyžaduje HTTPS nebo localhost
-   
-2. Klikněte na tlačítko "Připojit Bluetooth"
+1. Open `index.html` in a web browser (Chrome, Edge, or Opera)
+   - **Important**: Web Bluetooth API requires HTTPS or localhost
 
-3. Vyberte své MeshCore zařízení ze seznamu
+2. Click the "Connect Bluetooth" button
 
-4. Aplikace automaticky začne sledovat RX logy a zobrazovat boxíky pro každý hash
+3. Select your MeshCore device from the list
 
-## 📦 Struktura aplikace
+4. The app will automatically start monitoring RX logs and displaying cards for each hash
 
-- `index.html` - Hlavní HTML stránka
-- `style.css` - Styly aplikace
-- `app.js` - JavaScript logika s MeshCore dekodérem
+## Application structure
 
-## 🔧 Technické detaily
+- `index.html` - Main HTML page
+- `style.css` - Application styles
+- `app.js` - JavaScript logic with MeshCore decoder
 
-### Bluetooth komunikace
+## Technical details
 
-Aplikace používá Nordic UART Service (NUS) pro komunikaci:
+### Bluetooth communication
+
+The app uses Nordic UART Service (NUS) for communication:
 - Service UUID: `6e400001-b5a3-f393-e0a9-e50e24dcca9e`
-- TX Characteristic: `6e400003-b5a3-f393-e0a9-e50e24dcca9e` (zařízení → aplikace)
+- TX Characteristic: `6e400003-b5a3-f393-e0a9-e50e24dcca9e` (device → app)
 
-### Dekódování paketů
+### Packet decoding
 
-Aplikace používá knihovnu `@michaelhart/meshcore-decoder` z npm:
-- Automaticky dekóduje binární MeshCore pakety
-- Extrahuje hash zprávy (packet ID)
-- Identifikuje repeatery z routing informací
-- Fallback na text parsing, pokud binární dekódování selže
+The app uses the `@michaelhart/meshcore-decoder` npm library:
+- Automatically decodes binary MeshCore packets
+- Extracts a path-independent message hash (hashed from payload only)
+- Identifies repeaters from routing information
 
-### Zobrazení dat
+### Data display
 
-Pro každý hash zprávy:
-- Zobrazí zkrácený hash
-- Čas prvního zachycení
-- Seznam repeaterů s počítadly
-- Progress bar ukazující zbývající čas životnosti
+For each message hash:
+- Displays a truncated hash
+- Time of first capture
+- List of repeaters with signal strength (RSSI, SNR)
+- Progress bar showing remaining lifetime
 
-### Konfigurace
+### Configuration
 
-Čas životnosti boxíků lze změnit v `app.js`:
+Card lifetime can be changed in `app.js`:
 
 ```javascript
-this.HASH_LIFETIME = 300000; // 5 minut v milisekundách
+this.HASH_LIFETIME = 300000; // 5 minutes in milliseconds
 ```
 
-## 📱 Podporované prohlížeče
+## Supported browsers
 
-Web Bluetooth API je podporováno v:
+Web Bluetooth API is supported in:
 - Google Chrome (desktop & Android)
 - Microsoft Edge
 - Opera
 
-Safari a Firefox bohužel Web Bluetooth nepodporují.
+Safari and Firefox do not support Web Bluetooth.
 
-## 🔐 Bezpečnost
+## Security
 
-- Aplikace vyžaduje HTTPS nebo localhost
-- Bluetooth připojení vyžaduje uživatelský souhlas
-- Žádná data nejsou odesílána na server
+- The app requires HTTPS or localhost
+- Bluetooth connection requires user consent
+- No data is sent to any server
 
-## 📖 Reference
+## References
 
-- [MeshCore Decoder](https://github.com/michaelhart/meshcore-decoder) - TypeScript knihovna pro dekódování paketů
-- [Web Bluetooth API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API) - MDN dokumentace
-- [Nordic UART Service](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/libraries/bluetooth_services/services/nus.html) - NUS specifikace
+- [MeshCore Decoder](https://github.com/michaelhart/meshcore-decoder) - TypeScript library for packet decoding
+- [Web Bluetooth API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API) - MDN documentation
+- [Nordic UART Service](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/libraries/bluetooth_services/services/nus.html) - NUS specification

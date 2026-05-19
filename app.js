@@ -5,13 +5,13 @@ class MeshCoreMonitor {
     constructor() {
         this.device = null;
         this.bleRxCharacteristic = null;
-        this.serialPort = null;
-        this.serialReader = null;
-        this.serialBuffer = new Uint8Array(0);
         this.hashData = new Map();
+        this.allRepeaters = new Map();
+        this.repeaterColumns = []; // sorted by min RSSI ascending
         this.totalRxCount = 0;
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
+        this.audioCtx = null;
 
         this.initUI();
         this.startCleanupTimer();
@@ -21,25 +21,37 @@ class MeshCoreMonitor {
         this.connectBtn = document.getElementById('connectBtn');
         this.serialBtn = document.getElementById('serialBtn');
         this.statusEl = document.getElementById('status');
-        this.hashContainer = document.getElementById('hashContainer');
+        this.msgTableHead = document.getElementById('msgTableHead');
+        this.msgTableBody = document.getElementById('msgTableBody');
         this.emptyState = document.getElementById('emptyState');
         this.activeHashesEl = document.getElementById('activeHashes');
         this.totalRxEl = document.getElementById('totalRx');
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
+        this.repeaterLogBody = document.getElementById('repeaterLogBody');
+        this.soundCheckbox = document.getElementById('soundEnabled');
 
         this.connectBtn.onclick = () => this.connectBluetooth();
-        this.serialBtn.onclick = () => this.connectSerial();
+
+        document.getElementById('msgTableWrap')?.addEventListener('click', e => {
+            const cell = e.target.closest('.msg-type-cell');
+            if (!cell?.dataset.hex) return;
+            navigator.clipboard.writeText(cell.dataset.hex).then(() => {
+                const orig = cell.textContent;
+                cell.textContent = '✓';
+                setTimeout(() => { cell.textContent = orig; }, 1000);
+            });
+        });
     }
 
     async connectBluetooth() {
         if (!navigator.bluetooth) {
-            alert('Web Bluetooth API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
+            alert('Web Bluetooth API is not available.\n\nRequirements:\n• Chrome or Edge browser\n• Page must be served over HTTPS or localhost');
             return;
         }
 
         try {
             this.connectBtn.disabled = true;
-            this.updateStatus('Připojování...', 'disconnected');
+            this.updateStatus('Connecting...', 'disconnected');
 
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
@@ -47,7 +59,7 @@ class MeshCoreMonitor {
                     { namePrefix: 'MeshCore' }
                 ],
                 optionalServices: [
-                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e' // Nordic UART Service
+                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
                 ]
             });
 
@@ -75,79 +87,54 @@ class MeshCoreMonitor {
             await txCharacteristic.startNotifications();
             txCharacteristic.addEventListener('characteristicvaluechanged', (event) => this.handleData(event));
 
-            await this.sendAppStart('ble');
+            await this.sendAppStart();
 
-            this.updateStatus('Připojeno', 'connected');
-            this.connectBtn.textContent = 'Odpojit';
+            this.updateStatus('Connected', 'connected');
+            this.connectBtn.textContent = 'Disconnect';
             this.connectBtn.disabled = false;
             this.connectBtn.onclick = () => this.disconnect();
 
         } catch (error) {
             if (error.name !== 'NotFoundError') {
                 console.error('Bluetooth error:', error);
-                alert('Chyba při připojování: ' + error.message);
+                alert('Connection error: ' + error.message);
             }
-            this.updateStatus('Odpojeno', 'disconnected');
+            this.updateStatus('Disconnected', 'disconnected');
             this.connectBtn.disabled = false;
         }
     }
 
-    async connectSerial() {
-        if (!navigator.serial) {
-            alert('Web Serial API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
-            return;
-        }
-
-        try {
-            this.serialBtn.disabled = true;
-            this.updateStatus('Připojování...', 'disconnected');
-
-            this.serialPort = await navigator.serial.requestPort();
-            await this.serialPort.open({ baudRate: 115200 });
-
-            this.updateStatus('Připojeno (USB)', 'connected');
-            this.serialBtn.textContent = 'Odpojit USB';
-            this.serialBtn.disabled = false;
-            this.serialBtn.onclick = () => this.disconnectSerial();
-
-            await this.sendAppStart('serial');
-            console.log('[serial] APP_START sent');
-            this.readSerialLoop();
-        } catch (error) {
-            if (error.name !== 'NotFoundError') {
-                console.error('Serial error:', error);
-                alert('Chyba při připojování USB: ' + error.message);
-            }
-            this.updateStatus('Odpojeno', 'disconnected');
-            this.serialBtn.disabled = false;
-        }
+    async sendAppStart() {
+        // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
+        const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
+        await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
     }
 
-    async readSerialLoop() {
-        this.serialBuffer = new Uint8Array(0);
-        this.serialReader = this.serialPort.readable.getReader();
-        console.log('[serial] read loop started, waiting for data...');
+    handleData(event) {
+        this.handlePayload(new Uint8Array(event.target.value.buffer));
+    }
+
+    handlePayload(payload) {
+        const pushCode = payload[0];
+        let loraPacket;
+        if (pushCode === 0x88) {
+            loraPacket = payload.slice(3);
+        } else if (pushCode === 0x84) {
+            loraPacket = payload.slice(4);
+        } else {
+            return;
+        }
+        if (loraPacket.length === 0) return;
+
+        const snr  = (payload[1] > 127 ? payload[1] - 256 : payload[1]) / 4;
+        const rssi = payload[2] > 127 ? payload[2] - 256 : payload[2];
 
         try {
-            while (true) {
-                const { value, done } = await this.serialReader.read();
-                if (done) break;
-
-                console.log('[serial] received', value.length, 'bytes');
-                const merged = new Uint8Array(this.serialBuffer.length + value.length);
-                merged.set(this.serialBuffer);
-                merged.set(value, this.serialBuffer.length);
-                this.serialBuffer = merged;
-
-                this.tryDecodeSerialBuffer();
-            }
-        } catch (error) {
-            if (error.name !== 'AbortError') {
-                console.error('Serial read error:', error);
-            }
-        } finally {
-            this.serialReader.releaseLock();
-            this.onSerialDisconnected();
+            const rawHex = this.bufferToHex(loraPacket.buffer);
+            const packet = MeshCoreDecoder.decode(rawHex);
+            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
+        } catch (e) {
+            console.error('Decode error:', e);
         }
     }
 
@@ -250,7 +237,6 @@ class MeshCoreMonitor {
     }
 
     processPacket(packet, rawHex, snr, rssi) {
-        // Hash only from payload (path-independent) so same message via different routes groups together
         const payloadRaw = packet.payload?.raw;
         const hash = payloadRaw ? this.hashPayload(payloadRaw) : packet.messageHash;
         const repeater = this.extractRepeater(packet);
@@ -265,7 +251,7 @@ class MeshCoreMonitor {
     }
 
     hashPayload(str) {
-        // Two independent FNV-1a passes → 16 hex chars, matches official app display format
+        // Two independent FNV-1a passes → 16 hex chars
         let h1 = 0x811c9dc5, h2 = 0xdeadbeef;
         for (let i = 0; i < str.length; i++) {
             const c = str.charCodeAt(i);
@@ -292,111 +278,153 @@ class MeshCoreMonitor {
     addRxEntry(hash, repeater, type, rawHex, snr, rssi) {
         this.totalRxCount++;
         const now = Date.now();
+        const isNewHash = !this.hashData.has(hash);
 
-        if (!this.hashData.has(hash)) {
+        if (isNewHash) {
             this.hashData.set(hash, {
-                repeaters: new Map([[repeater, { count: 1, snr, rssi }]]),
+                repeaters: new Map([[repeater, { snr, rssi }]]),
                 firstSeen: now,
                 lastSeen: now,
                 type,
                 rawHex,
             });
-            this.createHashBox(hash);
         } else {
             const data = this.hashData.get(hash);
             data.lastSeen = now;
-
-            if (data.repeaters.has(repeater)) {
-                const r = data.repeaters.get(repeater);
-                data.repeaters.set(repeater, { count: r.count + 1, snr, rssi });
-            } else {
-                data.repeaters.set(repeater, { count: 1, snr, rssi });
-            }
-
-            this.updateHashBox(hash);
+            data.repeaters.set(repeater, { snr, rssi });
         }
 
+        const existing = this.allRepeaters.get(repeater);
+        this.allRepeaters.set(repeater, {
+            lastSeen: now,
+            count: (existing?.count ?? 0) + 1,
+            lastSnr: snr,
+            lastRssi: rssi,
+        });
+        this.updateRepeaterTable();
+
+        // Manage columns and decide how to update the table
+        const oldOrder = [...this.repeaterColumns];
+        const isNewRepeater = !this.repeaterColumns.includes(repeater);
+        if (isNewRepeater) this.repeaterColumns.push(repeater);
+        this.sortColumns();
+        const orderChanged = isNewRepeater ||
+            this.repeaterColumns.some((id, i) => id !== oldOrder[i]);
+
+        if (orderChanged) {
+            this.renderMsgTable();
+        } else if (isNewHash) {
+            this.insertMsgRow(hash);
+        } else {
+            this.updateMsgCell(hash, repeater, rssi, snr);
+        }
+
+        this.playRxSound(rssi);
         this.updateStats();
         this.emptyState.classList.add('hidden');
     }
 
-    createHashBox(hash) {
-        const data = this.hashData.get(hash);
-        const box = document.createElement('div');
-        box.className = 'hash-box';
-        box.id = `hash-${hash}`;
+    // --- Column management ---
 
-        const lifetimeBar = document.createElement('div');
-        lifetimeBar.className = 'lifetime-bar';
-        lifetimeBar.style.width = '100%';
-
-        box.innerHTML = `
-            <div class="hash-header">
-                <div class="hash-value">${this.truncateHash(hash)}</div>
-                <div class="timestamp">${this.formatTime(data.firstSeen)}</div>
-            </div>
-            ${data.type ? `<div class="msg-type">${data.type}</div>` : ''}
-            <div class="repeaters-label">Repeaters:</div>
-            <div class="repeater-list" id="repeaters-${hash}">
-                ${this.renderRepeaters(data.repeaters)}
-            </div>
-            <div class="raw-hex" title="${data.rawHex}">${data.rawHex}</div>
-        `;
-
-        box.appendChild(lifetimeBar);
-        this.hashContainer.prepend(box);
-        this.animateLifetimeBar(hash, lifetimeBar);
+    sortColumns() {
+        this.repeaterColumns.sort((a, b) => this.getColMinRssi(a) - this.getColMinRssi(b));
     }
 
-    updateHashBox(hash) {
-        const data = this.hashData.get(hash);
-        const repeaterList = document.getElementById(`repeaters-${hash}`);
-        if (repeaterList) {
-            repeaterList.innerHTML = this.renderRepeaters(data.repeaters);
+    getColMinRssi(repeaterId) {
+        let min = null;
+        for (const data of this.hashData.values()) {
+            const r = data.repeaters.get(repeaterId);
+            if (r && (min === null || r.rssi < min)) min = r.rssi;
         }
+        return min ?? 0;
     }
 
-    renderRepeaters(repeatersMap) {
-        return Array.from(repeatersMap.entries())
-            .sort((a, b) => b[1].count - a[1].count)
-            .map(([repeater, { count, snr, rssi }]) => {
-                const snrColor  = snr  <    0 ? '#ffaaaa' : '#3a3';
-                const rssiColor = rssi < -100 ? '#ffaaaa' : '#3a3';
-                return `
-                <div class="repeater-tag">
-                    ${repeater}
-                    ${count > 1 ? `<span class="repeater-count">${count}x</span>` : ''}
-                    <span class="signal-values">
-                        <span style="color:${snrColor}">${snr.toFixed(1)}&thinsp;dB</span>
-                        <span style="color:${rssiColor}">${rssi}&thinsp;dBm</span>
-                    </span>
-                </div>`;
-            }).join('');
+    abbreviateType(type) {
+        if (!type) return '?';
+        return type
+            .replace('GROUP_TEXT', 'GRP')
+            .replace('TRACEROUTE', 'TRC')
+            .replace('BROADCAST', 'BCT')
+            .replace('RESPONSE', 'RSP')
+            .replace('PRIVATE', 'PVT')
+            .replace('REPEATER', 'RPT')
+            .replace('FLOOD', 'FLD')
+            .replace('DIRECT', 'DIR');
     }
 
-    animateLifetimeBar(hash, barElement) {
-        const startTime = Date.now();
-        const updateBar = () => {
-            const data = this.hashData.get(hash);
-            if (!data) return;
+    // --- Table rendering ---
 
-            const elapsed = Date.now() - data.lastSeen;
-            const remaining = Math.max(0, this.HASH_LIFETIME - elapsed);
-            const percentage = (remaining / this.HASH_LIFETIME) * 100;
+    renderMsgTable() {
+        if (!this.msgTableHead || !this.msgTableBody) return;
 
-            barElement.style.width = percentage + '%';
+        this.msgTableHead.innerHTML = `<tr>
+            <th class="msg-col-time">Time</th>
+            <th class="msg-col-type">Type</th>
+            ${this.repeaterColumns.map(r => `<th class="msg-col-rep">${r}</th>`).join('')}
+        </tr>`;
 
-            if (percentage > 0) {
-                requestAnimationFrame(updateBar);
-            }
-        };
-        updateBar();
+        const rows = Array.from(this.hashData.entries())
+            .sort((a, b) => b[1].firstSeen - a[1].firstSeen);
+
+        this.msgTableBody.innerHTML = rows.map(([hash, data]) =>
+            this.buildMsgRowHtml(hash, data)
+        ).join('');
     }
+
+    buildMsgRowHtml(hash, data) {
+        const cells = this.repeaterColumns.map(r => {
+            const sig = data.repeaters.get(r);
+            return sig ? this.buildSigCellHtml(sig.rssi, sig.snr) : '<td></td>';
+        }).join('');
+        return `<tr id="row-${hash}">
+            <td class="msg-col-time">${this.formatTime(data.firstSeen)}</td>
+            <td class="msg-col-type msg-type-cell" title="${data.type}" data-hex="${data.rawHex}">${this.abbreviateType(data.type)}</td>
+            ${cells}
+        </tr>`;
+    }
+
+    buildSigCellHtml(rssi, snr) {
+        const rc = this.signalColor(rssi, -70, -117);
+        const sc = this.signalColor(snr, 13, -10);
+        return `<td class="msg-sig-cell">
+            <span class="sig-rssi" style="color:${rc}">${rssi}</span>
+            <span class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</span>
+        </td>`;
+    }
+
+    insertMsgRow(hash) {
+        if (!this.msgTableBody) return;
+        const data = this.hashData.get(hash);
+        const tr = document.createElement('tr');
+        tr.id = `row-${hash}`;
+        tr.innerHTML = `
+            <td class="msg-col-time">${this.formatTime(data.firstSeen)}</td>
+            <td class="msg-col-type msg-type-cell" title="${data.type}" data-hex="${data.rawHex}">${this.abbreviateType(data.type)}</td>
+            ${this.repeaterColumns.map(r => {
+                const sig = data.repeaters.get(r);
+                return sig ? this.buildSigCellHtml(sig.rssi, sig.snr) : '<td></td>';
+            }).join('')}
+        `;
+        this.msgTableBody.prepend(tr);
+    }
+
+    updateMsgCell(hash, repeater, rssi, snr) {
+        const colIdx = this.repeaterColumns.indexOf(repeater);
+        if (colIdx === -1) return;
+        const row = document.getElementById(`row-${hash}`);
+        if (!row) return;
+        const cell = row.cells[colIdx + 2]; // +2 for time and type columns
+        if (!cell) return;
+        const rc = this.signalColor(rssi, -70, -117);
+        const sc = this.signalColor(snr, 13, -10);
+        cell.className = 'msg-sig-cell';
+        cell.innerHTML = `<span class="sig-rssi" style="color:${rc}">${rssi}</span><span class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</span>`;
+    }
+
+    // --- Cleanup ---
 
     startCleanupTimer() {
-        this.cleanupInterval = setInterval(() => {
-            this.cleanup();
-        }, 10000);
+        this.cleanupInterval = setInterval(() => this.cleanup(), 10000);
     }
 
     cleanup() {
@@ -410,11 +438,22 @@ class MeshCoreMonitor {
         }
 
         for (const hash of toRemove) {
-            this.removeHashBox(hash);
+            this.removeHashRow(hash);
             this.hashData.delete(hash);
         }
 
         if (toRemove.length > 0) {
+            // Remove columns with no remaining rows
+            const oldOrder = [...this.repeaterColumns];
+            this.repeaterColumns = this.repeaterColumns.filter(r =>
+                Array.from(this.hashData.values()).some(d => d.repeaters.has(r))
+            );
+            this.sortColumns();
+
+            const changed = this.repeaterColumns.length !== oldOrder.length ||
+                this.repeaterColumns.some((id, i) => id !== oldOrder[i]);
+            if (changed) this.renderMsgTable();
+
             this.updateStats();
         }
 
@@ -423,25 +462,72 @@ class MeshCoreMonitor {
         }
     }
 
-    removeHashBox(hash) {
-        const box = document.getElementById(`hash-${hash}`);
-        if (box) {
-            box.classList.add('fading');
-            setTimeout(() => box.remove(), 500);
+    removeHashRow(hash) {
+        const row = document.getElementById(`row-${hash}`);
+        if (row) {
+            row.style.transition = 'opacity 0.5s';
+            row.style.opacity = '0';
+            setTimeout(() => row.remove(), 500);
         }
     }
+
+    // --- Repeater log table ---
+
+    updateRepeaterTable() {
+        if (!this.repeaterLogBody) return;
+        const sorted = Array.from(this.allRepeaters.entries())
+            .sort((a, b) => b[1].lastSeen - a[1].lastSeen);
+        this.repeaterLogBody.innerHTML = sorted.map(([repeater, d]) => {
+            const rc = this.signalColor(d.lastRssi, -70, -117);
+            const sc = this.signalColor(d.lastSnr,  13,  -10);
+            return `<tr>
+                <td class="rl-id">${repeater}</td>
+                <td>${d.count}</td>
+                <td style="color:${rc}">${d.lastRssi}</td>
+                <td style="color:${sc}">${d.lastSnr.toFixed(1)}</td>
+                <td>${this.formatTime(d.lastSeen)}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // --- Signal color ---
+
+    signalColor(value, greenVal, redVal) {
+        const t = Math.max(0, Math.min(1, (value - greenVal) / (redVal - greenVal)));
+        return `hsl(${120 * (1 - t)}, 85%, 38%)`;
+    }
+
+    // --- Sound ---
+
+    playRxSound(rssi) {
+        if (!this.soundCheckbox?.checked) return;
+        if (!this.audioCtx) this.audioCtx = new AudioContext();
+        const ctx = this.audioCtx;
+        const now = ctx.currentTime;
+        const baseFreq = 880;
+
+        const beep = (freq, start, dur) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.08, now + start);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+            osc.start(now + start);
+            osc.stop(now + start + dur);
+        };
+
+        beep(baseFreq, 0, 0.05);
+        beep(baseFreq * Math.pow(2, (rssi + 100) / 30), 0.08, 0.05);
+    }
+
+    // --- Stats & status ---
 
     updateStats() {
         this.activeHashesEl.textContent = this.hashData.size;
         this.totalRxEl.textContent = this.totalRxCount;
-
-        let totalUniqueRepeaters = new Set();
-        for (const data of this.hashData.values()) {
-            for (const repeater of data.repeaters.keys()) {
-                totalUniqueRepeaters.add(repeater);
-            }
-        }
-        this.totalRepeatersEl.textContent = totalUniqueRepeaters.size;
+        this.totalRepeatersEl.textContent = this.repeaterColumns.length;
     }
 
     updateStatus(text, className) {
@@ -449,16 +535,10 @@ class MeshCoreMonitor {
         this.statusEl.className = `status ${className}`;
     }
 
-    truncateHash(hash) {
-        if (hash.length > 16) {
-            return hash.substring(0, 8) + '...' + hash.substring(hash.length - 8);
-        }
-        return hash;
-    }
+    // --- Utilities ---
 
     formatTime(timestamp) {
-        const date = new Date(timestamp);
-        return date.toLocaleTimeString('cs-CZ');
+        return new Date(timestamp).toLocaleTimeString('en-GB');
     }
 
     disconnect() {
@@ -469,18 +549,15 @@ class MeshCoreMonitor {
     }
 
     onDisconnected() {
-        this.updateStatus('Odpojeno', 'disconnected');
-        this.connectBtn.textContent = 'Připojit Bluetooth';
+        this.updateStatus('Disconnected', 'disconnected');
+        this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
     }
 }
 
-// Initialize app when DOM is ready
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        new MeshCoreMonitor();
-    });
+    document.addEventListener('DOMContentLoaded', () => new MeshCoreMonitor());
 } else {
     new MeshCoreMonitor();
 }
