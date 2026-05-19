@@ -14,6 +14,7 @@
                 <span id="status" class="status disconnected">Odpojeno</span>
                 <button id="connectBtn" class="btn-primary">Připojit Bluetooth</button>
                 <button id="serialBtn" class="btn-secondary">Připojit USB</button>
+                <label class="sound-toggle"><input type="checkbox" id="soundEnabled"> Zvuk</label>
             </div>
         </header>
 
@@ -37,7 +38,7 @@
                 <div class="section-title">Viděné repeatery</div>
                 <div class="repeater-log-scroll">
                     <table class="repeater-log-table">
-                        <thead><tr><th>Repeater</th><th>RX</th><th>SNR</th><th>RSSI</th><th>Naposledy</th></tr></thead>
+                        <thead><tr><th>Repeater</th><th>RX</th><th>RSSI</th><th>SNR</th><th>Naposledy</th></tr></thead>
                         <tbody id="repeaterLogBody"></tbody>
                     </table>
                 </div>

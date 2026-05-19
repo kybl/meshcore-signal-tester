@@ -41,6 +41,16 @@ h1 {
     gap: 15px;
 }
 
+.sound-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    color: #555;
+    cursor: pointer;
+    user-select: none;
+}
+
 .status {
     padding: 8px 16px;
     border-radius: 20px;

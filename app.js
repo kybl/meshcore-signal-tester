@@ -13,6 +13,7 @@ class MeshCoreMonitor {
         this.totalRxCount = 0;
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
+        this.audioCtx = null;
 
         this.initUI();
         this.startCleanupTimer();
@@ -28,6 +29,7 @@ class MeshCoreMonitor {
         this.totalRxEl = document.getElementById('totalRx');
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
         this.repeaterLogBody = document.getElementById('repeaterLogBody');
+        this.soundCheckbox = document.getElementById('soundEnabled');
 
         this.connectBtn.onclick = () => this.connectBluetooth();
         this.serialBtn.onclick = () => this.connectSerial();
@@ -332,6 +334,7 @@ class MeshCoreMonitor {
             lastRssi: rssi,
         });
         this.updateRepeaterTable();
+        this.playRxSound(rssi);
 
         this.updateStats();
         this.emptyState.classList.add('hidden');
@@ -342,13 +345,13 @@ class MeshCoreMonitor {
         const sorted = Array.from(this.allRepeaters.entries())
             .sort((a, b) => b[1].lastSeen - a[1].lastSeen);
         this.repeaterLogBody.innerHTML = sorted.map(([repeater, d]) => {
-            const sc = d.lastSnr  <    0 ? '#ffaaaa' : '#afa';
-            const rc = d.lastRssi < -100 ? '#ffaaaa' : '#afa';
+            const rc = this.signalColor(d.lastRssi, -70, -117);
+            const sc = this.signalColor(d.lastSnr,  13,  -10);
             return `<tr>
                 <td class="rl-id">${repeater}</td>
                 <td>${d.count}</td>
-                <td style="color:${sc}">${d.lastSnr.toFixed(1)}</td>
                 <td style="color:${rc}">${d.lastRssi}</td>
+                <td style="color:${sc}">${d.lastSnr.toFixed(1)}</td>
                 <td>${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
@@ -388,19 +391,47 @@ class MeshCoreMonitor {
         }
     }
 
+    signalColor(value, greenVal, redVal) {
+        const t = Math.max(0, Math.min(1, (value - greenVal) / (redVal - greenVal)));
+        return `hsl(${120 * (1 - t)}, 90%, 65%)`;
+    }
+
+    playRxSound(rssi) {
+        if (!this.soundCheckbox?.checked) return;
+        if (!this.audioCtx) this.audioCtx = new AudioContext();
+        const ctx = this.audioCtx;
+        const now = ctx.currentTime;
+        const baseFreq = 880;
+
+        const beep = (freq, start, dur) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.08, now + start);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
+            osc.start(now + start);
+            osc.stop(now + start + dur);
+        };
+
+        beep(baseFreq, 0, 0.05);
+        beep(baseFreq * Math.pow(2, (rssi + 100) / 30), 0.08, 0.05);
+    }
+
     renderRepeaters(repeatersMap) {
         return Array.from(repeatersMap.entries())
             .sort((a, b) => b[1].rssi - a[1].rssi)
             .map(([repeater, { count, snr, rssi }]) => {
-                const snrColor  = snr  <    0 ? '#ffaaaa' : '#afa';
-                const rssiColor = rssi < -100 ? '#ffaaaa' : '#afa';
+                const rc = this.signalColor(rssi, -70, -117);
+                const sc = this.signalColor(snr,  13,  -10);
                 return `
                 <div class="repeater-tag">
                     ${repeater}
                     ${count > 1 ? `<span class="repeater-count">${count}x</span>` : ''}
                     <span class="signal-values">
-                        <span style="color:${snrColor}">${snr.toFixed(1)}&thinsp;dB</span>
-                        <span style="color:${rssiColor}">${rssi}&thinsp;dBm</span>
+                        <span style="color:${rc}">${rssi}&thinsp;dBm</span>
+                        <span style="color:${sc}">${snr.toFixed(1)}&thinsp;dB</span>
                     </span>
                 </div>`;
             }).join('');
