@@ -111,6 +111,7 @@ class MeshCoreMonitor {
             this.serialBtn.onclick = () => this.disconnectSerial();
 
             await this.sendAppStart('serial');
+            console.log('[serial] APP_START sent');
             this.readSerialLoop();
         } catch (error) {
             if (error.name !== 'NotFoundError') {
@@ -125,12 +126,14 @@ class MeshCoreMonitor {
     async readSerialLoop() {
         this.serialBuffer = new Uint8Array(0);
         this.serialReader = this.serialPort.readable.getReader();
+        console.log('[serial] read loop started, waiting for data...');
 
         try {
             while (true) {
                 const { value, done } = await this.serialReader.read();
                 if (done) break;
 
+                console.log('[serial] received', value.length, 'bytes');
                 const merged = new Uint8Array(this.serialBuffer.length + value.length);
                 merged.set(this.serialBuffer);
                 merged.set(value, this.serialBuffer.length);
