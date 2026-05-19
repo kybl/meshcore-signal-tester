@@ -359,13 +359,19 @@ class MeshCoreMonitor {
     renderRepeaters(repeatersMap) {
         return Array.from(repeatersMap.entries())
             .sort((a, b) => b[1].count - a[1].count)
-            .map(([repeater, { count, snr, rssi }]) => `
+            .map(([repeater, { count, snr, rssi }]) => {
+                const snrColor  = snr  <    0 ? '#e53' : '#3a3';
+                const rssiColor = rssi < -100 ? '#e53' : '#3a3';
+                return `
                 <div class="repeater-tag">
                     ${repeater}
                     ${count > 1 ? `<span class="repeater-count">${count}x</span>` : ''}
-                    <span class="signal-values">SNR ${snr.toFixed(1)} dB / RSSI ${rssi} dBm</span>
-                </div>
-            `).join('');
+                    <span class="signal-values">
+                        <span style="color:${snrColor}">${snr.toFixed(1)}&thinsp;dB</span>
+                        <span style="color:${rssiColor}">${rssi}&thinsp;dBm</span>
+                    </span>
+                </div>`;
+            }).join('');
     }
 
     animateLifetimeBar(hash, barElement) {

@@ -148,6 +148,8 @@ h1 {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     animation: slideIn 0.3s ease;
     position: relative;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .hash-box.fading {
@@ -255,9 +257,10 @@ h1 {
 }
 
 .signal-values {
-    opacity: 0.8;
     font-size: 11px;
-    font-weight: 400;
+    font-weight: 600;
+    display: flex;
+    gap: 6px;
 }
 
 .empty-state {
