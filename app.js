@@ -198,17 +198,22 @@ class MeshCoreMonitor {
         const pushCode = payload[0];
         let loraPacket;
         if (pushCode === 0x88) {
-            loraPacket = payload.slice(3);       // LOG_DATA: SNR[1], RSSI[2], packet[3:]
+            loraPacket = payload.slice(3);
         } else if (pushCode === 0x84) {
-            loraPacket = payload.slice(4);       // RAW_DATA: SNR[1], RSSI[2], 0xFF[3], packet[4:]
+            loraPacket = payload.slice(4);
         } else {
             return;
         }
         if (loraPacket.length === 0) return;
+
+        // Signed int8 conversion for SNR (stored as value*4) and RSSI
+        const snr  = (payload[1] > 127 ? payload[1] - 256 : payload[1]) / 4;
+        const rssi = payload[2] > 127 ? payload[2] - 256 : payload[2];
+
         try {
             const rawHex = this.bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
-            if (packet.isValid) this.processPacket(packet, rawHex);
+            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
         } catch (e) {
             console.error('Decode error:', e);
         }
@@ -244,7 +249,7 @@ class MeshCoreMonitor {
             .join('');
     }
 
-    processPacket(packet, rawHex) {
+    processPacket(packet, rawHex, snr, rssi) {
         const hash = packet.messageHash;
         const repeater = this.extractRepeater(packet);
         const type = [
@@ -253,7 +258,7 @@ class MeshCoreMonitor {
         ].filter(Boolean).join(' ');
 
         if (hash && repeater) {
-            this.addRxEntry(hash, repeater, type, rawHex);
+            this.addRxEntry(hash, repeater, type, rawHex, snr, rssi);
         }
     }
 
@@ -271,13 +276,13 @@ class MeshCoreMonitor {
         return nodeId?.toString() || 'unknown';
     }
 
-    addRxEntry(hash, repeater, type, rawHex) {
+    addRxEntry(hash, repeater, type, rawHex, snr, rssi) {
         this.totalRxCount++;
         const now = Date.now();
 
         if (!this.hashData.has(hash)) {
             this.hashData.set(hash, {
-                repeaters: new Map([[repeater, 1]]),
+                repeaters: new Map([[repeater, { count: 1, snr, rssi }]]),
                 firstSeen: now,
                 lastSeen: now,
                 type,
@@ -289,9 +294,10 @@ class MeshCoreMonitor {
             data.lastSeen = now;
 
             if (data.repeaters.has(repeater)) {
-                data.repeaters.set(repeater, data.repeaters.get(repeater) + 1);
+                const r = data.repeaters.get(repeater);
+                data.repeaters.set(repeater, { count: r.count + 1, snr, rssi });
             } else {
-                data.repeaters.set(repeater, 1);
+                data.repeaters.set(repeater, { count: 1, snr, rssi });
             }
 
             this.updateHashBox(hash);
@@ -339,11 +345,12 @@ class MeshCoreMonitor {
 
     renderRepeaters(repeatersMap) {
         return Array.from(repeatersMap.entries())
-            .sort((a, b) => b[1] - a[1])
-            .map(([repeater, count]) => `
+            .sort((a, b) => b[1].count - a[1].count)
+            .map(([repeater, { count, snr, rssi }]) => `
                 <div class="repeater-tag">
                     ${repeater}
                     ${count > 1 ? `<span class="repeater-count">${count}x</span>` : ''}
+                    <span class="signal-values">SNR ${snr.toFixed(1)} dB / RSSI ${rssi} dBm</span>
                 </div>
             `).join('');
     }
