@@ -19,7 +19,6 @@ class MeshCoreMonitor {
 
     initUI() {
         this.connectBtn = document.getElementById('connectBtn');
-        this.serialBtn = document.getElementById('serialBtn');
         this.statusEl = document.getElementById('status');
         this.msgTableHead = document.getElementById('msgTableHead');
         this.msgTableBody = document.getElementById('msgTableBody');
@@ -85,7 +84,7 @@ class MeshCoreMonitor {
             this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
             const txCharacteristic = await service.getCharacteristic(NUS_TX);
             await txCharacteristic.startNotifications();
-            txCharacteristic.addEventListener('characteristicvaluechanged', (event) => this.handleData(event));
+            txCharacteristic.addEventListener('characteristicvaluechanged', e => this.handleData(e));
 
             await this.sendAppStart();
 
@@ -136,98 +135,6 @@ class MeshCoreMonitor {
         } catch (e) {
             console.error('Decode error:', e);
         }
-    }
-
-    tryDecodeSerialBuffer() {
-        // Parse framed messages: 0x3E [len_lo] [len_hi] [payload...]
-        while (this.serialBuffer.length >= 3) {
-            const startIdx = this.serialBuffer.indexOf(0x3E);
-            if (startIdx === -1) {
-                this.serialBuffer = new Uint8Array(0);
-                return;
-            }
-            if (startIdx > 0) {
-                this.serialBuffer = this.serialBuffer.slice(startIdx);
-            }
-            if (this.serialBuffer.length < 3) return;
-
-            const len = this.serialBuffer[1] | (this.serialBuffer[2] << 8);
-            if (len > 300) {
-                this.serialBuffer = this.serialBuffer.slice(1);
-                continue;
-            }
-            if (this.serialBuffer.length < 3 + len) return;
-
-            const payload = this.serialBuffer.slice(3, 3 + len);
-            this.serialBuffer = this.serialBuffer.slice(3 + len);
-            this.handlePayload(payload);
-        }
-    }
-
-    async sendAppStart(transport) {
-        // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
-        const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
-        if (transport === 'ble') {
-            await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
-        } else {
-            const frame = new Uint8Array(3 + payload.length);
-            frame[0] = 0x3C;
-            frame[1] = payload.length & 0xFF;
-            frame[2] = (payload.length >> 8) & 0xFF;
-            frame.set(payload, 3);
-            const writer = this.serialPort.writable.getWriter();
-            await writer.write(frame);
-            writer.releaseLock();
-        }
-    }
-
-    handlePayload(payload) {
-        const pushCode = payload[0];
-        let loraPacket;
-        if (pushCode === 0x88) {
-            loraPacket = payload.slice(3);
-        } else if (pushCode === 0x84) {
-            loraPacket = payload.slice(4);
-        } else {
-            return;
-        }
-        if (loraPacket.length === 0) return;
-
-        // Signed int8 conversion for SNR (stored as value*4) and RSSI
-        const snr  = (payload[1] > 127 ? payload[1] - 256 : payload[1]) / 4;
-        const rssi = payload[2] > 127 ? payload[2] - 256 : payload[2];
-
-        try {
-            const rawHex = this.bufferToHex(loraPacket.buffer);
-            const packet = MeshCoreDecoder.decode(rawHex);
-            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
-        } catch (e) {
-            console.error('Decode error:', e);
-        }
-    }
-
-    async disconnectSerial() {
-        if (this.serialReader) {
-            await this.serialReader.cancel();
-        }
-    }
-
-    onSerialDisconnected() {
-        if (this.serialPort) {
-            this.serialPort.close().catch(() => {});
-            this.serialPort = null;
-        }
-        this.serialReader = null;
-        this.serialBuffer = new Uint8Array(0);
-        this.updateStatus('Odpojeno', 'disconnected');
-        this.serialBtn.textContent = 'Připojit USB';
-        this.serialBtn.disabled = false;
-        this.serialBtn.onclick = () => this.connectSerial();
-    }
-
-    handleData(event) {
-        // BLE: raw payload, no frame header
-        this.handlePayload(new Uint8Array(event.target.value.buffer));
     }
 
     bufferToHex(buffer) {
@@ -303,7 +210,6 @@ class MeshCoreMonitor {
         });
         this.updateRepeaterTable();
 
-        // Manage columns and decide how to update the table
         const oldOrder = [...this.repeaterColumns];
         const isNewRepeater = !this.repeaterColumns.includes(repeater);
         if (isNewRepeater) this.repeaterColumns.push(repeater);
@@ -316,7 +222,7 @@ class MeshCoreMonitor {
         } else if (isNewHash) {
             this.insertMsgRow(hash);
         } else {
-            this.updateMsgCell(hash, repeater, rssi, snr);
+            this.updateMsgCells(hash, repeater, rssi, snr);
         }
 
         this.playRxSound(rssi);
@@ -353,15 +259,27 @@ class MeshCoreMonitor {
     }
 
     // --- Table rendering ---
+    // Each repeater occupies two <td>: RSSI | SNR, under a shared <th colspan="2">
 
     renderMsgTable() {
         if (!this.msgTableHead || !this.msgTableBody) return;
 
-        this.msgTableHead.innerHTML = `<tr>
-            <th class="msg-col-time">Time</th>
-            <th class="msg-col-type">Type</th>
-            ${this.repeaterColumns.map(r => `<th class="msg-col-rep">${r}</th>`).join('')}
-        </tr>`;
+        // Two sub-header cells per repeater for RSSI and SNR labels
+        const repHeaders = this.repeaterColumns.map(r =>
+            `<th colspan="2" class="msg-col-rep">${r}</th>`
+        ).join('');
+        const subHeaders = this.repeaterColumns.map(() =>
+            `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
+        ).join('');
+
+        this.msgTableHead.innerHTML = `
+            <tr>
+                <th class="msg-col-time" rowspan="2">Time</th>
+                <th class="msg-col-type" rowspan="2">Type</th>
+                ${repHeaders}
+            </tr>
+            <tr>${subHeaders}</tr>
+        `;
 
         const rows = Array.from(this.hashData.entries())
             .sort((a, b) => b[1].firstSeen - a[1].firstSeen);
@@ -374,7 +292,7 @@ class MeshCoreMonitor {
     buildMsgRowHtml(hash, data) {
         const cells = this.repeaterColumns.map(r => {
             const sig = data.repeaters.get(r);
-            return sig ? this.buildSigCellHtml(sig.rssi, sig.snr) : '<td></td>';
+            return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr) : '<td></td><td></td>';
         }).join('');
         return `<tr id="row-${hash}">
             <td class="msg-col-time">${this.formatTime(data.firstSeen)}</td>
@@ -383,13 +301,10 @@ class MeshCoreMonitor {
         </tr>`;
     }
 
-    buildSigCellHtml(rssi, snr) {
+    buildSigCellsHtml(rssi, snr) {
         const rc = this.signalColor(rssi, -70, -117);
         const sc = this.signalColor(snr, 13, -10);
-        return `<td class="msg-sig-cell">
-            <span class="sig-rssi" style="color:${rc}">${rssi}</span>
-            <span class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</span>
-        </td>`;
+        return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
     }
 
     insertMsgRow(hash) {
@@ -402,23 +317,29 @@ class MeshCoreMonitor {
             <td class="msg-col-type msg-type-cell" title="${data.type}" data-hex="${data.rawHex}">${this.abbreviateType(data.type)}</td>
             ${this.repeaterColumns.map(r => {
                 const sig = data.repeaters.get(r);
-                return sig ? this.buildSigCellHtml(sig.rssi, sig.snr) : '<td></td>';
+                return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr) : '<td></td><td></td>';
             }).join('')}
         `;
         this.msgTableBody.prepend(tr);
     }
 
-    updateMsgCell(hash, repeater, rssi, snr) {
+    updateMsgCells(hash, repeater, rssi, snr) {
         const colIdx = this.repeaterColumns.indexOf(repeater);
         if (colIdx === -1) return;
         const row = document.getElementById(`row-${hash}`);
         if (!row) return;
-        const cell = row.cells[colIdx + 2]; // +2 for time and type columns
-        if (!cell) return;
+        // +2 for time and type; each repeater occupies 2 cells
+        const rssiCell = row.cells[2 + colIdx * 2];
+        const snrCell  = row.cells[2 + colIdx * 2 + 1];
+        if (!rssiCell || !snrCell) return;
         const rc = this.signalColor(rssi, -70, -117);
         const sc = this.signalColor(snr, 13, -10);
-        cell.className = 'msg-sig-cell';
-        cell.innerHTML = `<span class="sig-rssi" style="color:${rc}">${rssi}</span><span class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</span>`;
+        rssiCell.className = 'sig-rssi';
+        rssiCell.style.color = rc;
+        rssiCell.textContent = rssi;
+        snrCell.className = 'sig-snr';
+        snrCell.style.color = sc;
+        snrCell.textContent = snr.toFixed(1);
     }
 
     // --- Cleanup ---
@@ -443,7 +364,6 @@ class MeshCoreMonitor {
         }
 
         if (toRemove.length > 0) {
-            // Remove columns with no remaining rows
             const oldOrder = [...this.repeaterColumns];
             this.repeaterColumns = this.repeaterColumns.filter(r =>
                 Array.from(this.hashData.values()).some(d => d.repeaters.has(r))

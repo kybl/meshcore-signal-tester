@@ -233,25 +233,32 @@ header {
     font-family: 'Courier New', monospace;
     font-size: 10px;
     text-align: center;
-    min-width: 90px;
+    border-left: 1px solid #eee;
 }
 
-.msg-sig-cell {
-    text-align: center;
+.msg-sub-rssi,
+.msg-sub-snr {
+    font-size: 9px;
+    color: #bbb;
+    font-weight: 600;
+    text-align: right;
+    padding: 2px 6px 4px;
+}
+
+.msg-sub-rssi {
+    border-left: 1px solid #eee;
 }
 
 .sig-rssi,
 .sig-snr {
-    display: block;
     font-weight: 700;
-    line-height: 1.35;
+    font-size: 11px;
+    text-align: right;
+    padding: 3px 6px;
 }
 
-.signal-values {
-    font-size: 11px;
-    font-weight: 600;
-    display: flex;
-    gap: 6px;
+.sig-rssi {
+    border-left: 1px solid #f0f0f0;
 }
 
 .empty-state {
