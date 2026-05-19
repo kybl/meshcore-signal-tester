@@ -1,4 +1,5 @@
 // MeshCore RX Monitor Application
+import { MeshCoreDecoder } from 'https://esm.sh/@michaelhart/meshcore-decoder';
 
 class MeshCoreMonitor {
     constructor() {
@@ -72,9 +73,11 @@ class MeshCoreMonitor {
         const value = event.target.value;
 
         try {
-            const decoder = new TextDecoder();
-            const text = decoder.decode(value);
-            this.parseRxLog(text);
+            const hexData = this.bufferToHex(value.buffer);
+            const packet = MeshCoreDecoder.decode(hexData);
+            if (packet.isValid) {
+                this.processPacket(packet);
+            }
         } catch (error) {
             console.error('Error processing data:', error);
         }
@@ -87,14 +90,7 @@ class MeshCoreMonitor {
     }
 
     processPacket(packet) {
-        // Extrahujeme hash a repeater z dekódovaného paketu
-        // Packet obsahuje strukturované informace o zprávě
-        console.log('Decoded packet:', packet);
-
-        // Hash paketu - používáme packet ID nebo hash pokud je dostupný
-        const hash = packet.id?.toString(16) || packet.hash || this.generatePacketHash(packet);
-
-        // Repeater - poslední node v routing path nebo from address
+        const hash = packet.messageHash;
         const repeater = this.extractRepeater(packet);
 
         if (hash && repeater) {
@@ -102,41 +98,10 @@ class MeshCoreMonitor {
         }
     }
 
-    generatePacketHash(packet) {
-        // Generujeme hash z důležitých částí paketu
-        const hashSource = JSON.stringify({
-            id: packet.id,
-            from: packet.from,
-            to: packet.to,
-            payload: packet.payload?.slice(0, 16) // První 16 bytů payload
-        });
-
-        // Jednoduchý hash funkce
-        let hash = 0;
-        for (let i = 0; i < hashSource.length; i++) {
-            const char = hashSource.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
-        }
-        return Math.abs(hash).toString(16).padStart(8, '0');
-    }
-
     extractRepeater(packet) {
-        // Snažíme se získat ID posledního repeateru
-        if (packet.route && packet.route.length > 0) {
-            // Poslední node v routě
-            const lastNode = packet.route[packet.route.length - 1];
-            return this.formatNodeId(lastNode);
+        if (packet.path && packet.path.length > 0) {
+            return this.formatNodeId(packet.path[packet.path.length - 1]);
         }
-
-        if (packet.from) {
-            return this.formatNodeId(packet.from);
-        }
-
-        if (packet.via) {
-            return this.formatNodeId(packet.via);
-        }
-
         return 'direct';
     }
 
@@ -146,48 +111,6 @@ class MeshCoreMonitor {
             return '!' + nodeId.toString(16).padStart(8, '0');
         }
         return nodeId?.toString() || 'unknown';
-    }
-
-    parseRxLog(logText) {
-        // Fallback text parsing pro případ, že data nejsou binární packet
-        const lines = logText.split('\n');
-
-        for (const line of lines) {
-            if (!line.toLowerCase().includes('rx')) continue;
-
-            let hash = null;
-            let repeater = null;
-
-            // Varianta 1: hash=XXX via=YYY
-            let match = line.match(/hash[=:]?\s*([a-fA-F0-9]+).*?via[=:]?\s*([a-zA-Z0-9_!-]+)/i);
-            if (match) {
-                hash = match[1];
-                repeater = match[2];
-            }
-
-            // Varianta 2: id=XXX from=YYY
-            if (!match) {
-                match = line.match(/(?:id|packet)[=:]?\s*([a-fA-F0-9]+).*?(?:from|via)[=:]?\s*([a-zA-Z0-9_!-]+)/i);
-                if (match) {
-                    hash = match[1];
-                    repeater = match[2];
-                }
-            }
-
-            // Varianta 3: hex hash a node ID ve formátu !XXXXXXXX
-            if (!match) {
-                const hashMatch = line.match(/([a-fA-F0-9]{6,})/);
-                const nodeMatch = line.match(/!([a-fA-F0-9]{8})/);
-                if (hashMatch && nodeMatch) {
-                    hash = hashMatch[1];
-                    repeater = '!' + nodeMatch[1];
-                }
-            }
-
-            if (hash && repeater) {
-                this.addRxEntry(hash, repeater);
-            }
-        }
     }
 
     addRxEntry(hash, repeater) {
