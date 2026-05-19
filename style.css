@@ -110,42 +110,95 @@ h1 {
 
 .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
-    margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
 }
 
 .stat-card {
     background: white;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    padding: 10px 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
     text-align: center;
 }
 
 .stat-label {
-    color: #666;
-    font-size: 14px;
-    margin-bottom: 8px;
+    color: #888;
+    font-size: 11px;
+    margin-bottom: 4px;
 }
 
 .stat-value {
     color: #333;
-    font-size: 32px;
+    font-size: 22px;
     font-weight: 700;
+}
+
+.section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+
+.repeater-log-wrap {
+    margin-bottom: 8px;
+}
+
+.repeater-log-scroll {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.repeater-log-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.repeater-log-table th {
+    position: sticky;
+    top: 0;
+    background: #f8f8f8;
+    color: #888;
+    font-weight: 600;
+    text-align: left;
+    padding: 5px 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.repeater-log-table td {
+    padding: 4px 10px;
+    border-bottom: 1px solid #f5f5f5;
+    color: #444;
+}
+
+.repeater-log-table tr:last-child td {
+    border-bottom: none;
+}
+
+.rl-id {
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
 }
 
 .hash-container {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 15px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 8px;
 }
 
 .hash-box {
     background: white;
-    border-radius: 12px;
-    padding: 20px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    padding: 10px 12px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
     animation: slideIn 0.3s ease;
     position: relative;
     min-width: 0;
@@ -181,72 +234,71 @@ h1 {
 .hash-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: 15px;
-    padding-bottom: 10px;
-    border-bottom: 2px solid #f0f0f0;
+    align-items: baseline;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #f0f0f0;
 }
 
 .hash-value {
     font-family: 'Courier New', monospace;
-    font-size: 16px;
-    font-weight: 700;
-    color: #667eea;
-    word-break: break-all;
-}
-
-.timestamp {
     font-size: 12px;
+    font-weight: 500;
     color: #999;
 }
 
+.hash-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .msg-type {
-    display: inline-block;
-    background: #f0f0ff;
-    color: #5568d3;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    padding: 3px 8px;
-    border-radius: 4px;
-    margin-bottom: 10px;
-}
-
-.raw-hex {
-    font-family: 'Courier New', monospace;
     font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
     color: #aaa;
-    margin-top: 10px;
-    word-break: break-all;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: default;
 }
 
-.repeaters-label {
-    font-size: 13px;
+.timestamp {
+    font-size: 10px;
+    color: #bbb;
+}
+
+.copy-hex-btn {
+    background: none;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    color: #bbb;
+    font-size: 10px;
+    cursor: pointer;
+    padding: 2px 6px;
+    margin-top: 6px;
+    transition: all 0.15s;
+}
+
+.copy-hex-btn:hover {
+    background: #f5f5f5;
     color: #666;
-    margin-bottom: 8px;
-    font-weight: 600;
 }
 
 .repeater-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 5px;
+    margin-bottom: 2px;
 }
 
 .repeater-tag {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 13px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    font-size: 11px;
     font-weight: 600;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
 }
 
 .repeater-count {

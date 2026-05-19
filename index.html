@@ -33,9 +33,17 @@
                 </div>
             </div>
 
-            <div id="hashContainer" class="hash-container">
-                <!-- Hash boxy se budou přidávat dynamicky -->
+            <div class="repeater-log-wrap">
+                <div class="section-title">Viděné repeatery</div>
+                <div class="repeater-log-scroll">
+                    <table class="repeater-log-table">
+                        <thead><tr><th>Repeater</th><th>RX</th><th>SNR</th><th>RSSI</th><th>Naposledy</th></tr></thead>
+                        <tbody id="repeaterLogBody"></tbody>
+                    </table>
+                </div>
             </div>
+
+            <div id="hashContainer" class="hash-container"></div>
 
             <div id="emptyState" class="empty-state">
                 <p>Připojte se k MeshCore companion přes Bluetooth a začněte sledovat RX logy</p>

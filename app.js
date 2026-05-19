@@ -9,6 +9,7 @@ class MeshCoreMonitor {
         this.serialReader = null;
         this.serialBuffer = new Uint8Array(0);
         this.hashData = new Map();
+        this.allRepeaters = new Map();
         this.totalRxCount = 0;
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
@@ -26,9 +27,19 @@ class MeshCoreMonitor {
         this.activeHashesEl = document.getElementById('activeHashes');
         this.totalRxEl = document.getElementById('totalRx');
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
+        this.repeaterLogBody = document.getElementById('repeaterLogBody');
 
         this.connectBtn.onclick = () => this.connectBluetooth();
         this.serialBtn.onclick = () => this.connectSerial();
+
+        this.hashContainer.addEventListener('click', e => {
+            const btn = e.target.closest('.copy-hex-btn');
+            if (!btn) return;
+            navigator.clipboard.writeText(btn.dataset.hex).then(() => {
+                btn.textContent = '✓';
+                setTimeout(() => { btn.textContent = '⎘ hex'; }, 1000);
+            });
+        });
     }
 
     async connectBluetooth() {
@@ -111,7 +122,6 @@ class MeshCoreMonitor {
             this.serialBtn.onclick = () => this.disconnectSerial();
 
             await this.sendAppStart('serial');
-            console.log('[serial] APP_START sent');
             this.readSerialLoop();
         } catch (error) {
             if (error.name !== 'NotFoundError') {
@@ -126,14 +136,12 @@ class MeshCoreMonitor {
     async readSerialLoop() {
         this.serialBuffer = new Uint8Array(0);
         this.serialReader = this.serialPort.readable.getReader();
-        console.log('[serial] read loop started, waiting for data...');
 
         try {
             while (true) {
                 const { value, done } = await this.serialReader.read();
                 if (done) break;
 
-                console.log('[serial] received', value.length, 'bytes');
                 const merged = new Uint8Array(this.serialBuffer.length + value.length);
                 merged.set(this.serialBuffer);
                 merged.set(value, this.serialBuffer.length);
@@ -316,8 +324,34 @@ class MeshCoreMonitor {
             this.updateHashBox(hash);
         }
 
+        const existing = this.allRepeaters.get(repeater);
+        this.allRepeaters.set(repeater, {
+            lastSeen: now,
+            count: (existing?.count ?? 0) + 1,
+            lastSnr: snr,
+            lastRssi: rssi,
+        });
+        this.updateRepeaterTable();
+
         this.updateStats();
         this.emptyState.classList.add('hidden');
+    }
+
+    updateRepeaterTable() {
+        if (!this.repeaterLogBody) return;
+        const sorted = Array.from(this.allRepeaters.entries())
+            .sort((a, b) => b[1].lastSeen - a[1].lastSeen);
+        this.repeaterLogBody.innerHTML = sorted.map(([repeater, d]) => {
+            const sc = d.lastSnr  <    0 ? '#ffaaaa' : '#afa';
+            const rc = d.lastRssi < -100 ? '#ffaaaa' : '#afa';
+            return `<tr>
+                <td class="rl-id">${repeater}</td>
+                <td>${d.count}</td>
+                <td style="color:${sc}">${d.lastSnr.toFixed(1)}</td>
+                <td style="color:${rc}">${d.lastRssi}</td>
+                <td>${this.formatTime(d.lastSeen)}</td>
+            </tr>`;
+        }).join('');
     }
 
     createHashBox(hash) {
@@ -333,14 +367,12 @@ class MeshCoreMonitor {
         box.innerHTML = `
             <div class="hash-header">
                 <div class="hash-value">${this.truncateHash(hash)}</div>
-                <div class="timestamp">${this.formatTime(data.firstSeen)}</div>
+                <div class="hash-meta">${data.type ? `<span class="msg-type">${data.type}</span>` : ''}<span class="timestamp">${this.formatTime(data.firstSeen)}</span></div>
             </div>
-            ${data.type ? `<div class="msg-type">${data.type}</div>` : ''}
-            <div class="repeaters-label">Repeaters:</div>
             <div class="repeater-list" id="repeaters-${hash}">
                 ${this.renderRepeaters(data.repeaters)}
             </div>
-            <div class="raw-hex" title="${data.rawHex}">${data.rawHex}</div>
+            <button class="copy-hex-btn" data-hex="${data.rawHex}">⎘ hex</button>
         `;
 
         box.appendChild(lifetimeBar);
@@ -358,10 +390,10 @@ class MeshCoreMonitor {
 
     renderRepeaters(repeatersMap) {
         return Array.from(repeatersMap.entries())
-            .sort((a, b) => b[1].count - a[1].count)
+            .sort((a, b) => b[1].rssi - a[1].rssi)
             .map(([repeater, { count, snr, rssi }]) => {
-                const snrColor  = snr  <    0 ? '#ffaaaa' : '#3a3';
-                const rssiColor = rssi < -100 ? '#ffaaaa' : '#3a3';
+                const snrColor  = snr  <    0 ? '#ffaaaa' : '#afa';
+                const rssiColor = rssi < -100 ? '#ffaaaa' : '#afa';
                 return `
                 <div class="repeater-tag">
                     ${repeater}
