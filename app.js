@@ -125,6 +125,8 @@ class MeshCoreMonitor {
                 const { value, done } = await this.serialReader.read();
                 if (done) break;
 
+                console.log('[serial chunk]', value.length, 'bytes:', new TextDecoder().decode(value));
+
                 const merged = new Uint8Array(this.serialBuffer.length + value.length);
                 merged.set(this.serialBuffer);
                 merged.set(value, this.serialBuffer.length);
