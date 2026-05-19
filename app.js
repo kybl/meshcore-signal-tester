@@ -360,8 +360,8 @@ class MeshCoreMonitor {
         return Array.from(repeatersMap.entries())
             .sort((a, b) => b[1].count - a[1].count)
             .map(([repeater, { count, snr, rssi }]) => {
-                const snrColor  = snr  <    0 ? '#ff7070' : '#3a3';
-                const rssiColor = rssi < -100 ? '#ff7070' : '#3a3';
+                const snrColor  = snr  <    0 ? '#ffaaaa' : '#3a3';
+                const rssiColor = rssi < -100 ? '#ffaaaa' : '#3a3';
                 return `
                 <div class="repeater-tag">
                     ${repeater}
