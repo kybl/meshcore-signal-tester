@@ -27,12 +27,15 @@ class MeshCoreMonitor {
     }
 
     async connectBluetooth() {
+        if (!navigator.bluetooth) {
+            alert('Web Bluetooth API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
+            return;
+        }
+
         try {
             this.connectBtn.disabled = true;
             this.updateStatus('Připojování...', 'disconnected');
 
-            // Request Bluetooth device
-            // MeshCore uses Nordic UART Service (NUS)
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
                     { namePrefix: 'Meshtastic' },
