@@ -145,6 +145,14 @@ class MeshCoreMonitor {
     tryDecodeSerialBuffer() {
         if (this.serialBuffer.length === 0) return;
 
+        const text = new TextDecoder().decode(this.serialBuffer);
+
+        // Log complete lines so we can see the format
+        const newlineIdx = text.lastIndexOf('\n');
+        if (newlineIdx !== -1) {
+            console.log('[serial]', text.substring(0, newlineIdx));
+        }
+
         try {
             const hexData = this.bufferToHex(this.serialBuffer.buffer);
             const packet = MeshCoreDecoder.decode(hexData);
