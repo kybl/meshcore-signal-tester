@@ -19,6 +19,7 @@ class MeshCoreMonitor {
 
     initUI() {
         this.connectBtn = document.getElementById('connectBtn');
+        this.serialBtn = document.getElementById('serialBtn');
         this.statusEl = document.getElementById('status');
         this.msgTableHead = document.getElementById('msgTableHead');
         this.msgTableBody = document.getElementById('msgTableBody');
@@ -135,6 +136,98 @@ class MeshCoreMonitor {
         } catch (e) {
             console.error('Decode error:', e);
         }
+    }
+
+    tryDecodeSerialBuffer() {
+        // Parse framed messages: 0x3E [len_lo] [len_hi] [payload...]
+        while (this.serialBuffer.length >= 3) {
+            const startIdx = this.serialBuffer.indexOf(0x3E);
+            if (startIdx === -1) {
+                this.serialBuffer = new Uint8Array(0);
+                return;
+            }
+            if (startIdx > 0) {
+                this.serialBuffer = this.serialBuffer.slice(startIdx);
+            }
+            if (this.serialBuffer.length < 3) return;
+
+            const len = this.serialBuffer[1] | (this.serialBuffer[2] << 8);
+            if (len > 300) {
+                this.serialBuffer = this.serialBuffer.slice(1);
+                continue;
+            }
+            if (this.serialBuffer.length < 3 + len) return;
+
+            const payload = this.serialBuffer.slice(3, 3 + len);
+            this.serialBuffer = this.serialBuffer.slice(3 + len);
+            this.handlePayload(payload);
+        }
+    }
+
+    async sendAppStart(transport) {
+        // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
+        const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
+        if (transport === 'ble') {
+            await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
+        } else {
+            const frame = new Uint8Array(3 + payload.length);
+            frame[0] = 0x3C;
+            frame[1] = payload.length & 0xFF;
+            frame[2] = (payload.length >> 8) & 0xFF;
+            frame.set(payload, 3);
+            const writer = this.serialPort.writable.getWriter();
+            await writer.write(frame);
+            writer.releaseLock();
+        }
+    }
+
+    handlePayload(payload) {
+        const pushCode = payload[0];
+        let loraPacket;
+        if (pushCode === 0x88) {
+            loraPacket = payload.slice(3);
+        } else if (pushCode === 0x84) {
+            loraPacket = payload.slice(4);
+        } else {
+            return;
+        }
+        if (loraPacket.length === 0) return;
+
+        // Signed int8 conversion for SNR (stored as value*4) and RSSI
+        const snr  = (payload[1] > 127 ? payload[1] - 256 : payload[1]) / 4;
+        const rssi = payload[2] > 127 ? payload[2] - 256 : payload[2];
+
+        try {
+            const rawHex = this.bufferToHex(loraPacket.buffer);
+            const packet = MeshCoreDecoder.decode(rawHex);
+            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
+        } catch (e) {
+            console.error('Decode error:', e);
+        }
+    }
+
+    async disconnectSerial() {
+        if (this.serialReader) {
+            await this.serialReader.cancel();
+        }
+    }
+
+    onSerialDisconnected() {
+        if (this.serialPort) {
+            this.serialPort.close().catch(() => {});
+            this.serialPort = null;
+        }
+        this.serialReader = null;
+        this.serialBuffer = new Uint8Array(0);
+        this.updateStatus('Odpojeno', 'disconnected');
+        this.serialBtn.textContent = 'Připojit USB';
+        this.serialBtn.disabled = false;
+        this.serialBtn.onclick = () => this.connectSerial();
+    }
+
+    handleData(event) {
+        // BLE: raw payload, no frame header
+        this.handlePayload(new Uint8Array(event.target.value.buffer));
     }
 
     bufferToHex(buffer) {

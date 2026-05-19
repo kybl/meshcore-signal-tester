@@ -247,6 +247,13 @@ header {
     line-height: 1.35;
 }
 
+.signal-values {
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    gap: 6px;
+}
+
 .empty-state {
     background: white;
     padding: 50px 40px;
