@@ -5,9 +5,6 @@ class MeshCoreMonitor {
     constructor() {
         this.device = null;
         this.bleRxCharacteristic = null;
-        this.serialPort = null;
-        this.serialReader = null;
-        this.serialBuffer = new Uint8Array(0);
         this.hashData = new Map();
         this.allRepeaters = new Map();
         this.totalRxCount = 0;
@@ -21,7 +18,6 @@ class MeshCoreMonitor {
 
     initUI() {
         this.connectBtn = document.getElementById('connectBtn');
-        this.serialBtn = document.getElementById('serialBtn');
         this.statusEl = document.getElementById('status');
         this.hashContainer = document.getElementById('hashContainer');
         this.emptyState = document.getElementById('emptyState');
@@ -32,7 +28,6 @@ class MeshCoreMonitor {
         this.soundCheckbox = document.getElementById('soundEnabled');
 
         this.connectBtn.onclick = () => this.connectBluetooth();
-        this.serialBtn.onclick = () => this.connectSerial();
 
         this.hashContainer.addEventListener('click', e => {
             const btn = e.target.closest('.copy-hex-btn');
@@ -46,13 +41,13 @@ class MeshCoreMonitor {
 
     async connectBluetooth() {
         if (!navigator.bluetooth) {
-            alert('Web Bluetooth API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
+            alert('Web Bluetooth API is not available.\n\nRequirements:\n• Chrome or Edge browser\n• Page must be served over HTTPS or localhost');
             return;
         }
 
         try {
             this.connectBtn.disabled = true;
-            this.updateStatus('Připojování...', 'disconnected');
+            this.updateStatus('Connecting...', 'disconnected');
 
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
@@ -60,7 +55,7 @@ class MeshCoreMonitor {
                     { namePrefix: 'MeshCore' }
                 ],
                 optionalServices: [
-                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e' // Nordic UART Service
+                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
                 ]
             });
 
@@ -88,120 +83,31 @@ class MeshCoreMonitor {
             await txCharacteristic.startNotifications();
             txCharacteristic.addEventListener('characteristicvaluechanged', (event) => this.handleData(event));
 
-            await this.sendAppStart('ble');
+            await this.sendAppStart();
 
-            this.updateStatus('Připojeno', 'connected');
-            this.connectBtn.textContent = 'Odpojit';
+            this.updateStatus('Connected', 'connected');
+            this.connectBtn.textContent = 'Disconnect';
             this.connectBtn.disabled = false;
             this.connectBtn.onclick = () => this.disconnect();
 
         } catch (error) {
             if (error.name !== 'NotFoundError') {
                 console.error('Bluetooth error:', error);
-                alert('Chyba při připojování: ' + error.message);
+                alert('Connection error: ' + error.message);
             }
-            this.updateStatus('Odpojeno', 'disconnected');
+            this.updateStatus('Disconnected', 'disconnected');
             this.connectBtn.disabled = false;
         }
     }
 
-    async connectSerial() {
-        if (!navigator.serial) {
-            alert('Web Serial API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
-            return;
-        }
-
-        try {
-            this.serialBtn.disabled = true;
-            this.updateStatus('Připojování...', 'disconnected');
-
-            this.serialPort = await navigator.serial.requestPort();
-            await this.serialPort.open({ baudRate: 115200 });
-
-            this.updateStatus('Připojeno (USB)', 'connected');
-            this.serialBtn.textContent = 'Odpojit USB';
-            this.serialBtn.disabled = false;
-            this.serialBtn.onclick = () => this.disconnectSerial();
-
-            await this.sendAppStart('serial');
-            this.readSerialLoop();
-        } catch (error) {
-            if (error.name !== 'NotFoundError') {
-                console.error('Serial error:', error);
-                alert('Chyba při připojování USB: ' + error.message);
-            }
-            this.updateStatus('Odpojeno', 'disconnected');
-            this.serialBtn.disabled = false;
-        }
-    }
-
-    async readSerialLoop() {
-        this.serialBuffer = new Uint8Array(0);
-        this.serialReader = this.serialPort.readable.getReader();
-
-        try {
-            while (true) {
-                const { value, done } = await this.serialReader.read();
-                if (done) break;
-
-                const merged = new Uint8Array(this.serialBuffer.length + value.length);
-                merged.set(this.serialBuffer);
-                merged.set(value, this.serialBuffer.length);
-                this.serialBuffer = merged;
-
-                this.tryDecodeSerialBuffer();
-            }
-        } catch (error) {
-            if (error.name !== 'AbortError') {
-                console.error('Serial read error:', error);
-            }
-        } finally {
-            this.serialReader.releaseLock();
-            this.onSerialDisconnected();
-        }
-    }
-
-    tryDecodeSerialBuffer() {
-        // Parse framed messages: 0x3E [len_lo] [len_hi] [payload...]
-        while (this.serialBuffer.length >= 3) {
-            const startIdx = this.serialBuffer.indexOf(0x3E);
-            if (startIdx === -1) {
-                this.serialBuffer = new Uint8Array(0);
-                return;
-            }
-            if (startIdx > 0) {
-                this.serialBuffer = this.serialBuffer.slice(startIdx);
-            }
-            if (this.serialBuffer.length < 3) return;
-
-            const len = this.serialBuffer[1] | (this.serialBuffer[2] << 8);
-            if (len > 300) {
-                this.serialBuffer = this.serialBuffer.slice(1);
-                continue;
-            }
-            if (this.serialBuffer.length < 3 + len) return;
-
-            const payload = this.serialBuffer.slice(3, 3 + len);
-            this.serialBuffer = this.serialBuffer.slice(3 + len);
-            this.handlePayload(payload);
-        }
-    }
-
-    async sendAppStart(transport) {
+    async sendAppStart() {
         // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
         const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
-        if (transport === 'ble') {
-            await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
-        } else {
-            const frame = new Uint8Array(3 + payload.length);
-            frame[0] = 0x3C;
-            frame[1] = payload.length & 0xFF;
-            frame[2] = (payload.length >> 8) & 0xFF;
-            frame.set(payload, 3);
-            const writer = this.serialPort.writable.getWriter();
-            await writer.write(frame);
-            writer.releaseLock();
-        }
+        await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
+    }
+
+    handleData(event) {
+        this.handlePayload(new Uint8Array(event.target.value.buffer));
     }
 
     handlePayload(payload) {
@@ -216,7 +122,6 @@ class MeshCoreMonitor {
         }
         if (loraPacket.length === 0) return;
 
-        // Signed int8 conversion for SNR (stored as value*4) and RSSI
         const snr  = (payload[1] > 127 ? payload[1] - 256 : payload[1]) / 4;
         const rssi = payload[2] > 127 ? payload[2] - 256 : payload[2];
 
@@ -229,30 +134,6 @@ class MeshCoreMonitor {
         }
     }
 
-    async disconnectSerial() {
-        if (this.serialReader) {
-            await this.serialReader.cancel();
-        }
-    }
-
-    onSerialDisconnected() {
-        if (this.serialPort) {
-            this.serialPort.close().catch(() => {});
-            this.serialPort = null;
-        }
-        this.serialReader = null;
-        this.serialBuffer = new Uint8Array(0);
-        this.updateStatus('Odpojeno', 'disconnected');
-        this.serialBtn.textContent = 'Připojit USB';
-        this.serialBtn.disabled = false;
-        this.serialBtn.onclick = () => this.connectSerial();
-    }
-
-    handleData(event) {
-        // BLE: raw payload, no frame header
-        this.handlePayload(new Uint8Array(event.target.value.buffer));
-    }
-
     bufferToHex(buffer) {
         return Array.from(new Uint8Array(buffer))
             .map(b => b.toString(16).padStart(2, '0'))
@@ -260,7 +141,6 @@ class MeshCoreMonitor {
     }
 
     processPacket(packet, rawHex, snr, rssi) {
-        // Hash only from payload (path-independent) so same message via different routes groups together
         const payloadRaw = packet.payload?.raw;
         const hash = payloadRaw ? this.hashPayload(payloadRaw) : packet.messageHash;
         const repeater = this.extractRepeater(packet);
@@ -275,7 +155,7 @@ class MeshCoreMonitor {
     }
 
     hashPayload(str) {
-        // Two independent FNV-1a passes → 16 hex chars, matches official app display format
+        // Two independent FNV-1a passes → 16 hex chars
         let h1 = 0x811c9dc5, h2 = 0xdeadbeef;
         for (let i = 0; i < str.length; i++) {
             const c = str.charCodeAt(i);
@@ -438,7 +318,6 @@ class MeshCoreMonitor {
     }
 
     animateLifetimeBar(hash, barElement) {
-        const startTime = Date.now();
         const updateBar = () => {
             const data = this.hashData.get(hash);
             if (!data) return;
@@ -457,9 +336,7 @@ class MeshCoreMonitor {
     }
 
     startCleanupTimer() {
-        this.cleanupInterval = setInterval(() => {
-            this.cleanup();
-        }, 10000);
+        this.cleanupInterval = setInterval(() => this.cleanup(), 10000);
     }
 
     cleanup() {
@@ -477,9 +354,7 @@ class MeshCoreMonitor {
             this.hashData.delete(hash);
         }
 
-        if (toRemove.length > 0) {
-            this.updateStats();
-        }
+        if (toRemove.length > 0) this.updateStats();
 
         if (this.hashData.size === 0) {
             this.emptyState.classList.remove('hidden');
@@ -498,13 +373,13 @@ class MeshCoreMonitor {
         this.activeHashesEl.textContent = this.hashData.size;
         this.totalRxEl.textContent = this.totalRxCount;
 
-        let totalUniqueRepeaters = new Set();
+        const uniqueRepeaters = new Set();
         for (const data of this.hashData.values()) {
             for (const repeater of data.repeaters.keys()) {
-                totalUniqueRepeaters.add(repeater);
+                uniqueRepeaters.add(repeater);
             }
         }
-        this.totalRepeatersEl.textContent = totalUniqueRepeaters.size;
+        this.totalRepeatersEl.textContent = uniqueRepeaters.size;
     }
 
     updateStatus(text, className) {
@@ -520,8 +395,7 @@ class MeshCoreMonitor {
     }
 
     formatTime(timestamp) {
-        const date = new Date(timestamp);
-        return date.toLocaleTimeString('cs-CZ');
+        return new Date(timestamp).toLocaleTimeString('en-GB');
     }
 
     disconnect() {
@@ -532,18 +406,15 @@ class MeshCoreMonitor {
     }
 
     onDisconnected() {
-        this.updateStatus('Odpojeno', 'disconnected');
-        this.connectBtn.textContent = 'Připojit Bluetooth';
+        this.updateStatus('Disconnected', 'disconnected');
+        this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
     }
 }
 
-// Initialize app when DOM is ready
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        new MeshCoreMonitor();
-    });
+    document.addEventListener('DOMContentLoaded', () => new MeshCoreMonitor());
 } else {
     new MeshCoreMonitor();
 }
