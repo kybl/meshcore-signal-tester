@@ -49,13 +49,22 @@ class MeshCoreMonitor {
             this.device = device;
             this.device.addEventListener('gattserverdisconnected', () => this.onDisconnected());
 
-            const server = await device.gatt.connect();
-            const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+            const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+            const NUS_TX     = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
-            // TX characteristic (device sends data to us)
-            const txCharacteristic = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
+            let service;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    const server = await device.gatt.connect();
+                    service = await server.getPrimaryService(NUS_SERVICE);
+                    break;
+                } catch (e) {
+                    if (attempt === 3) throw e;
+                    await new Promise(r => setTimeout(r, attempt * 500));
+                }
+            }
 
-            // Start notifications
+            const txCharacteristic = await service.getCharacteristic(NUS_TX);
             await txCharacteristic.startNotifications();
             txCharacteristic.addEventListener('characteristicvaluechanged', (event) => this.handleData(event));
 
