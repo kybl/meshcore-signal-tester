@@ -4,6 +4,7 @@ import { MeshCoreDecoder } from 'https://esm.sh/@michaelhart/meshcore-decoder';
 class MeshCoreMonitor {
     constructor() {
         this.device = null;
+        this.bleRxCharacteristic = null;
         this.serialPort = null;
         this.serialReader = null;
         this.serialBuffer = new Uint8Array(0);
@@ -54,6 +55,7 @@ class MeshCoreMonitor {
             this.device.addEventListener('gattserverdisconnected', () => this.onDisconnected());
 
             const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+            const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
             const NUS_TX     = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
             let service;
@@ -68,9 +70,12 @@ class MeshCoreMonitor {
                 }
             }
 
+            this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
             const txCharacteristic = await service.getCharacteristic(NUS_TX);
             await txCharacteristic.startNotifications();
             txCharacteristic.addEventListener('characteristicvaluechanged', (event) => this.handleData(event));
+
+            await this.sendAppStart('ble');
 
             this.updateStatus('Připojeno', 'connected');
             this.connectBtn.textContent = 'Odpojit';
@@ -105,6 +110,7 @@ class MeshCoreMonitor {
             this.serialBtn.disabled = false;
             this.serialBtn.onclick = () => this.disconnectSerial();
 
+            await this.sendAppStart('serial');
             this.readSerialLoop();
         } catch (error) {
             if (error.name !== 'NotFoundError') {
@@ -125,8 +131,6 @@ class MeshCoreMonitor {
                 const { value, done } = await this.serialReader.read();
                 if (done) break;
 
-                console.log('[serial chunk]', value.length, 'bytes:', new TextDecoder().decode(value));
-
                 const merged = new Uint8Array(this.serialBuffer.length + value.length);
                 merged.set(this.serialBuffer);
                 merged.set(value, this.serialBuffer.length);
@@ -145,27 +149,64 @@ class MeshCoreMonitor {
     }
 
     tryDecodeSerialBuffer() {
-        if (this.serialBuffer.length === 0) return;
+        // Parse framed messages: 0x3E [len_lo] [len_hi] [payload...]
+        while (this.serialBuffer.length >= 3) {
+            const startIdx = this.serialBuffer.indexOf(0x3E);
+            if (startIdx === -1) {
+                this.serialBuffer = new Uint8Array(0);
+                return;
+            }
+            if (startIdx > 0) {
+                this.serialBuffer = this.serialBuffer.slice(startIdx);
+            }
+            if (this.serialBuffer.length < 3) return;
 
-        const text = new TextDecoder().decode(this.serialBuffer);
+            const len = this.serialBuffer[1] | (this.serialBuffer[2] << 8);
+            if (len > 300) {
+                this.serialBuffer = this.serialBuffer.slice(1);
+                continue;
+            }
+            if (this.serialBuffer.length < 3 + len) return;
 
-        // Log complete lines so we can see the format
-        const newlineIdx = text.lastIndexOf('\n');
-        if (newlineIdx !== -1) {
-            console.log('[serial]', text.substring(0, newlineIdx));
+            const payload = this.serialBuffer.slice(3, 3 + len);
+            this.serialBuffer = this.serialBuffer.slice(3 + len);
+            this.handlePayload(payload);
         }
+    }
 
+    async sendAppStart(transport) {
+        // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
+        const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
+        if (transport === 'ble') {
+            await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
+        } else {
+            const frame = new Uint8Array(3 + payload.length);
+            frame[0] = 0x3C;
+            frame[1] = payload.length & 0xFF;
+            frame[2] = (payload.length >> 8) & 0xFF;
+            frame.set(payload, 3);
+            const writer = this.serialPort.writable.getWriter();
+            await writer.write(frame);
+            writer.releaseLock();
+        }
+    }
+
+    handlePayload(payload) {
+        const pushCode = payload[0];
+        let loraPacket;
+        if (pushCode === 0x88) {
+            loraPacket = payload.slice(3);       // LOG_DATA: SNR[1], RSSI[2], packet[3:]
+        } else if (pushCode === 0x84) {
+            loraPacket = payload.slice(4);       // RAW_DATA: SNR[1], RSSI[2], 0xFF[3], packet[4:]
+        } else {
+            return;
+        }
+        if (loraPacket.length === 0) return;
         try {
-            const hexData = this.bufferToHex(this.serialBuffer.buffer);
-            const packet = MeshCoreDecoder.decode(hexData);
-            if (packet.isValid) {
-                this.processPacket(packet);
-                this.serialBuffer = new Uint8Array(0);
-            }
+            const packet = MeshCoreDecoder.decode(this.bufferToHex(loraPacket.buffer));
+            if (packet.isValid) this.processPacket(packet);
         } catch (e) {
-            if (this.serialBuffer.length > 4096) {
-                this.serialBuffer = new Uint8Array(0);
-            }
+            console.error('Decode error:', e);
         }
     }
 
@@ -189,17 +230,8 @@ class MeshCoreMonitor {
     }
 
     handleData(event) {
-        const value = event.target.value;
-
-        try {
-            const hexData = this.bufferToHex(value.buffer);
-            const packet = MeshCoreDecoder.decode(hexData);
-            if (packet.isValid) {
-                this.processPacket(packet);
-            }
-        } catch (error) {
-            console.error('Error processing data:', error);
-        }
+        // BLE: raw payload, no frame header
+        this.handlePayload(new Uint8Array(event.target.value.buffer));
     }
 
     bufferToHex(buffer) {
@@ -236,7 +268,6 @@ class MeshCoreMonitor {
         const now = Date.now();
 
         if (!this.hashData.has(hash)) {
-            // Nový hash
             this.hashData.set(hash, {
                 repeaters: new Map([[repeater, 1]]),
                 firstSeen: now,
@@ -244,7 +275,6 @@ class MeshCoreMonitor {
             });
             this.createHashBox(hash);
         } else {
-            // Existující hash
             const data = this.hashData.get(hash);
             data.lastSeen = now;
 
@@ -284,8 +314,6 @@ class MeshCoreMonitor {
 
         box.appendChild(lifetimeBar);
         this.hashContainer.prepend(box);
-
-        // Start animating lifetime bar
         this.animateLifetimeBar(hash, lifetimeBar);
     }
 
@@ -299,7 +327,7 @@ class MeshCoreMonitor {
 
     renderRepeaters(repeatersMap) {
         return Array.from(repeatersMap.entries())
-            .sort((a, b) => b[1] - a[1]) // Seřadit podle počtu
+            .sort((a, b) => b[1] - a[1])
             .map(([repeater, count]) => `
                 <div class="repeater-tag">
                     ${repeater}
@@ -330,7 +358,7 @@ class MeshCoreMonitor {
     startCleanupTimer() {
         this.cleanupInterval = setInterval(() => {
             this.cleanup();
-        }, 10000); // Kontrola každých 10 sekund
+        }, 10000);
     }
 
     cleanup() {
