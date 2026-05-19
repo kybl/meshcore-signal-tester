@@ -1,5 +1,5 @@
 // MeshCore RX Monitor Application
-import { MeshCoreDecoder } from 'https://esm.sh/@michaelhart/meshcore-decoder';
+import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
 
 class MeshCoreMonitor {
     constructor() {
@@ -206,8 +206,9 @@ class MeshCoreMonitor {
         }
         if (loraPacket.length === 0) return;
         try {
-            const packet = MeshCoreDecoder.decode(this.bufferToHex(loraPacket.buffer));
-            if (packet.isValid) this.processPacket(packet);
+            const rawHex = this.bufferToHex(loraPacket.buffer);
+            const packet = MeshCoreDecoder.decode(rawHex);
+            if (packet.isValid) this.processPacket(packet, rawHex);
         } catch (e) {
             console.error('Decode error:', e);
         }
@@ -243,12 +244,16 @@ class MeshCoreMonitor {
             .join('');
     }
 
-    processPacket(packet) {
+    processPacket(packet, rawHex) {
         const hash = packet.messageHash;
         const repeater = this.extractRepeater(packet);
+        const type = [
+            Utils.getRouteTypeName(packet.routeType),
+            Utils.getPayloadTypeName(packet.payloadType),
+        ].filter(Boolean).join(' ');
 
         if (hash && repeater) {
-            this.addRxEntry(hash, repeater);
+            this.addRxEntry(hash, repeater, type, rawHex);
         }
     }
 
@@ -266,7 +271,7 @@ class MeshCoreMonitor {
         return nodeId?.toString() || 'unknown';
     }
 
-    addRxEntry(hash, repeater) {
+    addRxEntry(hash, repeater, type, rawHex) {
         this.totalRxCount++;
         const now = Date.now();
 
@@ -274,7 +279,9 @@ class MeshCoreMonitor {
             this.hashData.set(hash, {
                 repeaters: new Map([[repeater, 1]]),
                 firstSeen: now,
-                lastSeen: now
+                lastSeen: now,
+                type,
+                rawHex,
             });
             this.createHashBox(hash);
         } else {
@@ -309,10 +316,12 @@ class MeshCoreMonitor {
                 <div class="hash-value">${this.truncateHash(hash)}</div>
                 <div class="timestamp">${this.formatTime(data.firstSeen)}</div>
             </div>
+            ${data.type ? `<div class="msg-type">${data.type}</div>` : ''}
             <div class="repeaters-label">Repeaters:</div>
             <div class="repeater-list" id="repeaters-${hash}">
                 ${this.renderRepeaters(data.repeaters)}
             </div>
+            <div class="raw-hex" title="${data.rawHex}">${data.rawHex}</div>
         `;
 
         box.appendChild(lifetimeBar);

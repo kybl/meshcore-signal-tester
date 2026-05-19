@@ -198,6 +198,30 @@ h1 {
     color: #999;
 }
 
+.msg-type {
+    display: inline-block;
+    background: #f0f0ff;
+    color: #5568d3;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.raw-hex {
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    color: #aaa;
+    margin-top: 10px;
+    word-break: break-all;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+}
+
 .repeaters-label {
     font-size: 13px;
     color: #666;
