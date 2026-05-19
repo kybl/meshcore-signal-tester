@@ -4,10 +4,12 @@ import { MeshCoreDecoder } from 'https://esm.sh/@michaelhart/meshcore-decoder';
 class MeshCoreMonitor {
     constructor() {
         this.device = null;
-        this.characteristic = null;
-        this.hashData = new Map(); // hash -> { repeaters: Map(repeater -> count), firstSeen: timestamp, lastSeen: timestamp }
+        this.serialPort = null;
+        this.serialReader = null;
+        this.serialBuffer = new Uint8Array(0);
+        this.hashData = new Map();
         this.totalRxCount = 0;
-        this.HASH_LIFETIME = 300000; // 5 minut (300 000 ms)
+        this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
 
         this.initUI();
@@ -16,6 +18,7 @@ class MeshCoreMonitor {
 
     initUI() {
         this.connectBtn = document.getElementById('connectBtn');
+        this.serialBtn = document.getElementById('serialBtn');
         this.statusEl = document.getElementById('status');
         this.hashContainer = document.getElementById('hashContainer');
         this.emptyState = document.getElementById('emptyState');
@@ -23,7 +26,8 @@ class MeshCoreMonitor {
         this.totalRxEl = document.getElementById('totalRx');
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
 
-        this.connectBtn.addEventListener('click', () => this.connectBluetooth());
+        this.connectBtn.onclick = () => this.connectBluetooth();
+        this.serialBtn.onclick = () => this.connectSerial();
     }
 
     async connectBluetooth() {
@@ -74,11 +78,104 @@ class MeshCoreMonitor {
             this.connectBtn.onclick = () => this.disconnect();
 
         } catch (error) {
-            console.error('Bluetooth error:', error);
-            alert('Chyba při připojování: ' + error.message);
+            if (error.name !== 'NotFoundError') {
+                console.error('Bluetooth error:', error);
+                alert('Chyba při připojování: ' + error.message);
+            }
             this.updateStatus('Odpojeno', 'disconnected');
             this.connectBtn.disabled = false;
         }
+    }
+
+    async connectSerial() {
+        if (!navigator.serial) {
+            alert('Web Serial API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
+            return;
+        }
+
+        try {
+            this.serialBtn.disabled = true;
+            this.updateStatus('Připojování...', 'disconnected');
+
+            this.serialPort = await navigator.serial.requestPort();
+            await this.serialPort.open({ baudRate: 115200 });
+
+            this.updateStatus('Připojeno (USB)', 'connected');
+            this.serialBtn.textContent = 'Odpojit USB';
+            this.serialBtn.disabled = false;
+            this.serialBtn.onclick = () => this.disconnectSerial();
+
+            this.readSerialLoop();
+        } catch (error) {
+            if (error.name !== 'NotFoundError') {
+                console.error('Serial error:', error);
+                alert('Chyba při připojování USB: ' + error.message);
+            }
+            this.updateStatus('Odpojeno', 'disconnected');
+            this.serialBtn.disabled = false;
+        }
+    }
+
+    async readSerialLoop() {
+        this.serialBuffer = new Uint8Array(0);
+        this.serialReader = this.serialPort.readable.getReader();
+
+        try {
+            while (true) {
+                const { value, done } = await this.serialReader.read();
+                if (done) break;
+
+                const merged = new Uint8Array(this.serialBuffer.length + value.length);
+                merged.set(this.serialBuffer);
+                merged.set(value, this.serialBuffer.length);
+                this.serialBuffer = merged;
+
+                this.tryDecodeSerialBuffer();
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.error('Serial read error:', error);
+            }
+        } finally {
+            this.serialReader.releaseLock();
+            this.onSerialDisconnected();
+        }
+    }
+
+    tryDecodeSerialBuffer() {
+        if (this.serialBuffer.length === 0) return;
+
+        try {
+            const hexData = this.bufferToHex(this.serialBuffer.buffer);
+            const packet = MeshCoreDecoder.decode(hexData);
+            if (packet.isValid) {
+                this.processPacket(packet);
+                this.serialBuffer = new Uint8Array(0);
+            }
+        } catch (e) {
+            if (this.serialBuffer.length > 4096) {
+                this.serialBuffer = new Uint8Array(0);
+            }
+        }
+    }
+
+    async disconnectSerial() {
+        if (this.serialReader) {
+            await this.serialReader.cancel();
+        }
+    }
+
+    onSerialDisconnected() {
+        if (this.serialPort) {
+            this.serialPort.close().catch(() => {});
+            this.serialPort = null;
+        }
+        this.serialReader = null;
+        this.serialBuffer = new Uint8Array(0);
+        this.updateStatus('Odpojeno', 'disconnected');
+        this.serialBtn.textContent = 'Připojit USB';
+        this.serialBtn.disabled = false;
+        this.serialBtn.onclick = () => this.connectSerial();
     }
 
     handleData(event) {
@@ -118,7 +215,6 @@ class MeshCoreMonitor {
     }
 
     formatNodeId(nodeId) {
-        // Formátujeme node ID do čitelné podoby
         if (typeof nodeId === 'number') {
             return '!' + nodeId.toString(16).padStart(8, '0');
         }
