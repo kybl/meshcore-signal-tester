@@ -12,6 +12,7 @@ class MeshCoreMonitor {
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
         this.audioCtx = null;
+        this.wakeLock = null;
 
         this.initUI();
         this.startCleanupTimer();
@@ -87,6 +88,7 @@ class MeshCoreMonitor {
             txCharacteristic.addEventListener('characteristicvaluechanged', e => this.handleData(e));
 
             await this.sendAppStart();
+            this.acquireWakeLock();
 
             this.updateStatus('Connected', 'connected');
             this.connectBtn.textContent = 'Disconnect';
@@ -461,6 +463,23 @@ class MeshCoreMonitor {
         return new Date(timestamp).toLocaleTimeString('en-GB');
     }
 
+    async acquireWakeLock() {
+        if (!('wakeLock' in navigator)) return;
+        try {
+            this.wakeLock = await navigator.wakeLock.request('screen');
+            this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
+        } catch (e) {
+            // Wake lock may be denied (battery saver, permission, etc.)
+        }
+    }
+
+    releaseWakeLock() {
+        if (this.wakeLock) {
+            this.wakeLock.release();
+            this.wakeLock = null;
+        }
+    }
+
     disconnect() {
         if (this.device && this.device.gatt.connected) {
             this.device.gatt.disconnect();
@@ -469,6 +488,7 @@ class MeshCoreMonitor {
     }
 
     onDisconnected() {
+        this.releaseWakeLock();
         this.updateStatus('Disconnected', 'disconnected');
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
@@ -476,8 +496,18 @@ class MeshCoreMonitor {
     }
 }
 
+let monitor;
+function init() { monitor = new MeshCoreMonitor(); }
+
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => new MeshCoreMonitor());
+    document.addEventListener('DOMContentLoaded', init);
 } else {
-    new MeshCoreMonitor();
+    init();
 }
+
+// Re-acquire wake lock when page becomes visible again (OS releases it on hide)
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && monitor?.device?.gatt?.connected) {
+        monitor.acquireWakeLock();
+    }
+});
