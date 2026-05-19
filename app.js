@@ -250,7 +250,9 @@ class MeshCoreMonitor {
     }
 
     processPacket(packet, rawHex, snr, rssi) {
-        const hash = packet.messageHash;
+        // Hash only from payload (path-independent) so same message via different routes groups together
+        const payloadRaw = packet.payload?.raw;
+        const hash = payloadRaw ? this.hashPayload(payloadRaw) : packet.messageHash;
         const repeater = this.extractRepeater(packet);
         const type = [
             Utils.getRouteTypeName(packet.routeType),
@@ -260,6 +262,17 @@ class MeshCoreMonitor {
         if (hash && repeater) {
             this.addRxEntry(hash, repeater, type, rawHex, snr, rssi);
         }
+    }
+
+    hashPayload(str) {
+        // Two independent FNV-1a passes → 16 hex chars, matches official app display format
+        let h1 = 0x811c9dc5, h2 = 0xdeadbeef;
+        for (let i = 0; i < str.length; i++) {
+            const c = str.charCodeAt(i);
+            h1 ^= c; h1 = Math.imul(h1, 0x01000193);
+            h2 ^= c; h2 = Math.imul(h2, 0x01000193) ^ (h2 >>> 5);
+        }
+        return [h1, h2].map(h => (h >>> 0).toString(16).padStart(8, '0')).join('').toUpperCase();
     }
 
     extractRepeater(packet) {
