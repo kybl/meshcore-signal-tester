@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeshCore RX Monitor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>MeshCore RX Monitor</h1>
+            <div class="connection-status">
+                <span id="status" class="status disconnected">Odpojeno</span>
+                <button id="connectBtn" class="btn-primary">Připojit Bluetooth</button>
+            </div>
+        </header>
+
+        <main>
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-label">Aktivní hashes</div>
+                    <div class="stat-value" id="activeHashes">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Celkem RX</div>
+                    <div class="stat-value" id="totalRx">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Celkem repeaterů</div>
+                    <div class="stat-value" id="totalRepeaters">0</div>
+                </div>
+            </div>
+
+            <div id="hashContainer" class="hash-container">
+                <!-- Hash boxy se budou přidávat dynamicky -->
+            </div>
+
+            <div id="emptyState" class="empty-state">
+                <p>Připojte se k MeshCore companion přes Bluetooth a začněte sledovat RX logy</p>
+            </div>
+        </main>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "meshcore-rx-monitor",
+  "version": "1.0.0",
+  "description": "Webová aplikace pro monitorování RX logů z MeshCore mesh sítě",
+  "type": "module",
+  "scripts": {
+    "serve": "python -m http.server 8000"
+  },
+  "keywords": [
+    "meshcore",
+    "bluetooth",
+    "mesh-network",
+    "rx-monitor"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@michaelhart/meshcore-decoder": "^0.1.0"
+  },
+  "devDependencies": {}
+}
