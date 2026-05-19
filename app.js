@@ -1,5 +1,4 @@
 // MeshCore RX Monitor Application
-import { MeshCoreDecoder } from 'https://cdn.skypack.dev/@michaelhart/meshcore-decoder';
 
 class MeshCoreMonitor {
     constructor() {
@@ -73,19 +72,9 @@ class MeshCoreMonitor {
         const value = event.target.value;
 
         try {
-            // Dekódování pomocí MeshCore Decoder knihovny
-            // Předpokládáme, že data jsou binární packet
-            const hexData = this.bufferToHex(value.buffer);
-
-            try {
-                const packet = MeshCoreDecoder.decode(hexData);
-                this.processPacket(packet);
-            } catch (decodeError) {
-                // Pokud dekódování selže, zkusíme text parsing jako fallback
-                const decoder = new TextDecoder();
-                const text = decoder.decode(value);
-                this.parseRxLog(text);
-            }
+            const decoder = new TextDecoder();
+            const text = decoder.decode(value);
+            this.parseRxLog(text);
         } catch (error) {
             console.error('Error processing data:', error);
         }
