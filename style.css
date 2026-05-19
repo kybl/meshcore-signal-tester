@@ -82,6 +82,32 @@ h1 {
     transform: none;
 }
 
+.btn-secondary {
+    background: white;
+    color: #667eea;
+    border: 2px solid #667eea;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-secondary:hover {
+    background: #667eea;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+.btn-secondary:disabled {
+    border-color: #ccc;
+    color: #ccc;
+    cursor: not-allowed;
+    transform: none;
+}
+
 .stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -122,6 +148,8 @@ h1 {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     animation: slideIn 0.3s ease;
     position: relative;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .hash-box.fading {
@@ -172,6 +200,30 @@ h1 {
     color: #999;
 }
 
+.msg-type {
+    display: inline-block;
+    background: #f0f0ff;
+    color: #5568d3;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.raw-hex {
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    color: #aaa;
+    margin-top: 10px;
+    word-break: break-all;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+}
+
 .repeaters-label {
     font-size: 13px;
     color: #666;
@@ -202,6 +254,13 @@ h1 {
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 11px;
+}
+
+.signal-values {
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    gap: 6px;
 }
 
 .empty-state {

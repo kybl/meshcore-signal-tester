@@ -1,13 +1,16 @@
 // MeshCore RX Monitor Application
-import { MeshCoreDecoder } from 'https://cdn.skypack.dev/@michaelhart/meshcore-decoder';
+import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
 
 class MeshCoreMonitor {
     constructor() {
         this.device = null;
-        this.characteristic = null;
-        this.hashData = new Map(); // hash -> { repeaters: Map(repeater -> count), firstSeen: timestamp, lastSeen: timestamp }
+        this.bleRxCharacteristic = null;
+        this.serialPort = null;
+        this.serialReader = null;
+        this.serialBuffer = new Uint8Array(0);
+        this.hashData = new Map();
         this.totalRxCount = 0;
-        this.HASH_LIFETIME = 300000; // 5 minut (300 000 ms)
+        this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
 
         this.initUI();
@@ -16,6 +19,7 @@ class MeshCoreMonitor {
 
     initUI() {
         this.connectBtn = document.getElementById('connectBtn');
+        this.serialBtn = document.getElementById('serialBtn');
         this.statusEl = document.getElementById('status');
         this.hashContainer = document.getElementById('hashContainer');
         this.emptyState = document.getElementById('emptyState');
@@ -23,16 +27,20 @@ class MeshCoreMonitor {
         this.totalRxEl = document.getElementById('totalRx');
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
 
-        this.connectBtn.addEventListener('click', () => this.connectBluetooth());
+        this.connectBtn.onclick = () => this.connectBluetooth();
+        this.serialBtn.onclick = () => this.connectSerial();
     }
 
     async connectBluetooth() {
+        if (!navigator.bluetooth) {
+            alert('Web Bluetooth API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
+            return;
+        }
+
         try {
             this.connectBtn.disabled = true;
             this.updateStatus('Připojování...', 'disconnected');
 
-            // Request Bluetooth device
-            // MeshCore uses Nordic UART Service (NUS)
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
                     { namePrefix: 'Meshtastic' },
@@ -46,15 +54,28 @@ class MeshCoreMonitor {
             this.device = device;
             this.device.addEventListener('gattserverdisconnected', () => this.onDisconnected());
 
-            const server = await device.gatt.connect();
-            const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+            const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+            const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+            const NUS_TX     = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
-            // TX characteristic (device sends data to us)
-            const txCharacteristic = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
+            let service;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    const server = await device.gatt.connect();
+                    service = await server.getPrimaryService(NUS_SERVICE);
+                    break;
+                } catch (e) {
+                    if (attempt === 3) throw e;
+                    await new Promise(r => setTimeout(r, attempt * 500));
+                }
+            }
 
-            // Start notifications
+            this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
+            const txCharacteristic = await service.getCharacteristic(NUS_TX);
             await txCharacteristic.startNotifications();
             txCharacteristic.addEventListener('characteristicvaluechanged', (event) => this.handleData(event));
+
+            await this.sendAppStart('ble');
 
             this.updateStatus('Připojeno', 'connected');
             this.connectBtn.textContent = 'Odpojit';
@@ -62,33 +83,164 @@ class MeshCoreMonitor {
             this.connectBtn.onclick = () => this.disconnect();
 
         } catch (error) {
-            console.error('Bluetooth error:', error);
-            alert('Chyba při připojování: ' + error.message);
+            if (error.name !== 'NotFoundError') {
+                console.error('Bluetooth error:', error);
+                alert('Chyba při připojování: ' + error.message);
+            }
             this.updateStatus('Odpojeno', 'disconnected');
             this.connectBtn.disabled = false;
         }
     }
 
-    handleData(event) {
-        const value = event.target.value;
+    async connectSerial() {
+        if (!navigator.serial) {
+            alert('Web Serial API není dostupné.\n\nPožadavky:\n• Prohlížeč Chrome nebo Edge\n• Stránka musí běžet přes HTTPS nebo na localhost');
+            return;
+        }
 
         try {
-            // Dekódování pomocí MeshCore Decoder knihovny
-            // Předpokládáme, že data jsou binární packet
-            const hexData = this.bufferToHex(value.buffer);
+            this.serialBtn.disabled = true;
+            this.updateStatus('Připojování...', 'disconnected');
 
-            try {
-                const packet = MeshCoreDecoder.decode(hexData);
-                this.processPacket(packet);
-            } catch (decodeError) {
-                // Pokud dekódování selže, zkusíme text parsing jako fallback
-                const decoder = new TextDecoder();
-                const text = decoder.decode(value);
-                this.parseRxLog(text);
+            this.serialPort = await navigator.serial.requestPort();
+            await this.serialPort.open({ baudRate: 115200 });
+
+            this.updateStatus('Připojeno (USB)', 'connected');
+            this.serialBtn.textContent = 'Odpojit USB';
+            this.serialBtn.disabled = false;
+            this.serialBtn.onclick = () => this.disconnectSerial();
+
+            await this.sendAppStart('serial');
+            console.log('[serial] APP_START sent');
+            this.readSerialLoop();
+        } catch (error) {
+            if (error.name !== 'NotFoundError') {
+                console.error('Serial error:', error);
+                alert('Chyba při připojování USB: ' + error.message);
+            }
+            this.updateStatus('Odpojeno', 'disconnected');
+            this.serialBtn.disabled = false;
+        }
+    }
+
+    async readSerialLoop() {
+        this.serialBuffer = new Uint8Array(0);
+        this.serialReader = this.serialPort.readable.getReader();
+        console.log('[serial] read loop started, waiting for data...');
+
+        try {
+            while (true) {
+                const { value, done } = await this.serialReader.read();
+                if (done) break;
+
+                console.log('[serial] received', value.length, 'bytes');
+                const merged = new Uint8Array(this.serialBuffer.length + value.length);
+                merged.set(this.serialBuffer);
+                merged.set(value, this.serialBuffer.length);
+                this.serialBuffer = merged;
+
+                this.tryDecodeSerialBuffer();
             }
         } catch (error) {
-            console.error('Error processing data:', error);
+            if (error.name !== 'AbortError') {
+                console.error('Serial read error:', error);
+            }
+        } finally {
+            this.serialReader.releaseLock();
+            this.onSerialDisconnected();
         }
+    }
+
+    tryDecodeSerialBuffer() {
+        // Parse framed messages: 0x3E [len_lo] [len_hi] [payload...]
+        while (this.serialBuffer.length >= 3) {
+            const startIdx = this.serialBuffer.indexOf(0x3E);
+            if (startIdx === -1) {
+                this.serialBuffer = new Uint8Array(0);
+                return;
+            }
+            if (startIdx > 0) {
+                this.serialBuffer = this.serialBuffer.slice(startIdx);
+            }
+            if (this.serialBuffer.length < 3) return;
+
+            const len = this.serialBuffer[1] | (this.serialBuffer[2] << 8);
+            if (len > 300) {
+                this.serialBuffer = this.serialBuffer.slice(1);
+                continue;
+            }
+            if (this.serialBuffer.length < 3 + len) return;
+
+            const payload = this.serialBuffer.slice(3, 3 + len);
+            this.serialBuffer = this.serialBuffer.slice(3 + len);
+            this.handlePayload(payload);
+        }
+    }
+
+    async sendAppStart(transport) {
+        // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
+        const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
+        if (transport === 'ble') {
+            await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
+        } else {
+            const frame = new Uint8Array(3 + payload.length);
+            frame[0] = 0x3C;
+            frame[1] = payload.length & 0xFF;
+            frame[2] = (payload.length >> 8) & 0xFF;
+            frame.set(payload, 3);
+            const writer = this.serialPort.writable.getWriter();
+            await writer.write(frame);
+            writer.releaseLock();
+        }
+    }
+
+    handlePayload(payload) {
+        const pushCode = payload[0];
+        let loraPacket;
+        if (pushCode === 0x88) {
+            loraPacket = payload.slice(3);
+        } else if (pushCode === 0x84) {
+            loraPacket = payload.slice(4);
+        } else {
+            return;
+        }
+        if (loraPacket.length === 0) return;
+
+        // Signed int8 conversion for SNR (stored as value*4) and RSSI
+        const snr  = (payload[1] > 127 ? payload[1] - 256 : payload[1]) / 4;
+        const rssi = payload[2] > 127 ? payload[2] - 256 : payload[2];
+
+        try {
+            const rawHex = this.bufferToHex(loraPacket.buffer);
+            const packet = MeshCoreDecoder.decode(rawHex);
+            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
+        } catch (e) {
+            console.error('Decode error:', e);
+        }
+    }
+
+    async disconnectSerial() {
+        if (this.serialReader) {
+            await this.serialReader.cancel();
+        }
+    }
+
+    onSerialDisconnected() {
+        if (this.serialPort) {
+            this.serialPort.close().catch(() => {});
+            this.serialPort = null;
+        }
+        this.serialReader = null;
+        this.serialBuffer = new Uint8Array(0);
+        this.updateStatus('Odpojeno', 'disconnected');
+        this.serialBtn.textContent = 'Připojit USB';
+        this.serialBtn.disabled = false;
+        this.serialBtn.onclick = () => this.connectSerial();
+    }
+
+    handleData(event) {
+        // BLE: raw payload, no frame header
+        this.handlePayload(new Uint8Array(event.target.value.buffer));
     }
 
     bufferToHex(buffer) {
@@ -97,131 +249,68 @@ class MeshCoreMonitor {
             .join('');
     }
 
-    processPacket(packet) {
-        // Extrahujeme hash a repeater z dekódovaného paketu
-        // Packet obsahuje strukturované informace o zprávě
-        console.log('Decoded packet:', packet);
-
-        // Hash paketu - používáme packet ID nebo hash pokud je dostupný
-        const hash = packet.id?.toString(16) || packet.hash || this.generatePacketHash(packet);
-
-        // Repeater - poslední node v routing path nebo from address
+    processPacket(packet, rawHex, snr, rssi) {
+        // Hash only from payload (path-independent) so same message via different routes groups together
+        const payloadRaw = packet.payload?.raw;
+        const hash = payloadRaw ? this.hashPayload(payloadRaw) : packet.messageHash;
         const repeater = this.extractRepeater(packet);
+        const type = [
+            Utils.getRouteTypeName(packet.routeType),
+            Utils.getPayloadTypeName(packet.payloadType),
+        ].filter(Boolean).join(' ');
 
         if (hash && repeater) {
-            this.addRxEntry(hash, repeater);
+            this.addRxEntry(hash, repeater, type, rawHex, snr, rssi);
         }
     }
 
-    generatePacketHash(packet) {
-        // Generujeme hash z důležitých částí paketu
-        const hashSource = JSON.stringify({
-            id: packet.id,
-            from: packet.from,
-            to: packet.to,
-            payload: packet.payload?.slice(0, 16) // První 16 bytů payload
-        });
-
-        // Jednoduchý hash funkce
-        let hash = 0;
-        for (let i = 0; i < hashSource.length; i++) {
-            const char = hashSource.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
+    hashPayload(str) {
+        // Two independent FNV-1a passes → 16 hex chars, matches official app display format
+        let h1 = 0x811c9dc5, h2 = 0xdeadbeef;
+        for (let i = 0; i < str.length; i++) {
+            const c = str.charCodeAt(i);
+            h1 ^= c; h1 = Math.imul(h1, 0x01000193);
+            h2 ^= c; h2 = Math.imul(h2, 0x01000193) ^ (h2 >>> 5);
         }
-        return Math.abs(hash).toString(16).padStart(8, '0');
+        return [h1, h2].map(h => (h >>> 0).toString(16).padStart(8, '0')).join('').toUpperCase();
     }
 
     extractRepeater(packet) {
-        // Snažíme se získat ID posledního repeateru
-        if (packet.route && packet.route.length > 0) {
-            // Poslední node v routě
-            const lastNode = packet.route[packet.route.length - 1];
-            return this.formatNodeId(lastNode);
+        if (packet.path && packet.path.length > 0) {
+            return this.formatNodeId(packet.path[packet.path.length - 1]);
         }
-
-        if (packet.from) {
-            return this.formatNodeId(packet.from);
-        }
-
-        if (packet.via) {
-            return this.formatNodeId(packet.via);
-        }
-
         return 'direct';
     }
 
     formatNodeId(nodeId) {
-        // Formátujeme node ID do čitelné podoby
         if (typeof nodeId === 'number') {
             return '!' + nodeId.toString(16).padStart(8, '0');
         }
         return nodeId?.toString() || 'unknown';
     }
 
-    parseRxLog(logText) {
-        // Fallback text parsing pro případ, že data nejsou binární packet
-        const lines = logText.split('\n');
-
-        for (const line of lines) {
-            if (!line.toLowerCase().includes('rx')) continue;
-
-            let hash = null;
-            let repeater = null;
-
-            // Varianta 1: hash=XXX via=YYY
-            let match = line.match(/hash[=:]?\s*([a-fA-F0-9]+).*?via[=:]?\s*([a-zA-Z0-9_!-]+)/i);
-            if (match) {
-                hash = match[1];
-                repeater = match[2];
-            }
-
-            // Varianta 2: id=XXX from=YYY
-            if (!match) {
-                match = line.match(/(?:id|packet)[=:]?\s*([a-fA-F0-9]+).*?(?:from|via)[=:]?\s*([a-zA-Z0-9_!-]+)/i);
-                if (match) {
-                    hash = match[1];
-                    repeater = match[2];
-                }
-            }
-
-            // Varianta 3: hex hash a node ID ve formátu !XXXXXXXX
-            if (!match) {
-                const hashMatch = line.match(/([a-fA-F0-9]{6,})/);
-                const nodeMatch = line.match(/!([a-fA-F0-9]{8})/);
-                if (hashMatch && nodeMatch) {
-                    hash = hashMatch[1];
-                    repeater = '!' + nodeMatch[1];
-                }
-            }
-
-            if (hash && repeater) {
-                this.addRxEntry(hash, repeater);
-            }
-        }
-    }
-
-    addRxEntry(hash, repeater) {
+    addRxEntry(hash, repeater, type, rawHex, snr, rssi) {
         this.totalRxCount++;
         const now = Date.now();
 
         if (!this.hashData.has(hash)) {
-            // Nový hash
             this.hashData.set(hash, {
-                repeaters: new Map([[repeater, 1]]),
+                repeaters: new Map([[repeater, { count: 1, snr, rssi }]]),
                 firstSeen: now,
-                lastSeen: now
+                lastSeen: now,
+                type,
+                rawHex,
             });
             this.createHashBox(hash);
         } else {
-            // Existující hash
             const data = this.hashData.get(hash);
             data.lastSeen = now;
 
             if (data.repeaters.has(repeater)) {
-                data.repeaters.set(repeater, data.repeaters.get(repeater) + 1);
+                const r = data.repeaters.get(repeater);
+                data.repeaters.set(repeater, { count: r.count + 1, snr, rssi });
             } else {
-                data.repeaters.set(repeater, 1);
+                data.repeaters.set(repeater, { count: 1, snr, rssi });
             }
 
             this.updateHashBox(hash);
@@ -246,16 +335,16 @@ class MeshCoreMonitor {
                 <div class="hash-value">${this.truncateHash(hash)}</div>
                 <div class="timestamp">${this.formatTime(data.firstSeen)}</div>
             </div>
+            ${data.type ? `<div class="msg-type">${data.type}</div>` : ''}
             <div class="repeaters-label">Repeaters:</div>
             <div class="repeater-list" id="repeaters-${hash}">
                 ${this.renderRepeaters(data.repeaters)}
             </div>
+            <div class="raw-hex" title="${data.rawHex}">${data.rawHex}</div>
         `;
 
         box.appendChild(lifetimeBar);
         this.hashContainer.prepend(box);
-
-        // Start animating lifetime bar
         this.animateLifetimeBar(hash, lifetimeBar);
     }
 
@@ -269,13 +358,20 @@ class MeshCoreMonitor {
 
     renderRepeaters(repeatersMap) {
         return Array.from(repeatersMap.entries())
-            .sort((a, b) => b[1] - a[1]) // Seřadit podle počtu
-            .map(([repeater, count]) => `
+            .sort((a, b) => b[1].count - a[1].count)
+            .map(([repeater, { count, snr, rssi }]) => {
+                const snrColor  = snr  <    0 ? '#ffaaaa' : '#3a3';
+                const rssiColor = rssi < -100 ? '#ffaaaa' : '#3a3';
+                return `
                 <div class="repeater-tag">
                     ${repeater}
                     ${count > 1 ? `<span class="repeater-count">${count}x</span>` : ''}
-                </div>
-            `).join('');
+                    <span class="signal-values">
+                        <span style="color:${snrColor}">${snr.toFixed(1)}&thinsp;dB</span>
+                        <span style="color:${rssiColor}">${rssi}&thinsp;dBm</span>
+                    </span>
+                </div>`;
+            }).join('');
     }
 
     animateLifetimeBar(hash, barElement) {
@@ -300,7 +396,7 @@ class MeshCoreMonitor {
     startCleanupTimer() {
         this.cleanupInterval = setInterval(() => {
             this.cleanup();
-        }, 10000); // Kontrola každých 10 sekund
+        }, 10000);
     }
 
     cleanup() {
