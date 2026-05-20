@@ -25,6 +25,7 @@ class MeshCoreMonitor {
     initUI() {
         this.connectBtn = document.getElementById('connectBtn');
         this.statusEl = document.getElementById('status');
+        this.batteryEl = document.getElementById('batteryStatus');
         this.msgTableHead = document.getElementById('msgTableHead');
         this.msgTableBody = document.getElementById('msgTableBody');
         this.emptyState = document.getElementById('emptyState');
@@ -66,6 +67,15 @@ class MeshCoreMonitor {
             });
         }
 
+        if (navigator.getBattery) {
+            navigator.getBattery().then(bat => {
+                this.battery = bat;
+                this.updateBattery();
+                bat.addEventListener('chargingchange', () => this.updateBattery());
+                bat.addEventListener('levelchange',    () => this.updateBattery());
+            }).catch(() => {});
+        }
+
         const repeaterHead = document.querySelector('.repeater-log-table thead');
         if (repeaterHead) {
             repeaterHead.addEventListener('click', e => {
@@ -76,7 +86,7 @@ class MeshCoreMonitor {
                     this.repeaterSortDir *= -1;
                 } else {
                     this.repeaterSortKey = key;
-                    this.repeaterSortDir = -1;
+                    this.repeaterSortDir = key === 'id' ? 1 : -1;
                 }
                 repeaterHead.querySelectorAll('th').forEach(t => t.classList.remove('sort-asc', 'sort-desc'));
                 th.classList.add(this.repeaterSortDir === 1 ? 'sort-asc' : 'sort-desc');
@@ -187,6 +197,10 @@ class MeshCoreMonitor {
         this.connectBtn.textContent = 'Disconnect';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.disconnect();
+        if (this.emptyState) {
+            const p = this.emptyState.querySelector('p');
+            if (p) p.textContent = 'Connected. Waiting for first RX log…';
+        }
     }
 
     async sendAppStart() {
@@ -454,7 +468,10 @@ class MeshCoreMonitor {
 
         this.playRxSound(rssi);
         this.updateStats();
-        this.emptyState.classList.add('hidden');
+        if (this.emptyState) {
+            this.emptyState.remove();
+            this.emptyState = null;
+        }
     }
 
     // --- Column management ---
@@ -619,7 +636,7 @@ class MeshCoreMonitor {
             this.sortColumns();
             this.renderMsgTable();
             this.updateStats();
-            if (this.hashData.size === 0) this.emptyState.classList.remove('hidden');
+            if (this.hashData.size === 0 && this.emptyState) this.emptyState.classList.remove('hidden');
         }, 400);
     }
 
@@ -679,6 +696,18 @@ class MeshCoreMonitor {
 
         beep(baseFreq, 0, 0.05);
         beep(baseFreq * Math.pow(2, (rssi + 100) / 30), 0.08, 0.05);
+    }
+
+    // --- Battery ---
+
+    updateBattery() {
+        if (!this.batteryEl || !this.battery) return;
+        const pct = Math.round(this.battery.level * 100);
+        const charging = this.battery.charging;
+        this.batteryEl.innerHTML =
+            `<span class="hstat-label">${charging ? '⚡' : '🔋'}</span>${pct}%`;
+        this.batteryEl.classList.remove('hidden', 'battery-low');
+        if (!charging && pct <= 20) this.batteryEl.classList.add('battery-low');
     }
 
     // --- Wake Lock ---

@@ -368,15 +368,12 @@ header {
 .rx-time {
     color: #aaa;
     font-size: 9px;
-    display: block;
-    text-align: center;
 }
 
 .rx-abbr {
     font-size: 10px;
     font-weight: 600;
     color: #555;
-    display: block;
     text-align: center;
 }
 
@@ -443,6 +440,17 @@ header {
     font-weight: 700;
     color: #333;
     min-width: 22px;
+}
+
+.battery-status {
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+    white-space: nowrap;
+}
+
+.battery-status.battery-low {
+    color: #c33;
 }
 
 @media (max-width: 600px) {
