@@ -16,6 +16,14 @@ class MeshCoreMonitor {
         this.repeaterSortKey = 'lastSeen';
         this.repeaterSortDir = -1;
         this.hashCounter = 0;
+        this.chartPoints = [];
+        this.chartColors = new Map();
+        this.chartColorIdx = 0;
+        this.chartColorPalette = [
+            '#667eea','#e74c3c','#2ecc71','#f39c12',
+            '#9b59b6','#1abc9c','#e67e22','#3498db',
+            '#e91e63','#00bcd4',
+        ];
 
         this.initUI();
         this.startCleanupTimer();
@@ -26,6 +34,10 @@ class MeshCoreMonitor {
         this.connectBtn = document.getElementById('connectBtn');
         this.statusEl = document.getElementById('status');
         this.batteryEl = document.getElementById('batteryStatus');
+        this.chartWrap = document.getElementById('chartWrap');
+        this.chartSvg = document.getElementById('rssiChart');
+        this.chartLegend = document.getElementById('chartLegend');
+        setInterval(() => { if (this.chartPoints.length) this.renderChart(); }, 10000);
         this.msgTableHead = document.getElementById('msgTableHead');
         this.msgTableBody = document.getElementById('msgTableBody');
         this.emptyState = document.getElementById('emptyState');
@@ -471,9 +483,11 @@ class MeshCoreMonitor {
             maxSnr:  Math.max(existing?.maxSnr  ?? -999, snr),
             maxRssi: Math.max(existing?.maxRssi ?? -999, rssi),
         });
+        this.chartPoints.push({ time: now, rssi, col: canonicalKey });
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
+        this.renderChart();
 
         this.playRxSound(rssi);
         this.updateStats();
@@ -644,6 +658,87 @@ class MeshCoreMonitor {
         const rc = this.signalColor(rssi, -70, -117);
         const sc = this.signalColor(snr, 13, -10);
         return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
+    }
+
+    // --- Chart ---
+
+    getRepeaterColor(col) {
+        if (!this.chartColors.has(col)) {
+            this.chartColors.set(col, this.chartColorPalette[this.chartColorIdx++ % this.chartColorPalette.length]);
+        }
+        return this.chartColors.get(col);
+    }
+
+    renderChart() {
+        if (!this.chartSvg) return;
+
+        const cutoff = Date.now() - this.HASH_LIFETIME;
+        this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
+
+        if (!this.chartPoints.length) {
+            this.chartWrap?.classList.add('hidden');
+            return;
+        }
+        this.chartWrap?.classList.remove('hidden');
+
+        const W = this.chartSvg.clientWidth || 600;
+        const H = this.chartSvg.clientHeight || 120;
+        const pl = 36, pr = 8, pt = 6, pb = 24;
+        const cw = W - pl - pr;
+        const ch = H - pt - pb;
+
+        const now = Date.now();
+        const tMin = now - this.HASH_LIFETIME;
+
+        const rssis = this.chartPoints.map(p => p.rssi);
+        const rMin = Math.min(...rssis), rMax = Math.max(...rssis);
+        const yPad = 5;
+        const yMin = Math.floor((rMin - yPad) / 10) * 10;
+        const yMax = Math.ceil((rMax + yPad) / 10) * 10;
+
+        const xOf = t  => (pl + (t - tMin) / (now - tMin) * cw).toFixed(1);
+        const yOf = r  => (pt + (1 - (r - yMin) / (yMax - yMin)) * ch).toFixed(1);
+
+        const parts = [];
+
+        // Y grid + labels
+        const yRange = yMax - yMin;
+        const yStep = yRange <= 20 ? 5 : yRange <= 60 ? 10 : 20;
+        for (let y = yMin; y <= yMax; y += yStep) {
+            const yp = yOf(y);
+            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#f0f0f0" stroke-width="1"/>`);
+            parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${y}</text>`);
+        }
+
+        // X grid + labels (every minute)
+        const minMs = 60000;
+        for (let t = Math.ceil(tMin / minMs) * minMs; t <= now; t += minMs) {
+            const xp = xOf(t);
+            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#f0f0f0" stroke-width="1"/>`);
+            const lbl = new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="#bbb">${lbl}</text>`);
+        }
+
+        // Axes
+        parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
+        parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
+
+        // Dots
+        for (const p of this.chartPoints) {
+            parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(p.rssi)}" r="3.5" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.75"/>`);
+        }
+
+        this.chartSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        this.chartSvg.innerHTML = parts.join('');
+
+        // Legend — only repeaters visible in current window
+        const visible = [...new Set(this.chartPoints.map(p => p.col))];
+        if (this.chartLegend) {
+            this.chartLegend.innerHTML = visible.map(col => {
+                const c = this.getRepeaterColor(col);
+                return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))}</span>`;
+            }).join('');
+        }
     }
 
     // --- Cleanup ---
