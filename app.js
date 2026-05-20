@@ -726,7 +726,7 @@ class MeshCoreMonitor {
 
     buildSigCellsHtml(rssi, snr) {
         const rc = this.signalColor(rssi, -70, -130);
-        const sc = this.signalColor(snr,  13, -10, 10);
+        const sc = this.signalColor(snr,  13, -10, 0);
         return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
     }
 
@@ -968,8 +968,8 @@ class MeshCoreMonitor {
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
             const mrc = this.signalColor(d.maxRssi,  -70, -130);
             const lrc = this.signalColor(d.lastRssi, -70, -130);
-            const msc = this.signalColor(d.maxSnr,   13, -10, 10);
-            const lsc = this.signalColor(d.lastSnr,  13, -10, 10);
+            const msc = this.signalColor(d.maxSnr,   13, -10, 0);
+            const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
             return `<tr>
                 <td class="rl-id">${this.displayId(repeater)}</td>
                 <td>${d.count}</td>
