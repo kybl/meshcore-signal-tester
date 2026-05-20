@@ -221,7 +221,9 @@ class MeshCoreMonitor {
 
     async connectToDevice(device) {
         this.device = device;
-        device.addEventListener('gattserverdisconnected', () => this.onDisconnected());
+        // Use a named handler so we can remove it on manual disconnect
+        this._onGattDisconnected = () => this.onDisconnected();
+        device.addEventListener('gattserverdisconnected', this._onGattDisconnected);
 
         const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
         const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
@@ -241,6 +243,7 @@ class MeshCoreMonitor {
 
         this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
         const txCharacteristic = await service.getCharacteristic(NUS_TX);
+        this.txCharacteristic = txCharacteristic;
         await txCharacteristic.startNotifications();
         txCharacteristic.addEventListener('characteristicvaluechanged', e => this.handleData(e));
 
@@ -1026,9 +1029,23 @@ class MeshCoreMonitor {
         return new Date(timestamp).toLocaleTimeString('en-GB');
     }
 
-    disconnect() {
-        if (this.device && this.device.gatt.connected) {
-            this.device.gatt.disconnect();
+    async disconnect() {
+        // Remove the event listener so onDisconnected() isn't called twice
+        // (once from here, once from the gattserverdisconnected event)
+        if (this._onGattDisconnected && this.device) {
+            this.device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
+            this._onGattDisconnected = null;
+        }
+        try {
+            if (this.txCharacteristic) {
+                try { await this.txCharacteristic.stopNotifications(); } catch (e) {}
+                this.txCharacteristic = null;
+            }
+            if (this.device?.gatt?.connected) {
+                this.device.gatt.disconnect();
+            }
+        } catch (e) {
+            console.warn('Disconnect error:', e);
         }
         this.onDisconnected();
     }
