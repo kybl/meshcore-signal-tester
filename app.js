@@ -171,8 +171,7 @@ class MeshCoreMonitor {
                 console.error('Bluetooth error:', error);
                 alert('Connection error: ' + error.message);
             }
-            this.updateStatus('Disconnected', 'disconnected');
-            this.connectBtn.disabled = false;
+            this._resetConnectBtn();
         }
     }
 
@@ -212,12 +211,42 @@ class MeshCoreMonitor {
                 console.error('Quick connect error:', error);
                 alert('Connection error: ' + error.message);
             }
-            this.updateStatus('Disconnected', 'disconnected');
-            this.connectBtn.disabled = false;
+            this._resetConnectBtn();
         }
     }
 
+    _resetConnectBtn() {
+        this.updateStatus('Disconnected', 'disconnected');
+        this.connectBtn.textContent = 'Connect Bluetooth';
+        this.connectBtn.disabled = false;
+        this.connectBtn.onclick = () => this.connectBluetooth();
+    }
+
+    _cancelConnect(device, token) {
+        if (this._connectToken !== token) return;
+        this._connectToken = null;
+        if (this._onGattDisconnected && device) {
+            device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
+            this._onGattDisconnected = null;
+        }
+        this.device = null;
+        this.txCharacteristic = null;
+        this.bleRxCharacteristic = null;
+        try { if (device?.gatt?.connected) device.gatt.disconnect(); } catch (e) {}
+        this._resetConnectBtn();
+    }
+
     async connectToDevice(device) {
+        const token = Symbol();
+        this._connectToken = token;
+        const alive = () => this._connectToken === token;
+
+        // Show Cancel button as soon as device is selected
+        this.connectBtn.textContent = 'Cancel';
+        this.connectBtn.disabled = false;
+        this.connectBtn.onclick = () => this._cancelConnect(device, token);
+        this.updateStatus('Connecting...', 'disconnected');
+
         this.device = device;
         this._onGattDisconnected = () => this.onDisconnected();
         device.addEventListener('gattserverdisconnected', this._onGattDisconnected);
@@ -228,21 +257,31 @@ class MeshCoreMonitor {
 
         let service;
         for (let attempt = 1; attempt <= 3; attempt++) {
+            if (!alive()) return;
             try {
-                const server = await device.gatt.connect();
+                const server = await Promise.race([
+                    device.gatt.connect(),
+                    new Promise((_, rej) => setTimeout(() => rej(new Error('Connection timed out')), 8000)),
+                ]);
+                if (!alive()) { try { device.gatt.disconnect(); } catch (e) {} return; }
                 service = await server.getPrimaryService(NUS_SERVICE);
                 break;
             } catch (e) {
+                if (!alive()) return;
                 if (attempt === 3) throw e;
                 await new Promise(r => setTimeout(r, attempt * 500));
             }
         }
 
+        if (!alive()) return;
         this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
+        if (!alive()) return;
         const txCharacteristic = await service.getCharacteristic(NUS_TX);
+        if (!alive()) return;
         this.txCharacteristic = txCharacteristic;
         this._onDataReceived = e => this.handleData(e);
         await txCharacteristic.startNotifications();
+        if (!alive()) return;
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
@@ -834,15 +873,30 @@ class MeshCoreMonitor {
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.innerHTML = parts.join('');
 
-        const visible = [...new Set(this.chartPoints.map(p => p.col))];
+        // Find the most recent point per column, then sort best → worst
+        const lastByCol = new Map();
+        for (const p of this.chartPoints) {
+            if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
+        }
+        const visible = [...lastByCol.keys()].sort((a, b) => {
+            const pa = lastByCol.get(a), pb = lastByCol.get(b);
+            return type === 'rssi' ? pb.rssi - pa.rssi : pb.snr - pa.snr;
+        });
+
         if (legend) {
+            const items = visible.map(col => {
+                const c = this.getRepeaterColor(col);
+                const last = lastByCol.get(col);
+                const val = type === 'rssi' ? last.rssi : last.snr;
+                const valStr = type === 'rssi'
+                    ? `${val} dBm`
+                    : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
+                return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`;
+            }).join('');
             const nfLegend = type === 'rssi'
                 ? `<span class="legend-item"><span class="legend-nf"></span>Noise floor</span>`
                 : '';
-            legend.innerHTML = nfLegend + visible.map(col => {
-                const c = this.getRepeaterColor(col);
-                return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))}</span>`;
-            }).join('');
+            legend.innerHTML = items + nfLegend;
         }
     }
 
