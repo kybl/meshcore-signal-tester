@@ -404,7 +404,7 @@ header {
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    flex-basis: 100%;
+    flex: 1;
     min-width: 0;
 }
 

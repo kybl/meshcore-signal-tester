@@ -421,14 +421,15 @@ class MeshCoreMonitor {
         if (pushCode === 0x05 || pushCode === 0x80 || pushCode === 0x82 || pushCode === 0x83) return;
 
         let loraPacket;
+        let knownFormat = true;
         if (pushCode === 0x88) {
             loraPacket = payload.slice(3);
         } else if (pushCode === 0x84 || pushCode === 0x8e) {
             loraPacket = payload.slice(4);
         } else {
-            console.log('[NUS push] unknown code:', '0x' + pushCode.toString(16).padStart(2, '0'),
-                'payload:', Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join(' '));
-            return;
+            // Unknown code — try 3-byte header (same as 0x88); fall back to raw row if decode fails
+            loraPacket = payload.slice(3);
+            knownFormat = false;
         }
         if (loraPacket.length === 0) return;
 
@@ -438,10 +439,25 @@ class MeshCoreMonitor {
         try {
             const rawHex = this.bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
-            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
+            if (packet.isValid) {
+                this.processPacket(packet, rawHex, snr, rssi);
+            } else if (!knownFormat) {
+                this._addRawEntry(payload, pushCode, snr, rssi);
+            }
         } catch (e) {
-            console.error('Decode error:', e);
+            if (!knownFormat) {
+                this._addRawEntry(payload, pushCode, snr, rssi);
+            } else {
+                console.error('Decode error:', e);
+            }
         }
+    }
+
+    _addRawEntry(payload, pushCode, snr, rssi) {
+        const fullHex = this.bufferToHex(payload.buffer);
+        const hash = this.hashPayload(fullHex);
+        const label = '0x' + pushCode.toString(16).toUpperCase().padStart(2, '0');
+        this.addRxEntry(hash, 'direct', label, fullHex, snr, rssi, {}, null);
     }
 
     bufferToHex(buffer) {
