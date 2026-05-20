@@ -482,6 +482,22 @@ header {
     user-select: none;
     white-space: nowrap;
     margin-top: 6px;
+    padding-left: 2px;
+}
+
+.chart-tooltip {
+    position: fixed;
+    background: rgba(30, 30, 40, 0.92);
+    color: #fff;
+    font-size: 11px;
+    line-height: 1.5;
+    padding: 5px 9px;
+    border-radius: 6px;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 1000;
+    display: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 
 .ttl-label {

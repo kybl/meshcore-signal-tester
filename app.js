@@ -59,8 +59,31 @@ class MeshCoreMonitor {
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
         this.repeaterLogBody = document.getElementById('repeaterLogBody');
         this.soundCheckbox = document.getElementById('soundEnabled');
+        this.tooltip = document.getElementById('chartTooltip');
 
         this.connectBtn.onclick = () => this.connectBluetooth();
+
+        // Resize: redraw charts so they fill new width
+        let _resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(_resizeTimer);
+            _resizeTimer = setTimeout(() => { if (this.chartPoints.length) this.renderCharts(); }, 150);
+        });
+
+        // Chart tooltip
+        const bindChartTooltip = (svg, type) => {
+            if (!svg) return;
+            svg.addEventListener('mousemove', e => this.showChartTooltip(e, type));
+            svg.addEventListener('mouseleave', () => this.hideChartTooltip());
+            svg.addEventListener('touchstart', e => {
+                if (e.touches.length === 1) this.showChartTooltip(e.touches[0], type);
+            }, { passive: true });
+            svg.addEventListener('touchend', () => {
+                setTimeout(() => this.hideChartTooltip(), 2000);
+            });
+        };
+        bindChartTooltip(this.rssiChartSvg, 'rssi');
+        bindChartTooltip(this.snrChartSvg,  'snr');
 
         document.getElementById('msgTableWrap')?.addEventListener('click', e => {
             const rxCell = e.target.closest('.msg-col-rx');
@@ -445,11 +468,14 @@ class MeshCoreMonitor {
         if (oldData) {
             const newData = this.allRepeaters.get(newKey);
             if (newData) {
+                const newer = oldData.lastSeen >= newData.lastSeen ? oldData : newData;
                 this.allRepeaters.set(newKey, {
                     lastSeen: Math.max(oldData.lastSeen, newData.lastSeen),
-                    count: oldData.count + newData.count,
-                    maxSnr:  Math.max(oldData.maxSnr  ?? -999, newData.maxSnr  ?? -999),
-                    maxRssi: Math.max(oldData.maxRssi ?? -999, newData.maxRssi ?? -999),
+                    count:    oldData.count + newData.count,
+                    maxSnr:   Math.max(oldData.maxSnr  ?? -999, newData.maxSnr  ?? -999),
+                    maxRssi:  Math.max(oldData.maxRssi ?? -999, newData.maxRssi ?? -999),
+                    lastSnr:  newer.lastSnr,
+                    lastRssi: newer.lastRssi,
                 });
             } else {
                 this.allRepeaters.set(newKey, oldData);
@@ -513,9 +539,11 @@ class MeshCoreMonitor {
         const existing = this.allRepeaters.get(canonicalKey);
         this.allRepeaters.set(canonicalKey, {
             lastSeen: now,
-            count: (existing?.count ?? 0) + 1,
-            maxSnr:  Math.max(existing?.maxSnr  ?? -999, snr),
-            maxRssi: Math.max(existing?.maxRssi ?? -999, rssi),
+            count:    (existing?.count ?? 0) + 1,
+            maxSnr:   Math.max(existing?.maxSnr  ?? -999, snr),
+            maxRssi:  Math.max(existing?.maxRssi ?? -999, rssi),
+            lastSnr:  snr,
+            lastRssi: rssi,
         });
         this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
         this.updateRepeaterTable();
@@ -694,8 +722,8 @@ class MeshCoreMonitor {
     }
 
     buildSigCellsHtml(rssi, snr) {
-        const rc = this.signalColor(rssi, -70, -117);
-        const sc = this.signalColor(snr, 13, -10);
+        const rc = this.signalColor(rssi, -70, -130);
+        const sc = this.signalColor(snr,  13,    7);
         return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
     }
 
@@ -802,6 +830,59 @@ class MeshCoreMonitor {
         }
     }
 
+    showChartTooltip(e, type) {
+        if (!this.tooltip || !this.chartPoints.length) return;
+        const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
+        if (!svg) return;
+
+        const rect = svg.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const W = rect.width || 600;
+        const H = rect.height || 180;
+        const pl = 36, pr = 8, pt = 6, pb = 24;
+        const cw = W - pl - pr;
+        const ch = H - pt - pb;
+
+        const now = Date.now();
+        const tMin = now - this.HASH_LIFETIME;
+
+        const pts = this.chartPoints;
+        const vals = pts.map(p => type === 'rssi' ? p.rssi : p.snr);
+        const vMin = Math.min(...vals), vMax = Math.max(...vals);
+        const yPad = type === 'rssi' ? 5 : 2;
+        const yMin = Math.floor((vMin - yPad) / 5) * 5;
+        const yMax = Math.ceil((vMax + yPad) / 5) * 5;
+
+        const xOf = t => pl + (t - tMin) / (now - tMin) * cw;
+        const yOf = v => pt + (1 - (v - yMin) / (yMax - yMin)) * ch;
+
+        let nearest = null, minDist = Infinity;
+        for (const p of pts) {
+            const dx = xOf(p.time) - mx;
+            const dy = yOf(type === 'rssi' ? p.rssi : p.snr) - my;
+            const d = dx * dx + dy * dy;
+            if (d < minDist) { minDist = d; nearest = p; }
+        }
+        if (!nearest || minDist > 1600) { this.hideChartTooltip(); return; }
+
+        const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        this.tooltip.innerHTML =
+            `<b>${this.escHtml(this.displayId(nearest.col))}</b><br>` +
+            `${time}<br>` +
+            `RSSI ${nearest.rssi} &nbsp; SNR ${nearest.snr.toFixed(1)}`;
+
+        const tx = e.clientX + 14;
+        const ty = e.clientY - 10;
+        this.tooltip.style.left = `${Math.min(tx, window.innerWidth - 160)}px`;
+        this.tooltip.style.top  = `${Math.max(ty, 4)}px`;
+        this.tooltip.style.display = 'block';
+    }
+
+    hideChartTooltip() {
+        if (this.tooltip) this.tooltip.style.display = 'none';
+    }
+
     // --- Cleanup ---
 
     startCleanupTimer() {
@@ -848,13 +929,17 @@ class MeshCoreMonitor {
             return dir * (a - b);
         });
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
-            const rc = this.signalColor(d.maxRssi, -70, -117);
-            const sc = this.signalColor(d.maxSnr,  13,  -10);
+            const mrc = this.signalColor(d.maxRssi,  -70, -130);
+            const lrc = this.signalColor(d.lastRssi, -70, -130);
+            const msc = this.signalColor(d.maxSnr,   13,    7);
+            const lsc = this.signalColor(d.lastSnr,  13,    7);
             return `<tr>
                 <td class="rl-id">${this.displayId(repeater)}</td>
                 <td>${d.count}</td>
-                <td style="color:${rc}">${d.maxRssi}</td>
-                <td style="color:${sc}">${d.maxSnr.toFixed(1)}</td>
+                <td style="color:${mrc}">${d.maxRssi}</td>
+                <td style="color:${lrc}">${d.lastRssi}</td>
+                <td style="color:${msc}">${d.maxSnr.toFixed(1)}</td>
+                <td style="color:${lsc}">${d.lastSnr.toFixed(1)}</td>
                 <td>${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');

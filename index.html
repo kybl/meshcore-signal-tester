@@ -41,18 +41,20 @@
                                 <th data-sort-key="id">Repeater</th>
                                 <th data-sort-key="count">RX</th>
                                 <th data-sort-key="maxRssi">Max RSSI</th>
+                                <th data-sort-key="lastRssi">Last RSSI</th>
                                 <th data-sort-key="maxSnr">Max SNR</th>
+                                <th data-sort-key="lastSnr">Last SNR</th>
                                 <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
                             </tr></thead>
                             <tbody id="repeaterLogBody"></tbody>
                         </table>
                     </div>
-                    <label class="ttl-control">
-                        <span class="ttl-label">TTL</span>
-                        <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
-                        <span id="ttlValue">5m</span>
-                    </label>
                 </div>
+                <label class="ttl-control">
+                    <span class="ttl-label">TTL</span>
+                    <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
+                    <span id="ttlValue">5m</span>
+                </label>
             </div>
 
             <div class="section-wrap hidden" id="rssiChartWrap">
@@ -98,6 +100,7 @@
         </main>
     </div>
 
+    <div id="chartTooltip" class="chart-tooltip"></div>
     <script type="module" src="app.js"></script>
 </body>
 </html>
