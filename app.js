@@ -724,7 +724,7 @@ class MeshCoreMonitor {
 
     buildSigCellsHtml(rssi, snr) {
         const rc = this.signalColor(rssi, -70, -130);
-        const sc = this.signalColor(snr,  13,  -10);
+        const sc = this.signalColor(snr,  13, -10, 10);
         return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
     }
 
@@ -874,8 +874,10 @@ class MeshCoreMonitor {
         if (!nearest || minDist > 1600) { this.hideChartTooltip(); return; }
 
         const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const color = this.getRepeaterColor(nearest.col);
+        const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         this.tooltip.innerHTML =
-            `<b>${this.escHtml(this.displayId(nearest.col))}</b><br>` +
+            `${dot}<b>${this.escHtml(this.displayId(nearest.col))}</b><br>` +
             `${time}<br>` +
             `RSSI ${nearest.rssi} &nbsp; SNR ${nearest.snr.toFixed(1)}`;
 
@@ -930,16 +932,18 @@ class MeshCoreMonitor {
         const dir = this.repeaterSortDir;
         const entries = Array.from(this.allRepeaters.entries());
         entries.sort(([idA, dA], [idB, dB]) => {
-            const a = key === 'id' ? idA : dA[key];
-            const b = key === 'id' ? idB : dB[key];
-            if (typeof a === 'string') return dir * a.localeCompare(b);
-            return dir * (a - b);
+            if (key === 'id') {
+                if (idA === 'direct' && idB !== 'direct') return -1;
+                if (idB === 'direct' && idA !== 'direct') return 1;
+                return dir * idA.localeCompare(idB);
+            }
+            return dir * (dA[key] - dB[key]);
         });
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
             const mrc = this.signalColor(d.maxRssi,  -70, -130);
             const lrc = this.signalColor(d.lastRssi, -70, -130);
-            const msc = this.signalColor(d.maxSnr,   13,  -10);
-            const lsc = this.signalColor(d.lastSnr,  13,  -10);
+            const msc = this.signalColor(d.maxSnr,   13, -10, 10);
+            const lsc = this.signalColor(d.lastSnr,  13, -10, 10);
             return `<tr>
                 <td class="rl-id">${this.displayId(repeater)}</td>
                 <td>${d.count}</td>
@@ -954,8 +958,14 @@ class MeshCoreMonitor {
 
     // --- Signal color ---
 
-    signalColor(value, greenVal, redVal) {
-        const t = Math.max(0, Math.min(1, (value - greenVal) / (redVal - greenVal)));
+    signalColor(value, greenVal, redVal, yellowVal) {
+        const pivot = yellowVal !== undefined ? yellowVal : (greenVal + redVal) / 2;
+        let t;
+        if (value >= pivot) {
+            t = 0.5 * Math.max(0, Math.min(1, (greenVal - value) / (greenVal - pivot)));
+        } else {
+            t = 0.5 + 0.5 * Math.max(0, Math.min(1, (pivot - value) / (pivot - redVal)));
+        }
         return `hsl(${120 * (1 - t)}, 85%, 38%)`;
     }
 
