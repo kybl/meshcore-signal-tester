@@ -655,3 +655,38 @@ header {
     color: #c33;
 }
 
+.rx-type-raw {
+    color: #c33;
+}
+
+@keyframes detailOpen {
+    from { opacity: 0; transform: translateY(-5px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes detailClose {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(-5px); }
+}
+
+.detail-cell {
+    animation: detailOpen 0.16s ease-out;
+}
+
+.detail-row.detail-closing .detail-cell {
+    animation: detailClose 0.13s ease-in forwards;
+}
+
+.legend-item[data-col] {
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.legend-item[data-col]:hover {
+    opacity: 0.75;
+}
+
+.legend-item-selected {
+    font-weight: 700;
+}
+

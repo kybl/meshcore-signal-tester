@@ -29,6 +29,7 @@ class MeshCoreMonitor {
         this._batteryCharacteristic = null;
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
+        this._chartSelected = null;
 
         this.initUI();
         this.startCleanupTimer();
@@ -98,6 +99,7 @@ class MeshCoreMonitor {
             if (!svg) return;
             svg.addEventListener('mousemove', e => this.showChartTooltip(e, type));
             svg.addEventListener('mouseleave', () => this.hideChartTooltip());
+            svg.addEventListener('click', e => this._onChartClick(e, type));
             svg.addEventListener('touchstart', e => {
                 if (e.touches.length === 1) this.showChartTooltip(e.touches[0], type);
             }, { passive: true });
@@ -107,6 +109,20 @@ class MeshCoreMonitor {
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');
         bindChartTooltip(this.snrChartSvg,  'snr');
+
+        // Legend click for repeater selection
+        const bindLegendClick = legend => {
+            if (!legend) return;
+            legend.addEventListener('click', e => {
+                const item = e.target.closest('.legend-item[data-col]');
+                if (!item) return;
+                const col = item.dataset.col;
+                this._chartSelected = this._chartSelected === col ? null : col;
+                this.scheduleChartRender();
+            });
+        };
+        bindLegendClick(this.rssiChartLegend);
+        bindLegendClick(this.snrChartLegend);
 
         document.getElementById('msgTableWrap')?.addEventListener('click', e => {
             // Detail row: close on click, or copy hex
@@ -120,7 +136,7 @@ class MeshCoreMonitor {
                         setTimeout(() => { hexEl.textContent = orig; }, 1000);
                     });
                 } else if (window.getSelection()?.type !== 'Range') {
-                    detailRow.remove();
+                    this._closeDetailRow(detailRow);
                 }
                 return;
             }
@@ -454,22 +470,22 @@ class MeshCoreMonitor {
             if (packet.isValid) {
                 this.processPacket(packet, rawHex, snr, rssi);
             } else if (!knownFormat) {
-                this._addRawEntry(payload, pushCode, snr, rssi);
+                this._addRawEntry(payload, pushCode);
             }
         } catch (e) {
             if (!knownFormat) {
-                this._addRawEntry(payload, pushCode, snr, rssi);
+                this._addRawEntry(payload, pushCode);
             } else {
                 console.error('Decode error:', e);
             }
         }
     }
 
-    _addRawEntry(payload, pushCode, snr, rssi) {
+    _addRawEntry(payload, pushCode) {
         const fullHex = this.bufferToHex(payload.buffer);
         const hash = this.hashPayload(fullHex);
         const label = '0x' + pushCode.toString(16).toUpperCase().padStart(2, '0');
-        this.addRxEntry(hash, 'direct', label, fullHex, snr, rssi, {}, null);
+        this.addRxEntry(hash, 'direct', label, fullHex, null, null, {}, null);
     }
 
     bufferToHex(buffer) {
@@ -686,16 +702,17 @@ class MeshCoreMonitor {
             data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex });
         }
 
+        const hasSignal = snr !== null && rssi !== null;
         const existing = this.allRepeaters.get(canonicalKey);
         this.allRepeaters.set(canonicalKey, {
             lastSeen: now,
             count:    (existing?.count ?? 0) + 1,
-            maxSnr:   Math.max(existing?.maxSnr  ?? -999, snr),
-            maxRssi:  Math.max(existing?.maxRssi ?? -999, rssi),
-            lastSnr:  snr,
-            lastRssi: rssi,
+            maxSnr:   hasSignal ? Math.max(existing?.maxSnr  ?? -999, snr)  : (existing?.maxSnr  ?? null),
+            maxRssi:  hasSignal ? Math.max(existing?.maxRssi ?? -999, rssi) : (existing?.maxRssi ?? null),
+            lastSnr:  hasSignal ? snr  : (existing?.lastSnr  ?? null),
+            lastRssi: hasSignal ? rssi : (existing?.lastRssi ?? null),
         });
-        this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
+        if (hasSignal) this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
@@ -707,7 +724,7 @@ class MeshCoreMonitor {
         }
         this.scheduleChartRender();
 
-        this.playRxSound(rssi);
+        if (hasSignal) this.playRxSound(rssi);
         this.updateStats();
         if (this.emptyState) {
             this.emptyState.remove();
@@ -725,6 +742,8 @@ class MeshCoreMonitor {
 
     abbreviateType(type) {
         if (!type) return '?';
+        // Hex push codes like "0x8F" → show just the hex digits "8F"
+        if (/^0x[0-9A-Fa-f]+$/i.test(type)) return type.slice(2).toUpperCase();
         // Show only payload type (2 chars); route type is visible from repeater columns
         const payload = [
             [/GroupText|GROUP_TEXT/,     'GT'],
@@ -772,7 +791,7 @@ class MeshCoreMonitor {
         if (!this.msgTableHead || !this.msgTableBody) return;
 
         const openDetails = new Map(
-            [...this.msgTableBody.querySelectorAll('tr[id^="detail-"]')]
+            [...this.msgTableBody.querySelectorAll('tr[id^="detail-"]:not(.detail-closing)')]
                 .map(tr => [tr.id.slice(7), tr.dataset.col ?? null])
         );
 
@@ -828,22 +847,36 @@ class MeshCoreMonitor {
             const sig = data.repeaters.get(r);
             return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr, hash, r) : '<td></td><td></td>';
         }).join('');
+        const isRawType = /^0x[0-9A-Fa-f]+$/i.test(data.type);
         const typeDisplay = this._useAbbreviatedTypes
             ? this.escHtml(this.abbreviateType(data.type))
             : this.escHtml(data.type || '?');
+        const typeClass = isRawType ? 'rx-type rx-type-raw' : 'rx-type';
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
+                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="${typeClass}" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
             </td>
             ${cells}
         </tr>`;
     }
 
+    _closeDetailRow(tr) {
+        tr.classList.add('detail-closing');
+        const cell = tr.querySelector('.detail-cell');
+        if (cell) {
+            const onEnd = () => tr.remove();
+            cell.addEventListener('animationend', onEnd, { once: true });
+            setTimeout(() => { cell.removeEventListener('animationend', onEnd); tr.remove(); }, 300);
+        } else {
+            tr.remove();
+        }
+    }
+
     toggleDetailRow(hash, col = null) {
         const existing = document.getElementById(`detail-${hash}`);
         this.msgTableBody?.querySelectorAll('.sig-active').forEach(el => el.classList.remove('sig-active'));
-        // Same cell clicked again → close
-        if (existing && existing.dataset.col === (col ?? '')) { existing.remove(); return; }
+        // Same cell clicked again → close with animation
+        if (existing && existing.dataset.col === (col ?? '')) { this._closeDetailRow(existing); return; }
         const row = document.getElementById(`row-${hash}`);
         if (!row) return;
         const detail = existing ?? document.createElement('tr');
@@ -931,31 +964,46 @@ class MeshCoreMonitor {
         if (col) {
             const sig = repEntry;
             if (sig) {
-                const rc = this.signalColor(sig.rssi, -70, -130);
-                const sc = this.signalColor(sig.snr, 13, -10, 0);
+                const hasSignal = sig.rssi !== null && sig.snr !== null;
+                let sigLine = '';
+                if (hasSignal) {
+                    const rc = this.signalColor(sig.rssi, -70, -130);
+                    const sc = this.signalColor(sig.snr, 13, -10, 0);
+                    sigLine = ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${sig.rssi}</span>` +
+                        ` &nbsp; SNR <span style="color:${sc};font-weight:700">${sig.snr.toFixed(1)}</span>`;
+                }
                 const hexShort = hex.slice(0, 12);
                 header = `<div class="detail-sig">` +
                     `<b>${this.escHtml(this.displayId(col))}</b>` +
-                    ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${sig.rssi}</span>` +
-                    ` &nbsp; SNR <span style="color:${sc};font-weight:700">${sig.snr.toFixed(1)}</span>` +
+                    sigLine +
                     ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
                     `</div>`;
             }
         }
 
+        const isRawCode = /^0x[0-9A-Fa-f]+$/i.test(data.type);
         const typeHtml = data.type
             ? `<div class="detail-type">${this.escHtml(data.type)}</div>`
+            : '';
+        const unknownNote = isRawCode
+            ? `<div class="detail-raw" style="color:#c33;margin-bottom:6px">Unknown packet type — raw data</div>`
             : '';
 
         let jsonHtml = '';
         if (pkt) {
             jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`;
+        } else if (isRawCode) {
+            jsonHtml = `<code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex" style="display:block;margin-top:2px">${this.escHtml(hex)}</code>`;
         }
 
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${unknownNote}${header}${jsonHtml}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr, hash, col) {
+        if (rssi === null || snr === null) {
+            return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:#bbb;text-align:right">—</td>` +
+                   `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:#bbb;text-align:right">—</td>`;
+        }
         const rc = this.signalColor(rssi, -70, -130);
         const sc = this.signalColor(snr,  13, -10, 0);
         return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssi}</td>` +
@@ -985,8 +1033,58 @@ class MeshCoreMonitor {
             const cutoff = Date.now() - this.HASH_LIFETIME;
             this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
         }
+        if (this._chartSelected && !this.chartPoints.some(p => p.col === this._chartSelected)) {
+            this._chartSelected = null;
+        }
         this.renderChart('rssi');
         this.renderChart('snr');
+    }
+
+    _chartYBounds(type) {
+        const vals = this.chartPoints.map(p => type === 'rssi' ? p.rssi : p.snr);
+        const nfVals = type === 'rssi' ? this.chartPoints.map(p => p.rssi - p.snr) : [];
+        const allVals = [...vals, ...nfVals];
+        const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
+        const rawRange = vMax - vMin || 1;
+        const yStep = rawRange <= 5 ? 1 : rawRange <= 10 ? 2 : rawRange <= 25 ? 5 : rawRange <= 50 ? 10 : 20;
+        const yPad = Math.max(1, yStep / 2);
+        const yMin = Math.floor((vMin - yPad) / yStep) * yStep;
+        const yMax = Math.ceil((vMax + yPad) / yStep) * yStep;
+        return { yMin, yMax, yStep };
+    }
+
+    _onChartClick(e, type) {
+        if (!this.chartPoints.length) return;
+        const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
+        if (!svg) return;
+        const rect = svg.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const W = rect.width || 600;
+        const H = rect.height || 180;
+        const pl = 36, pr = 8, pt = 6, pb = 24;
+        const cw = W - pl - pr;
+        const ch = H - pt - pb;
+        const now = Date.now();
+        const tMin = isFinite(this.HASH_LIFETIME)
+            ? now - this.HASH_LIFETIME
+            : Math.min(...this.chartPoints.map(p => p.time));
+        const { yMin, yMax } = this._chartYBounds(type);
+        const xOf = t => pl + (t - tMin) / (now - tMin) * cw;
+        const yOf = v => pt + (1 - (v - yMin) / (yMax - yMin)) * ch;
+        let nearest = null, minDist = Infinity;
+        for (const p of this.chartPoints) {
+            const dx = xOf(p.time) - mx;
+            const dy = yOf(type === 'rssi' ? p.rssi : p.snr) - my;
+            const d = dx * dx + dy * dy;
+            if (d < minDist) { minDist = d; nearest = p; }
+        }
+        if (!nearest || minDist > 2500) {
+            if (this._chartSelected) { this._chartSelected = null; this.scheduleChartRender(); }
+            return;
+        }
+        this._chartSelected = this._chartSelected === nearest.col ? null : nearest.col;
+        this.scheduleChartRender();
     }
 
     renderChart(type) {
@@ -1012,13 +1110,7 @@ class MeshCoreMonitor {
             ? now - this.HASH_LIFETIME
             : Math.min(...this.chartPoints.map(p => p.time));
 
-        const vals = this.chartPoints.map(p => type === 'rssi' ? p.rssi : p.snr);
-        const nfVals = type === 'rssi' ? this.chartPoints.map(p => p.rssi - p.snr) : [];
-        const allVals = [...vals, ...nfVals];
-        const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
-        const yPad = type === 'rssi' ? 5 : 2;
-        const yMin = Math.floor((vMin - yPad) / 5) * 5;
-        const yMax = Math.ceil((vMax + yPad) / 5) * 5;
+        const { yMin, yMax, yStep } = this._chartYBounds(type);
 
         const xOf = t => (pl + (t - tMin) / (now - tMin) * cw).toFixed(1);
         const yOf = v => (pt + (1 - (v - yMin) / (yMax - yMin)) * ch).toFixed(1);
@@ -1027,13 +1119,16 @@ class MeshCoreMonitor {
         const parts = [];
 
         // Y grid + labels
-        const yRange = yMax - yMin;
-        const yStep = yRange <= 10 ? 2 : yRange <= 20 ? 5 : yRange <= 60 ? 10 : 20;
         for (let y = yMin; y <= yMax; y += yStep) {
             const yp = yOf(y);
             parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#f0f0f0" stroke-width="1"/>`);
             parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${y}</text>`);
         }
+
+        // Y axis label
+        const yLabel = type === 'rssi' ? 'dBm' : 'dB';
+        const yLabelCy = (pt + ch / 2).toFixed(1);
+        parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="#aaa" transform="rotate(-90,10,${yLabelCy})">${yLabel}</text>`);
 
         // X grid + labels (every minute)
         const minMs = 60000;
@@ -1054,7 +1149,6 @@ class MeshCoreMonitor {
             const bottom = (pt + ch).toFixed(1);
             const lastP = sorted[sorted.length - 1];
             const nfPts = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`);
-            // Extend flat to the current time using the last known noise floor value
             nfPts.push(`${xOf(now)},${yOf(lastP.rssi - lastP.snr)}`);
             const topEdge = nfPts.join(' ');
             const firstX = xOf(sorted[0].time);
@@ -1066,6 +1160,8 @@ class MeshCoreMonitor {
             );
         }
 
+        const selected = this._chartSelected;
+
         const groups = new Map();
         for (const p of this.chartPoints) {
             if (!groups.has(p.col)) groups.set(p.col, []);
@@ -1075,12 +1171,18 @@ class MeshCoreMonitor {
             if (pts.length < 2) continue;
             pts.sort((a, b) => a.time - b.time);
             const color = this.getRepeaterColor(col);
+            const isHighlighted = !selected || selected === col;
+            const strokeW = (selected && selected === col) ? 2.5 : 1;
+            const strokeOp = isHighlighted ? 0.55 : 0.12;
             const pointsStr = pts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
-            parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.35"/>`);
+            parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="${strokeW}" stroke-opacity="${strokeOp}"/>`);
         }
 
         for (const p of this.chartPoints) {
-            parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="3.5" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.75"/>`);
+            const isHighlighted = !selected || selected === p.col;
+            const r = (selected && selected === p.col) ? 5 : 3.5;
+            const fillOp = isHighlighted ? 0.85 : 0.18;
+            parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${r}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${fillOp}"/>`);
         }
 
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -1104,9 +1206,11 @@ class MeshCoreMonitor {
                 const valStr = type === 'rssi'
                     ? `${val} dBm`
                     : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
+                const isSelected = selected === col;
+                const selClass = isSelected ? ' legend-item-selected' : '';
                 return {
                     val,
-                    html: `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
+                    html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
                 };
             });
             if (type === 'rssi') {
@@ -1141,14 +1245,7 @@ class MeshCoreMonitor {
             ? now - this.HASH_LIFETIME
             : Math.min(...this.chartPoints.map(p => p.time));
 
-        const pts = this.chartPoints;
-        const vals = pts.map(p => type === 'rssi' ? p.rssi : p.snr);
-        const nfVals = type === 'rssi' ? pts.map(p => p.rssi - p.snr) : [];
-        const allVals = [...vals, ...nfVals];
-        const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
-        const yPad = type === 'rssi' ? 5 : 2;
-        const yMin = Math.floor((vMin - yPad) / 5) * 5;
-        const yMax = Math.ceil((vMax + yPad) / 5) * 5;
+        const { yMin, yMax } = this._chartYBounds(type);
 
         const xOf = t => pl + (t - tMin) / (now - tMin) * cw;
         const yOf = v => pt + (1 - (v - yMin) / (yMax - yMin)) * ch;
@@ -1234,20 +1331,22 @@ class MeshCoreMonitor {
                 if (idB === 'direct' && idA !== 'direct') return dir;
                 return dir * idA.localeCompare(idB);
             }
-            return dir * (dA[key] - dB[key]);
+            const va = dA[key] ?? -Infinity;
+            const vb = dB[key] ?? -Infinity;
+            return dir * (va - vb);
         });
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
-            const mrc = this.signalColor(d.maxRssi,  -70, -130);
-            const lrc = this.signalColor(d.lastRssi, -70, -130);
-            const msc = this.signalColor(d.maxSnr,   13, -10, 0);
-            const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
+            const mrc = d.maxRssi  !== null ? this.signalColor(d.maxRssi,  -70, -130) : '#bbb';
+            const lrc = d.lastRssi !== null ? this.signalColor(d.lastRssi, -70, -130) : '#bbb';
+            const msc = d.maxSnr   !== null ? this.signalColor(d.maxSnr,   13, -10, 0) : '#bbb';
+            const lsc = d.lastSnr  !== null ? this.signalColor(d.lastSnr,  13, -10, 0) : '#bbb';
             return `<tr>
                 <td class="rl-id">${this.displayId(repeater)}</td>
                 <td class="rl-num">${d.count}</td>
-                <td class="rl-num" style="color:${mrc}">${d.maxRssi}</td>
-                <td class="rl-num" style="color:${lrc}">${d.lastRssi}</td>
-                <td class="rl-num" style="color:${msc}">${d.maxSnr.toFixed(1)}</td>
-                <td class="rl-num" style="color:${lsc}">${d.lastSnr.toFixed(1)}</td>
+                <td class="rl-num" style="color:${mrc}">${d.maxRssi  !== null ? d.maxRssi          : '—'}</td>
+                <td class="rl-num" style="color:${lrc}">${d.lastRssi !== null ? d.lastRssi         : '—'}</td>
+                <td class="rl-num" style="color:${msc}">${d.maxSnr   !== null ? d.maxSnr.toFixed(1)  : '—'}</td>
+                <td class="rl-num" style="color:${lsc}">${d.lastSnr  !== null ? d.lastSnr.toFixed(1) : '—'}</td>
                 <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
