@@ -40,7 +40,7 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
-        setInterval(() => { if (this.chartPoints.length) this.renderCharts(); }, 10000);
+        setInterval(() => { if (this.chartPoints.length) this.renderCharts(); }, 2000);
 
         // Collapsible sections
         document.querySelectorAll('.collapse-btn').forEach(btn => {
@@ -244,8 +244,10 @@ class MeshCoreMonitor {
         this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
         const txCharacteristic = await service.getCharacteristic(NUS_TX);
         this.txCharacteristic = txCharacteristic;
+        // Named listener so it can be removed on disconnect
+        this._onDataReceived = e => this.handleData(e);
         await txCharacteristic.startNotifications();
-        txCharacteristic.addEventListener('characteristicvaluechanged', e => this.handleData(e));
+        txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
         this.acquireWakeLock();
@@ -1060,33 +1062,48 @@ class MeshCoreMonitor {
     }
 
     async disconnect() {
-        // Remove the event listener so onDisconnected() isn't called twice
-        // (once from here, once from the gattserverdisconnected event)
-        if (this._onGattDisconnected && this.device) {
-            this.device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
+        // Grab refs before nulling them
+        const device = this.device;
+        const txChar = this.txCharacteristic;
+
+        // Clear instance refs immediately so nothing else can use them
+        this.device = null;
+        this.txCharacteristic = null;
+
+        // Remove GATT disconnect listener (prevents double onDisconnected call)
+        if (this._onGattDisconnected && device) {
+            device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
             this._onGattDisconnected = null;
         }
-        try {
-            if (this.txCharacteristic) {
-                try { await this.txCharacteristic.stopNotifications(); } catch (e) {}
-                this.txCharacteristic = null;
-            }
-            if (this.device?.gatt?.connected) {
-                this.device.gatt.disconnect();
-            }
-        } catch (e) {
-            console.warn('Disconnect error:', e);
+        // Remove data listener
+        if (this._onDataReceived && txChar) {
+            try { txChar.removeEventListener('characteristicvaluechanged', this._onDataReceived); } catch (e) {}
+            this._onDataReceived = null;
         }
+
+        // Disconnect synchronously FIRST — this is what actually releases the BLE link
+        try {
+            if (device?.gatt?.connected) device.gatt.disconnect();
+        } catch (e) { console.warn('gatt.disconnect error:', e); }
+
+        // Update UI immediately
         this.onDisconnected();
+
+        // stopNotifications best-effort after disconnect (may throw — that's fine)
+        if (txChar) {
+            try { await txChar.stopNotifications(); } catch (e) {}
+        }
     }
 
     onDisconnected() {
         this.releaseWakeLock();
+        this._onGattDisconnected = null;
+        this.txCharacteristic = null;
+        this.device = null;
         this.updateStatus('Disconnected', 'disconnected');
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
-        this.device = null;
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.';
