@@ -80,24 +80,41 @@ class MeshCoreMonitor {
     }
 
     async quickConnect(deviceId) {
-        if (!navigator.bluetooth?.getDevices) {
-            // Browser doesn't support getDevices — fall back to picker
-            this.connectBluetooth();
-            return;
-        }
-        try {
-            const devices = await navigator.bluetooth.getDevices();
-            const device = devices.find(d => d.id === deviceId);
-            if (!device) {
-                alert('Device not available. Please connect manually.');
-                return;
+        // Try getDevices() for zero-friction reconnect (Chrome 85+, may need flag)
+        if (navigator.bluetooth?.getDevices) {
+            try {
+                const devices = await navigator.bluetooth.getDevices();
+                const device = devices.find(d => d.id === deviceId);
+                if (device) {
+                    this.connectBtn.disabled = true;
+                    this.updateStatus('Connecting...', 'disconnected');
+                    await this.connectToDevice(device);
+                    return;
+                }
+            } catch (e) {
+                console.warn('getDevices failed:', e);
             }
+        }
+
+        // Fall back to requestDevice — use saved name as filter so picker pre-selects it
+        const saved = this.getSavedDevices().find(d => d.id === deviceId);
+        const name = saved?.name;
+        try {
             this.connectBtn.disabled = true;
-            this.updateStatus('Connecting...', 'disconnected');
+            this.updateStatus('Scanning...', 'disconnected');
+            const filters = (name && name !== 'Unknown')
+                ? [{ name }]
+                : [{ namePrefix: 'Meshtastic' }, { namePrefix: 'MeshCore' }];
+            const device = await navigator.bluetooth.requestDevice({
+                filters,
+                optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e'],
+            });
             await this.connectToDevice(device);
         } catch (error) {
-            console.error('Quick connect error:', error);
-            alert('Connection error: ' + error.message);
+            if (error.name !== 'NotFoundError') {
+                console.error('Quick connect error:', error);
+                alert('Connection error: ' + error.message);
+            }
             this.updateStatus('Disconnected', 'disconnected');
             this.connectBtn.disabled = false;
         }
@@ -429,23 +446,15 @@ class MeshCoreMonitor {
     abbreviateType(type) {
         if (!type) return '?';
         return type
-            .replace('GroupText',   'GRP')
-            .replace('TextMessage', 'TXT')
-            .replace('GROUP_TEXT',  'GRP')
-            .replace('Traceroute',  'TRC')
-            .replace('TRACEROUTE',  'TRC')
-            .replace('Broadcast',   'BCT')
-            .replace('BROADCAST',   'BCT')
-            .replace('Response',    'RSP')
-            .replace('RESPONSE',    'RSP')
-            .replace('Private',     'PVT')
-            .replace('PRIVATE',     'PVT')
-            .replace('Repeater',    'RPT')
-            .replace('REPEATER',    'RPT')
-            .replace('Flood',       'FLD')
-            .replace('FLOOD',       'FLD')
-            .replace('Direct',      'DIR')
-            .replace('DIRECT',      'DIR')
+            .replace(/GroupText|GROUP_TEXT/g,   'GT')
+            .replace(/TextMessage|TEXT_MESSAGE/g,'TX')
+            .replace(/Traceroute|TRACEROUTE/g,   'TR')
+            .replace(/Broadcast|BROADCAST/g,     'BC')
+            .replace(/Response|RESPONSE/g,       'RS')
+            .replace(/Private|PRIVATE/g,         'PV')
+            .replace(/Repeater|REPEATER/g,       'RP')
+            .replace(/Flood|FLOOD/g,             'FL')
+            .replace(/Direct|DIRECT/g,           'DR')
             .trim();
     }
 
