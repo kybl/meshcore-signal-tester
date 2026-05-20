@@ -32,11 +32,6 @@
             <div class="section-wrap" id="repeaterWrap">
                 <div class="section-header">
                     <span class="section-title">Seen repeaters</span>
-                    <label class="ttl-control">
-                        <span class="ttl-label">TTL</span>
-                        <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
-                        <span id="ttlValue">5m</span>
-                    </label>
                     <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="repeaterBody">
@@ -52,6 +47,11 @@
                             <tbody id="repeaterLogBody"></tbody>
                         </table>
                     </div>
+                    <label class="ttl-control">
+                        <span class="ttl-label">TTL</span>
+                        <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
+                        <span id="ttlValue">5m</span>
+                    </label>
                 </div>
             </div>
 

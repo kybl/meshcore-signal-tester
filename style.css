@@ -481,6 +481,7 @@ header {
     cursor: default;
     user-select: none;
     white-space: nowrap;
+    margin-top: 6px;
 }
 
 .ttl-label {
