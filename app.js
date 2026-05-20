@@ -86,18 +86,22 @@ class MeshCoreMonitor {
         bindChartTooltip(this.snrChartSvg,  'snr');
 
         document.getElementById('msgTableWrap')?.addEventListener('click', e => {
-            const rxCell = e.target.closest('.msg-col-rx');
-            if (rxCell) { this.toggleDetailRow(rxCell.dataset.hash); return; }
             const detailRow = e.target.closest('tr.detail-row');
-            if (detailRow && !e.target.closest('.raw-hex')) { detailRow.remove(); return; }
-            const hexEl = e.target.closest('.raw-hex');
-            if (hexEl) {
-                navigator.clipboard.writeText(hexEl.dataset.hex).then(() => {
-                    const orig = hexEl.textContent;
-                    hexEl.textContent = '✓ copied';
-                    setTimeout(() => { hexEl.textContent = orig; }, 1000);
-                });
+            if (detailRow) {
+                const hexEl = e.target.closest('.raw-hex');
+                if (hexEl) {
+                    navigator.clipboard.writeText(hexEl.dataset.hex).then(() => {
+                        const orig = hexEl.textContent;
+                        hexEl.textContent = '✓ copied';
+                        setTimeout(() => { hexEl.textContent = orig; }, 1000);
+                    });
+                } else {
+                    detailRow.remove();
+                }
+                return;
             }
+            const dataRow = e.target.closest('tr[id^="row-"]');
+            if (dataRow) this.toggleDetailRow(dataRow.id.slice(4));
         });
 
         document.getElementById('savedDevices')?.addEventListener('click', e => {
@@ -169,28 +173,35 @@ class MeshCoreMonitor {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (error.name !== 'NotFoundError') {
+            if (this.device && error.name !== 'NotFoundError') {
                 console.error('Bluetooth error:', error);
                 alert('Connection error: ' + error.message);
             }
-            this._resetConnectBtn();
+            if (this.device) this._resetConnectBtn();
         }
     }
 
     async quickConnect(deviceId) {
         // Try getDevices() for zero-friction reconnect (Chrome 85+, may need flag)
         if (navigator.bluetooth?.getDevices) {
+            let device;
             try {
                 const devices = await navigator.bluetooth.getDevices();
-                const device = devices.find(d => d.id === deviceId);
-                if (device) {
-                    this.connectBtn.disabled = true;
-                    this.updateStatus('Connecting...', 'disconnected');
-                    await this.connectToDevice(device);
-                    return;
-                }
+                device = devices.find(d => d.id === deviceId);
             } catch (e) {
                 console.warn('getDevices failed:', e);
+            }
+            if (device) {
+                try {
+                    await this.connectToDevice(device);
+                } catch (error) {
+                    if (this.device && error.name !== 'NotFoundError') {
+                        console.error('Quick connect error:', error);
+                        alert('Connection error: ' + error.message);
+                    }
+                    if (this.device) this._resetConnectBtn();
+                }
+                return;
             }
         }
 
@@ -209,11 +220,11 @@ class MeshCoreMonitor {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (error.name !== 'NotFoundError') {
+            if (this.device && error.name !== 'NotFoundError') {
                 console.error('Quick connect error:', error);
                 alert('Connection error: ' + error.message);
             }
-            this._resetConnectBtn();
+            if (this.device) this._resetConnectBtn();
         }
     }
 
@@ -224,34 +235,12 @@ class MeshCoreMonitor {
         this.connectBtn.onclick = () => this.connectBluetooth();
     }
 
-    _cancelConnect(device, token) {
-        if (this._connectToken !== token) return;
-        this._connectToken = null;
-        if (this._onGattDisconnected && device) {
-            device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
-            this._onGattDisconnected = null;
-        }
-        this.device = null;
-        this.txCharacteristic = null;
-        this.bleRxCharacteristic = null;
-        try { if (device?.gatt?.connected) device.gatt.disconnect(); } catch (e) {}
-        this._resetConnectBtn();
-    }
-
     async connectToDevice(device) {
-        const token = Symbol();
-        this._connectToken = token;
-        const alive = () => this._connectToken === token;
-
-        // Show Cancel button as soon as device is selected
         this.connectBtn.textContent = 'Cancel';
         this.connectBtn.disabled = false;
-        this.connectBtn.onclick = () => this._cancelConnect(device, token);
+        this.connectBtn.onclick = () => this.disconnect();
         this.updateStatus('Connecting...', 'disconnected');
-
         this.device = device;
-        this._onGattDisconnected = () => this.onDisconnected();
-        device.addEventListener('gattserverdisconnected', this._onGattDisconnected);
 
         const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
         const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
@@ -259,28 +248,38 @@ class MeshCoreMonitor {
 
         let service;
         for (let attempt = 1; attempt <= 3; attempt++) {
-            if (!alive()) return;
+            if (!this.device) return;
             try {
                 const server = await device.gatt.connect();
-                if (!alive()) { try { device.gatt.disconnect(); } catch (e) {} return; }
+                if (!this.device) { try { device.gatt.disconnect(); } catch (e) {} return; }
                 service = await server.getPrimaryService(NUS_SERVICE);
                 break;
             } catch (e) {
-                if (!alive()) return;
+                if (!this.device) return;
                 if (attempt === 3) throw e;
                 await new Promise(r => setTimeout(r, attempt * 500));
             }
         }
 
-        if (!alive()) return;
+        // Register the disconnect listener AFTER gatt.connect() so that any
+        // lingering gattserverdisconnected event from the previous session
+        // doesn't fire onDisconnected() and abort our new connection setup.
+        if (!this.device) return;
+        this._onGattDisconnected = () => this.onDisconnected();
+        device.addEventListener('gattserverdisconnected', this._onGattDisconnected);
+
+        if (!this.device) return;
         this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
-        if (!alive()) return;
+        if (!this.device) return;
         const txCharacteristic = await service.getCharacteristic(NUS_TX);
-        if (!alive()) return;
+        if (!this.device) return;
         this.txCharacteristic = txCharacteristic;
         this._onDataReceived = e => this.handleData(e);
+        // Reset Chrome's notify pipe — may retain state from a previous session
+        try { await txCharacteristic.stopNotifications(); } catch (e) {}
+        if (!this.device) return;
         await txCharacteristic.startNotifications();
-        if (!alive()) return;
+        if (!this.device) return;
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
@@ -426,7 +425,7 @@ class MeshCoreMonitor {
         }
 
         if (hash && repeater) {
-            this.addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta);
+            this.addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta, packet);
         }
     }
 
@@ -569,7 +568,7 @@ class MeshCoreMonitor {
 
     // --- Data ingestion ---
 
-    addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta = {}) {
+    addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null) {
         this.totalRxCount++;
         const now = Date.now();
         const isNewHash = !this.hashData.has(hash);
@@ -584,6 +583,7 @@ class MeshCoreMonitor {
                 type,
                 rawHex,
                 meta,
+                packet,
             });
         } else {
             const data = this.hashData.get(hash);
@@ -727,34 +727,42 @@ class MeshCoreMonitor {
         row.after(detail);
     }
 
+    formatPacketDetail(packet) {
+        const clean = JSON.parse(JSON.stringify(packet));
+        delete clean.isValid;
+        if (clean.payload) delete clean.payload.raw;
+
+        const walk = (obj) => {
+            if (!obj || typeof obj !== 'object') return;
+            for (const [k, v] of Object.entries(obj)) {
+                if (typeof v === 'string' && /^[0-9A-Fa-f]{33,}$/.test(v)) {
+                    obj[k] = v.slice(0, 32) + '…';
+                } else if ((k === 'timestamp' || k === 'time') && typeof v === 'number' && v > 1_000_000_000 && v < 4_000_000_000) {
+                    obj[k] = new Date(v * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+                } else if (typeof v === 'object' && v !== null) {
+                    walk(v);
+                }
+            }
+        };
+        walk(clean);
+        return JSON.stringify(clean, null, 2);
+    }
+
     buildDetailRowHtml(hash) {
         const data = this.hashData.get(hash);
         if (!data) return '';
         const colspan = 1 + this.repeaterColumns.length * 2;
-        const meta = data.meta || {};
-        const lines = [`<b>Type:</b> ${this.escHtml(data.type || '?')}`];
 
-        if (meta.pathItemBytes > 0)
-            lines.push(`<b>Path hash size:</b> ${meta.pathItemBytes}B/item`);
-        else
-            lines.push(`<b>Path:</b> direct`);
-        if (meta.totalBytes != null)
-            lines.push(`<b>Size:</b> ${meta.totalBytes}B`);
-
-        // Public channel message: show sender + text
-        if (meta.text != null) {
-            if (meta.sender != null)
-                lines.push(`<b>From:</b> ${this.escHtml(meta.sender)}`);
-            lines.push(`<b>Message:</b> ${this.escHtml(meta.text)}`);
+        let content = '';
+        if (data.packet) {
+            content += `<pre class="detail-json">${this.escHtml(this.formatPacketDetail(data.packet))}</pre>`;
         }
-        // Advert: show node name + link key
-        if (meta.name != null)
-            lines.push(`<b>Node:</b> ${this.escHtml(meta.name)}`);
-        if (meta.linkKey != null)
-            lines.push(`<b>Link key:</b> <code>${this.escHtml(meta.linkKey)}</code>`);
+        const rawDisplay = data.rawHex.length > 64
+            ? data.rawHex.slice(0, 64) + '…'
+            : data.rawHex;
+        content += `<div class="detail-raw"><b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${this.escHtml(rawDisplay)}</code></div>`;
 
-        lines.push(`<b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${data.rawHex}</code>`);
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${lines.join('<br>')}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${content}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr) {

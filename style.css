@@ -417,6 +417,15 @@ header {
     color: white;
 }
 
+/* Clickable data rows */
+.msg-table tr[id^="row-"] {
+    cursor: pointer;
+}
+
+.msg-table tr[id^="row-"]:hover td {
+    background: #f8f8ff;
+}
+
 /* Row animations */
 @keyframes rowFlash {
     0%   { background-color: #d8dcff; }
@@ -483,6 +492,26 @@ header {
 .detail-content b {
     color: #888;
     font-weight: 600;
+}
+
+.detail-json {
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    background: #f5f5ff;
+    padding: 6px 8px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #333;
+    margin-bottom: 6px;
+    line-height: 1.5;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.detail-raw {
+    font-size: 11px;
+    color: #444;
 }
 
 .raw-hex {
