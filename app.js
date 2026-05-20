@@ -12,6 +12,7 @@ class MeshCoreMonitor {
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
         this._connectionMonitor = null;
+        this._monitorDelay = null;
         this.audioCtx = null;
         this.wakeLock = null;
         this.repeaterSortKey = 'lastSeen';
@@ -301,13 +302,17 @@ class MeshCoreMonitor {
     }
 
     _startConnectionMonitor() {
+        clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
-        this._connectionMonitor = setInterval(() => {
-            if (this.device && !this.device.gatt?.connected) {
-                console.warn('Bluetooth connection lost (detected by monitor)');
-                this.onDisconnected();
-            }
-        }, 2000);
+        // Delay first check: gatt.connected can be transiently false during GATT setup
+        this._monitorDelay = setTimeout(() => {
+            this._monitorDelay = null;
+            this._connectionMonitor = setInterval(() => {
+                if (this.device && this.device.gatt?.connected === false) {
+                    this.onDisconnected();
+                }
+            }, 3000);
+        }, 5000);
     }
 
     async sendAppStart() {
@@ -1161,7 +1166,9 @@ class MeshCoreMonitor {
 
     onDisconnected() {
         this.releaseWakeLock();
+        clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
+        this._monitorDelay = null;
         this._connectionMonitor = null;
         // Clean up listeners — needed when called from surprise disconnect (gattserverdisconnected event)
         if (this._onGattDisconnected) {
