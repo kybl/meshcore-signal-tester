@@ -254,6 +254,15 @@ header {
     flex-shrink: 0;
 }
 
+.legend-nf {
+    width: 18px;
+    height: 9px;
+    border-radius: 2px;
+    background: rgba(140, 140, 140, 0.35);
+    border: 1px solid rgba(120, 120, 120, 0.5);
+    flex-shrink: 0;
+}
+
 .msg-table-scroll {
     background: white;
     border-radius: 8px;

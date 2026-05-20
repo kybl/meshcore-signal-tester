@@ -770,7 +770,10 @@ class MeshCoreMonitor {
             : Math.min(...this.chartPoints.map(p => p.time));
 
         const vals = this.chartPoints.map(p => type === 'rssi' ? p.rssi : p.snr);
-        const vMin = Math.min(...vals), vMax = Math.max(...vals);
+        // For RSSI chart, expand Y range to include noise floor (rssi - snr)
+        const nfVals = type === 'rssi' ? this.chartPoints.map(p => p.rssi - p.snr) : [];
+        const allVals = [...vals, ...nfVals];
+        const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
         const yPad = type === 'rssi' ? 5 : 2;
         const yMin = Math.floor((vMin - yPad) / 5) * 5;
         const yMax = Math.ceil((vMax + yPad) / 5) * 5;
@@ -803,6 +806,20 @@ class MeshCoreMonitor {
         parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
         parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
 
+        // Noise floor area (RSSI chart only) — drawn behind repeater lines/dots
+        if (type === 'rssi') {
+            const sorted = [...this.chartPoints].sort((a, b) => a.time - b.time);
+            const bottom = (pt + ch).toFixed(1);
+            const topEdge = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`).join(' ');
+            const firstX = xOf(sorted[0].time);
+            const lastX  = xOf(sorted[sorted.length - 1].time);
+            parts.push(
+                `<polygon points="${topEdge} ${lastX},${bottom} ${firstX},${bottom}" ` +
+                `fill="rgba(140,140,140,0.15)"/>`,
+                `<polyline points="${topEdge}" fill="none" stroke="rgba(120,120,120,0.45)" stroke-width="1"/>`
+            );
+        }
+
         // Lines connecting dots per repeater (drawn before dots)
         const groups = new Map();
         for (const p of this.chartPoints) {
@@ -828,7 +845,10 @@ class MeshCoreMonitor {
         // Legend — only repeaters visible in current window
         const visible = [...new Set(this.chartPoints.map(p => p.col))];
         if (legend) {
-            legend.innerHTML = visible.map(col => {
+            const nfLegend = type === 'rssi'
+                ? `<span class="legend-item"><span class="legend-nf"></span>Noise floor</span>`
+                : '';
+            legend.innerHTML = nfLegend + visible.map(col => {
                 const c = this.getRepeaterColor(col);
                 return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))}</span>`;
             }).join('');
