@@ -320,10 +320,10 @@ class MeshCoreMonitor {
         const pathLen = path.length;
         const pathItemBytes = packet.pathHashSize ?? (pathLen > 0 ? path[0].length / 2 : 0);
 
-        const p = packet.payload;
+        const p = packet.payload?.decoded;
         const meta = { pathLen, pathItemBytes, totalBytes: packet.totalBytes };
         if (p) {
-            // GroupTextPayload: decrypted sub-object
+            // GroupTextPayload: decrypted only present when channel key is available
             const dec = p.decrypted;
             if (dec?.message != null) meta.text   = String(dec.message);
             if (dec?.sender  != null) meta.sender = String(dec.sender);
