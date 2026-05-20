@@ -405,7 +405,7 @@ header {
     flex-wrap: wrap;
     gap: 6px;
     flex: 1;
-    min-width: 0;
+    min-width: 150px;
 }
 
 .saved-devices.hidden {
@@ -501,6 +501,11 @@ header {
     white-space: nowrap;
     padding: 2px 3px 2px 5px;
     width: 1px;
+    cursor: pointer;
+}
+
+.msg-col-rx:hover {
+    background: #f0f0ff;
 }
 
 .rx-time {
@@ -559,8 +564,6 @@ header {
     color: #333;
     margin-bottom: 4px;
     line-height: 1.3;
-    max-height: 200px;
-    overflow-y: auto;
 }
 
 .detail-raw {

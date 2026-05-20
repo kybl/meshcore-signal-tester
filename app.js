@@ -128,6 +128,18 @@ class MeshCoreMonitor {
             const sigCell = e.target.closest('.sig-rssi, .sig-snr');
             if (sigCell?.dataset.hash) {
                 this.toggleDetailRow(sigCell.dataset.hash, sigCell.dataset.col);
+                return;
+            }
+            // Time/type cell: toggle detail for first repeater that has data for this row
+            const rxCell = e.target.closest('.msg-col-rx');
+            if (rxCell) {
+                const row = rxCell.closest('tr[id^="row-"]');
+                if (!row) return;
+                const hash = row.id.slice(4);
+                const data = this.hashData.get(hash);
+                if (!data) return;
+                const firstCol = this.repeaterColumns.find(col => data.repeaters.has(col));
+                if (firstCol) this.toggleDetailRow(hash, firstCol);
             }
         });
 
@@ -621,6 +633,12 @@ class MeshCoreMonitor {
         for (const p of this.chartPoints) {
             if (p.col === oldKey) p.col = newKey;
         }
+
+        // Update any open detail rows whose col attribute still references the old key,
+        // so that renderMsgTable's sig-active restoration uses the correct (new) col.
+        this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => {
+            if (tr.dataset.col === oldKey) tr.dataset.col = newKey;
+        });
     }
 
     displayId(id) {
