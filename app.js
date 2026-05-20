@@ -40,7 +40,7 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
-        setInterval(() => { if (this.chartPoints.length) this.renderCharts(); }, 2000);
+        setInterval(() => { if (this.chartPoints.length) this.scheduleChartRender(); }, 2000);
 
         // Collapsible sections
         document.querySelectorAll('.collapse-btn').forEach(btn => {
@@ -63,14 +63,12 @@ class MeshCoreMonitor {
 
         this.connectBtn.onclick = () => this.connectBluetooth();
 
-        // Resize: redraw charts so they fill new width
         let _resizeTimer;
         window.addEventListener('resize', () => {
             clearTimeout(_resizeTimer);
-            _resizeTimer = setTimeout(() => { if (this.chartPoints.length) this.renderCharts(); }, 150);
+            _resizeTimer = setTimeout(() => { if (this.chartPoints.length) this.scheduleChartRender(); }, 150);
         });
 
-        // Chart tooltip
         const bindChartTooltip = (svg, type) => {
             if (!svg) return;
             svg.addEventListener('mousemove', e => this.showChartTooltip(e, type));
@@ -221,7 +219,6 @@ class MeshCoreMonitor {
 
     async connectToDevice(device) {
         this.device = device;
-        // Use a named handler so we can remove it on manual disconnect
         this._onGattDisconnected = () => this.onDisconnected();
         device.addEventListener('gattserverdisconnected', this._onGattDisconnected);
 
@@ -244,7 +241,6 @@ class MeshCoreMonitor {
         this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
         const txCharacteristic = await service.getCharacteristic(NUS_TX);
         this.txCharacteristic = txCharacteristic;
-        // Named listener so it can be removed on disconnect
         this._onDataReceived = e => this.handleData(e);
         await txCharacteristic.startNotifications();
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
@@ -278,10 +274,13 @@ class MeshCoreMonitor {
 
     saveDevice(device) {
         const devices = this.getSavedDevices();
-        if (!devices.find(d => d.id === device.id)) {
+        const existing = devices.find(d => d.id === device.id);
+        if (existing) {
+            existing.name = device.name || existing.name;
+        } else {
             devices.push({ id: device.id, name: device.name || 'Unknown' });
-            localStorage.setItem('meshcore-devices', JSON.stringify(devices));
         }
+        localStorage.setItem('meshcore-devices', JSON.stringify(devices));
         this.renderSavedDevices();
     }
 
@@ -456,7 +455,7 @@ class MeshCoreMonitor {
         }
 
         // Multiple compatible columns → ambiguous short ID
-        const collisionKey = [...matches].sort().join('/');
+        const collisionKey = matches.sort().join('/');
         if (!this.repeaterColumns.includes(collisionKey)) {
             this.repeaterColumns.push(collisionKey);
         }
@@ -552,7 +551,7 @@ class MeshCoreMonitor {
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
-        this.renderCharts();
+        this.scheduleChartRender();
 
         this.playRxSound(rssi);
         this.updateStats();
@@ -565,17 +564,9 @@ class MeshCoreMonitor {
     // --- Column management ---
 
     sortColumns() {
-        // Strongest (highest max RSSI) first
-        this.repeaterColumns.sort((a, b) => this.getColMaxRssi(b) - this.getColMaxRssi(a));
-    }
-
-    getColMaxRssi(repeaterId) {
-        let max = null;
-        for (const data of this.hashData.values()) {
-            const r = data.repeaters.get(repeaterId);
-            if (r && (max === null || r.rssi > max)) max = r.rssi;
-        }
-        return max ?? -200;
+        this.repeaterColumns.sort((a, b) =>
+            (this.allRepeaters.get(b)?.maxRssi ?? -200) - (this.allRepeaters.get(a)?.maxRssi ?? -200)
+        );
     }
 
     abbreviateType(type) {
@@ -608,41 +599,31 @@ class MeshCoreMonitor {
 
     // --- Table rendering ---
 
-    hashMaxRssi(data) {
-        let max = -999;
-        for (const sig of data.repeaters.values()) if (sig.rssi > max) max = sig.rssi;
-        return max;
-    }
-
-    hashMaxSnr(data) {
-        let max = -999;
-        for (const sig of data.repeaters.values()) if (sig.snr > max) max = sig.snr;
-        return max;
-    }
-
     renderMsgTable(flashHash = null) {
         if (!this.msgTableHead || !this.msgTableBody) return;
 
-        // Remember open detail rows before rebuilding
         const openDetails = new Set(
             [...this.msgTableBody.querySelectorAll('tr[id^="detail-"]')]
                 .map(tr => tr.id.slice(7))
         );
 
-        const repHeaders = this.repeaterColumns.map(r =>
-            `<th colspan="2" class="msg-col-rep">${this.displayId(r)}</th>`
-        ).join('');
-        const subHeaders = this.repeaterColumns.map(() =>
-            `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
-        ).join('');
-
-        this.msgTableHead.innerHTML = `
-            <tr>
-                <th class="msg-col-rx-head" rowspan="2">RX log</th>
-                ${repHeaders}
-            </tr>
-            <tr>${subHeaders}</tr>
-        `;
+        const colKey = this.repeaterColumns.join(',');
+        if (colKey !== this._lastColKey) {
+            this._lastColKey = colKey;
+            const repHeaders = this.repeaterColumns.map(r =>
+                `<th colspan="2" class="msg-col-rep">${this.displayId(r)}</th>`
+            ).join('');
+            const subHeaders = this.repeaterColumns.map(() =>
+                `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
+            ).join('');
+            this.msgTableHead.innerHTML = `
+                <tr>
+                    <th class="msg-col-rx-head" rowspan="2">RX log</th>
+                    ${repHeaders}
+                </tr>
+                <tr>${subHeaders}</tr>
+            `;
+        }
 
         const rows = Array.from(this.hashData.entries())
             .sort(([, a], [, b]) => b.insertOrder - a.insertOrder);
@@ -651,7 +632,6 @@ class MeshCoreMonitor {
             this.buildMsgRowHtml(hash, data)
         ).join('');
 
-        // Restore detail rows that were open
         for (const hash of openDetails) {
             if (!this.hashData.has(hash)) continue;
             const row = document.getElementById(`row-${hash}`);
@@ -730,6 +710,15 @@ class MeshCoreMonitor {
         return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
     }
 
+    scheduleChartRender() {
+        if (this._chartRenderPending) return;
+        this._chartRenderPending = true;
+        requestAnimationFrame(() => {
+            this._chartRenderPending = false;
+            this.renderCharts();
+        });
+    }
+
     // --- Chart ---
 
     getRepeaterColor(col) {
@@ -772,7 +761,6 @@ class MeshCoreMonitor {
             : Math.min(...this.chartPoints.map(p => p.time));
 
         const vals = this.chartPoints.map(p => type === 'rssi' ? p.rssi : p.snr);
-        // For RSSI chart, expand Y range to include noise floor (rssi - snr)
         const nfVals = type === 'rssi' ? this.chartPoints.map(p => p.rssi - p.snr) : [];
         const allVals = [...vals, ...nfVals];
         const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
@@ -826,7 +814,6 @@ class MeshCoreMonitor {
             );
         }
 
-        // Lines connecting dots per repeater (drawn before dots)
         const groups = new Map();
         for (const p of this.chartPoints) {
             if (!groups.has(p.col)) groups.set(p.col, []);
@@ -840,7 +827,6 @@ class MeshCoreMonitor {
             parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.35"/>`);
         }
 
-        // Dots
         for (const p of this.chartPoints) {
             parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="3.5" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.75"/>`);
         }
@@ -848,7 +834,6 @@ class MeshCoreMonitor {
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.innerHTML = parts.join('');
 
-        // Legend — only repeaters visible in current window
         const visible = [...new Set(this.chartPoints.map(p => p.col))];
         if (legend) {
             const nfLegend = type === 'rssi'
@@ -882,7 +867,9 @@ class MeshCoreMonitor {
 
         const pts = this.chartPoints;
         const vals = pts.map(p => type === 'rssi' ? p.rssi : p.snr);
-        const vMin = Math.min(...vals), vMax = Math.max(...vals);
+        const nfVals = type === 'rssi' ? pts.map(p => p.rssi - p.snr) : [];
+        const allVals = [...vals, ...nfVals];
+        const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
         const yPad = type === 'rssi' ? 5 : 2;
         const yMin = Math.floor((vMin - yPad) / 5) * 5;
         const yMax = Math.ceil((vMax + yPad) / 5) * 5;
@@ -932,17 +919,24 @@ class MeshCoreMonitor {
         }
         if (!toRemove.length) return;
 
-        // Animate rows out, then re-render without them
         for (const hash of toRemove) {
             document.getElementById(`row-${hash}`)?.classList.add('row-removing');
             document.getElementById(`detail-${hash}`)?.remove();
-            this.hashData.delete(hash);
         }
 
         setTimeout(() => {
+            const cutoff = Date.now() - this.HASH_LIFETIME;
+            for (const hash of toRemove) {
+                const data = this.hashData.get(hash);
+                // Re-check TTL: a fresh packet may have arrived during the animation delay
+                if (data && data.lastSeen <= cutoff) this.hashData.delete(hash);
+            }
             this.repeaterColumns = this.repeaterColumns.filter(r =>
                 Array.from(this.hashData.values()).some(d => d.repeaters.has(r))
             );
+            for (const key of this.allRepeaters.keys()) {
+                if (!this.repeaterColumns.includes(key)) this.allRepeaters.delete(key);
+            }
             this.sortColumns();
             this.renderMsgTable();
             this.updateStats();
@@ -1066,20 +1060,14 @@ class MeshCoreMonitor {
     }
 
     async disconnect() {
+        // Grab refs before onDisconnected nulls them
         const device = this.device;
         const txChar = this.txCharacteristic;
 
-        this.device = null;
-        this.txCharacteristic = null;
-        this.bleRxCharacteristic = null;
-
+        // Remove the surprise-disconnect handler so onDisconnected isn't called twice
         if (this._onGattDisconnected && device) {
             device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
             this._onGattDisconnected = null;
-        }
-        if (this._onDataReceived && txChar) {
-            try { txChar.removeEventListener('characteristicvaluechanged', this._onDataReceived); } catch (e) {}
-            this._onDataReceived = null;
         }
 
         // stopNotifications BEFORE gatt.disconnect() so Chrome fully releases the notify pipe
@@ -1104,8 +1092,17 @@ class MeshCoreMonitor {
 
     onDisconnected() {
         this.releaseWakeLock();
-        this._onGattDisconnected = null;
+        // Clean up listeners — needed when called from surprise disconnect (gattserverdisconnected event)
+        if (this._onGattDisconnected) {
+            this.device?.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
+            this._onGattDisconnected = null;
+        }
+        if (this._onDataReceived) {
+            this.txCharacteristic?.removeEventListener('characteristicvaluechanged', this._onDataReceived);
+            this._onDataReceived = null;
+        }
         this.txCharacteristic = null;
+        this.bleRxCharacteristic = null;
         this.device = null;
         this.updateStatus('Disconnected', 'disconnected');
         this.connectBtn.textContent = 'Connect Bluetooth';
