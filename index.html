@@ -14,12 +14,18 @@
                 <span id="status" class="status disconnected">Disconnected</span>
                 <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
                 <label class="sound-toggle"><input type="checkbox" id="soundEnabled"> Sound</label>
+                <label class="ttl-control">
+                    <span class="ttl-label">TTL</span>
+                    <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
+                    <span id="ttlValue">5m</span>
+                </label>
             </div>
             <div class="header-stats">
                 <span class="hstat"><span class="hstat-label">Active</span> <span id="activeHashes">0</span></span>
                 <span class="hstat"><span class="hstat-label">Total RX</span> <span id="totalRx">0</span></span>
                 <span class="hstat"><span class="hstat-label">Repeaters</span> <span id="totalRepeaters">0</span></span>
             </div>
+            <div id="savedDevices" class="saved-devices hidden"></div>
         </header>
 
         <main>
@@ -27,7 +33,7 @@
                 <div class="section-title">Seen repeaters</div>
                 <div class="repeater-log-scroll">
                     <table class="repeater-log-table">
-                        <thead><tr><th>Repeater</th><th>RX</th><th>RSSI</th><th>SNR</th><th>Last seen</th></tr></thead>
+                        <thead><tr><th>Repeater</th><th>RX</th><th>Max RSSI</th><th>Max SNR</th><th>Last seen</th></tr></thead>
                         <tbody id="repeaterLogBody"></tbody>
                     </table>
                 </div>
