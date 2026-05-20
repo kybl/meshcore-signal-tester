@@ -13,6 +13,9 @@ class MeshCoreMonitor {
         this.cleanupInterval = null;
         this.audioCtx = null;
         this.wakeLock = null;
+        this.repeaterSortKey = 'lastSeen';
+        this.repeaterSortDir = -1;
+        this.hashCounter = 0;
 
         this.initUI();
         this.startCleanupTimer();
@@ -60,6 +63,24 @@ class MeshCoreMonitor {
                 const secs = +ttlSlider.value;
                 this.HASH_LIFETIME = secs * 1000;
                 ttlValue.textContent = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
+            });
+        }
+
+        const repeaterHead = document.querySelector('.repeater-log-table thead');
+        if (repeaterHead) {
+            repeaterHead.addEventListener('click', e => {
+                const th = e.target.closest('th[data-sort-key]');
+                if (!th) return;
+                const key = th.dataset.sortKey;
+                if (this.repeaterSortKey === key) {
+                    this.repeaterSortDir *= -1;
+                } else {
+                    this.repeaterSortKey = key;
+                    this.repeaterSortDir = -1;
+                }
+                repeaterHead.querySelectorAll('th').forEach(t => t.classList.remove('sort-asc', 'sort-desc'));
+                th.classList.add(this.repeaterSortDir === 1 ? 'sort-asc' : 'sort-desc');
+                this.updateRepeaterTable();
             });
         }
     }
@@ -409,6 +430,7 @@ class MeshCoreMonitor {
                 repeaters: new Map([[canonicalKey, { snr, rssi }]]),
                 firstSeen: now,
                 lastSeen: now,
+                insertOrder: ++this.hashCounter,
                 type,
                 rawHex,
                 meta,
@@ -512,13 +534,7 @@ class MeshCoreMonitor {
         `;
 
         const rows = Array.from(this.hashData.entries())
-            .sort(([, a], [, b]) => {
-                const rd = this.hashMaxRssi(b) - this.hashMaxRssi(a);
-                if (rd !== 0) return rd;
-                const sd = this.hashMaxSnr(b) - this.hashMaxSnr(a);
-                if (sd !== 0) return sd;
-                return b.repeaters.size - a.repeaters.size;
-            });
+            .sort(([, a], [, b]) => b.insertOrder - a.insertOrder);
 
         this.msgTableBody.innerHTML = rows.map(([hash, data]) =>
             this.buildMsgRowHtml(hash, data)
@@ -611,9 +627,16 @@ class MeshCoreMonitor {
 
     updateRepeaterTable() {
         if (!this.repeaterLogBody) return;
-        const sorted = Array.from(this.allRepeaters.entries())
-            .sort((a, b) => b[1].lastSeen - a[1].lastSeen);
-        this.repeaterLogBody.innerHTML = sorted.map(([repeater, d]) => {
+        const key = this.repeaterSortKey;
+        const dir = this.repeaterSortDir;
+        const entries = Array.from(this.allRepeaters.entries());
+        entries.sort(([idA, dA], [idB, dB]) => {
+            const a = key === 'id' ? idA : dA[key];
+            const b = key === 'id' ? idB : dB[key];
+            if (typeof a === 'string') return dir * a.localeCompare(b);
+            return dir * (a - b);
+        });
+        this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
             const rc = this.signalColor(d.maxRssi, -70, -117);
             const sc = this.signalColor(d.maxSnr,  13,  -10);
             return `<tr>

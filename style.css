@@ -126,6 +126,17 @@ header {
     margin-bottom: 4px;
 }
 
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.section-header .section-title {
+    margin-bottom: 0;
+}
+
 .repeater-log-wrap {
     margin-bottom: 8px;
 }
@@ -154,6 +165,20 @@ header {
     padding: 5px 10px;
     border-bottom: 1px solid #d0d0d0;
 }
+
+.repeater-log-table th[data-sort-key] {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s, color 0.15s;
+}
+
+.repeater-log-table th[data-sort-key]:hover {
+    background: #d8d8ee;
+    color: #667eea;
+}
+
+.repeater-log-table th.sort-asc::after { content: ' ↑'; }
+.repeater-log-table th.sort-desc::after { content: ' ↓'; }
 
 .repeater-log-table td {
     padding: 4px 10px;
