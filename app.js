@@ -294,15 +294,23 @@ class MeshCoreMonitor {
             Utils.getPayloadTypeName(packet.payloadType),
         ].filter(Boolean).join(' ');
 
-        const pathBytes = packet.path?.reduce((s, el) => s + el.length / 2, 0) ?? 0;
+        const path = packet.path || [];
+        const pathLen = path.length;
+        const pathItemBytes = pathLen > 0 ? path[0].length / 2 : 0;
+
         const p = packet.payload;
-        let payloadInfo = '';
-        if (p?.text)   payloadInfo = `<b>Text:</b> ${this.escHtml(String(p.text))}`;
-        else if (p?.name)   payloadInfo = `<b>Name:</b> ${this.escHtml(String(p.name))}`;
-        else if (p?.sender) payloadInfo = `<b>Sender:</b> ${this.escHtml(String(p.sender))}`;
+        const meta = { pathLen, pathItemBytes };
+        if (p) {
+            if (p.text      != null) meta.text      = String(p.text);
+            if (p.name      != null) meta.name      = String(p.name);
+            if (p.sender    != null) meta.sender    = String(p.sender);
+            // public link key — try common field names
+            const lk = p.publicKey ?? p.pubKey ?? p.linkKey ?? p.key ?? null;
+            if (lk != null) meta.linkKey = String(lk);
+        }
 
         if (hash && repeater) {
-            this.addRxEntry(hash, repeater, type, rawHex, snr, rssi, { pathBytes, payloadInfo });
+            this.addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta);
         }
     }
 
@@ -535,6 +543,12 @@ class MeshCoreMonitor {
     renderMsgTable(flashHash = null) {
         if (!this.msgTableHead || !this.msgTableBody) return;
 
+        // Remember open detail rows before rebuilding
+        const openDetails = new Set(
+            [...this.msgTableBody.querySelectorAll('tr[id^="detail-"]')]
+                .map(tr => tr.id.slice(7))
+        );
+
         const repHeaders = this.repeaterColumns.map(r =>
             `<th colspan="2" class="msg-col-rep">${this.displayId(r)}</th>`
         ).join('');
@@ -557,11 +571,22 @@ class MeshCoreMonitor {
             this.buildMsgRowHtml(hash, data)
         ).join('');
 
+        // Restore detail rows that were open
+        for (const hash of openDetails) {
+            if (!this.hashData.has(hash)) continue;
+            const row = document.getElementById(`row-${hash}`);
+            if (!row) continue;
+            const detail = document.createElement('tr');
+            detail.id = `detail-${hash}`;
+            detail.className = 'detail-row';
+            detail.innerHTML = this.buildDetailRowHtml(hash);
+            row.after(detail);
+        }
+
         if (flashHash) {
             const row = document.getElementById(`row-${flashHash}`);
             if (row) row.classList.add('row-new');
         }
-        return min ?? 0;
     }
 
     buildMsgRowHtml(hash, data) {
@@ -595,10 +620,22 @@ class MeshCoreMonitor {
         const colspan = 1 + this.repeaterColumns.length * 2;
         const meta = data.meta || {};
         const lines = [`<b>Type:</b> ${this.escHtml(data.type || '?')}`];
-        if (meta.pathBytes !== undefined)
-            lines.push(`<b>Path:</b> ${meta.pathBytes} byte${meta.pathBytes !== 1 ? 's' : ''}`);
-        if (meta.payloadInfo) lines.push(meta.payloadInfo);
-        lines.push(`<b>Raw hex:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${data.rawHex}</code>`);
+
+        if (meta.pathLen > 0)
+            lines.push(`<b>Path:</b> ${meta.pathLen} hop${meta.pathLen !== 1 ? 's' : ''} · ${meta.pathItemBytes}B/item`);
+        else
+            lines.push(`<b>Path:</b> direct`);
+
+        if (meta.text != null)
+            lines.push(`<b>Message:</b> ${this.escHtml(meta.text)}`);
+        if (meta.name != null)
+            lines.push(`<b>Node:</b> ${this.escHtml(meta.name)}`);
+        if (meta.linkKey != null)
+            lines.push(`<b>Link key:</b> <code>${this.escHtml(meta.linkKey)}</code>`);
+        if (meta.sender != null && meta.name == null)
+            lines.push(`<b>Sender:</b> ${this.escHtml(meta.sender)}`);
+
+        lines.push(`<b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${data.rawHex}</code>`);
         return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${lines.join('<br>')}</div></td>`;
     }
 
