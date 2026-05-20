@@ -184,44 +184,45 @@ header {
 .msg-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 11px;
+    font-size: 10px;
     white-space: nowrap;
+}
+
+.msg-table th,
+.msg-table td {
+    border: 1px solid #e8e8e8;
 }
 
 .msg-table th {
     position: sticky;
     top: 0;
     background: #f8f8f8;
-    color: #888;
+    color: #777;
     font-weight: 600;
-    text-align: left;
-    padding: 5px 10px;
-    border-bottom: 1px solid #eee;
+    text-align: center;
+    padding: 3px 6px;
     z-index: 1;
 }
 
 .msg-table td {
-    padding: 3px 10px;
-    border-bottom: 1px solid #f5f5f5;
+    padding: 1px 5px;
     color: #444;
-}
-
-.msg-table tr:last-child td {
-    border-bottom: none;
 }
 
 .msg-col-time {
     color: #aaa;
-    font-size: 10px;
-    min-width: 68px;
+    font-size: 9px;
+    min-width: 60px;
+    text-align: left;
 }
 
 .msg-col-type {
     cursor: pointer;
     user-select: none;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    min-width: 64px;
+    font-weight: 400;
+    font-size: 10px;
+    text-align: left;
+    min-width: 56px;
 }
 
 .msg-table td.msg-col-type:hover {
@@ -232,33 +233,25 @@ header {
 .msg-col-rep {
     font-family: 'Courier New', monospace;
     font-size: 10px;
+    font-weight: 700;
     text-align: center;
-    border-left: 1px solid #eee;
 }
 
 .msg-sub-rssi,
 .msg-sub-snr {
-    font-size: 9px;
+    font-size: 8px;
     color: #bbb;
     font-weight: 600;
     text-align: right;
-    padding: 2px 6px 4px;
-}
-
-.msg-sub-rssi {
-    border-left: 1px solid #eee;
+    padding: 1px 4px 2px;
 }
 
 .sig-rssi,
 .sig-snr {
     font-weight: 700;
-    font-size: 11px;
+    font-size: 10px;
     text-align: right;
-    padding: 3px 6px;
-}
-
-.sig-rssi {
-    border-left: 1px solid #f0f0f0;
+    padding: 1px 4px;
 }
 
 .empty-state {

@@ -7,7 +7,7 @@ class MeshCoreMonitor {
         this.bleRxCharacteristic = null;
         this.hashData = new Map();
         this.allRepeaters = new Map();
-        this.repeaterColumns = []; // sorted by min RSSI ascending
+        this.repeaterColumns = []; // sorted by min RSSI ascending; keys are canonical IDs
         this.totalRxCount = 0;
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
@@ -58,9 +58,7 @@ class MeshCoreMonitor {
                     { namePrefix: 'Meshtastic' },
                     { namePrefix: 'MeshCore' }
                 ],
-                optionalServices: [
-                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
-                ]
+                optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
             });
 
             this.device = device;
@@ -184,14 +182,118 @@ class MeshCoreMonitor {
         return nodeId?.toString() || 'unknown';
     }
 
+    // --- Node ID prefix resolution ---
+    // IDs from the path may be 1/2/3-byte truncations of 4-byte node IDs.
+    // We track the most precise version seen and upgrade short IDs when possible.
+
+    idPrecision(id) {
+        if (id === 'direct' || id.includes('/')) return 4;
+        const h = id.slice(1); // 8 hex chars
+        if (h.startsWith('000000')) return 1;
+        if (h.startsWith('0000'))   return 2;
+        if (h.startsWith('00'))     return 3;
+        return 4;
+    }
+
+    // Last `bytes` significant bytes as hex chars (not counting '!')
+    idSuffix(id, bytes) {
+        return id.slice(-(bytes * 2));
+    }
+
+    idsCompatible(id1, id2) {
+        if (id1.includes('/') || id2.includes('/')) return false;
+        if (id1 === 'direct' || id2 === 'direct') return id1 === id2;
+        const minPrec = Math.min(this.idPrecision(id1), this.idPrecision(id2));
+        return this.idSuffix(id1, minPrec) === this.idSuffix(id2, minPrec);
+    }
+
+    // Returns the canonical column key for rawId, creating or upgrading as needed.
+    findOrCreateColumn(rawId) {
+        if (rawId === 'direct') {
+            if (!this.repeaterColumns.includes('direct')) this.repeaterColumns.push('direct');
+            return 'direct';
+        }
+        if (this.repeaterColumns.includes(rawId)) return rawId;
+
+        const matches = this.repeaterColumns.filter(col =>
+            col !== 'direct' && this.idsCompatible(rawId, col)
+        );
+
+        if (matches.length === 0) {
+            this.repeaterColumns.push(rawId);
+            return rawId;
+        }
+
+        if (matches.length === 1) {
+            const existing = matches[0];
+            if (this.idPrecision(rawId) > this.idPrecision(existing)) {
+                // rawId is more precise — upgrade existing column
+                this.renameColumnKey(existing, rawId);
+                return rawId;
+            }
+            return existing;
+        }
+
+        // Multiple compatible full columns → ambiguous short ID, create collision column
+        const collisionKey = [...matches].sort().join('/');
+        if (!this.repeaterColumns.includes(collisionKey)) {
+            this.repeaterColumns.push(collisionKey);
+        }
+        return collisionKey;
+    }
+
+    renameColumnKey(oldKey, newKey) {
+        const idx = this.repeaterColumns.indexOf(oldKey);
+        if (idx >= 0) this.repeaterColumns[idx] = newKey;
+
+        // Merge allRepeaters entries
+        const oldData = this.allRepeaters.get(oldKey);
+        if (oldData) {
+            const newData = this.allRepeaters.get(newKey);
+            if (newData) {
+                const latest = oldData.lastSeen > newData.lastSeen ? oldData : newData;
+                this.allRepeaters.set(newKey, {
+                    lastSeen: Math.max(oldData.lastSeen, newData.lastSeen),
+                    count: oldData.count + newData.count,
+                    lastSnr: latest.lastSnr,
+                    lastRssi: latest.lastRssi,
+                });
+            } else {
+                this.allRepeaters.set(newKey, oldData);
+            }
+            this.allRepeaters.delete(oldKey);
+        }
+
+        // Rename in hashData.repeaters
+        for (const data of this.hashData.values()) {
+            if (data.repeaters.has(oldKey)) {
+                data.repeaters.set(newKey, data.repeaters.get(oldKey));
+                data.repeaters.delete(oldKey);
+            }
+        }
+    }
+
+    // Short display label: strip '!' and leading zeros, uppercase
+    displayId(id) {
+        if (id === 'direct') return 'direct';
+        if (id.includes('/')) return id.split('/').map(p => this.displayId(p)).join('/');
+        const stripped = id.slice(1).replace(/^0+/, '') || '0';
+        return stripped.toUpperCase();
+    }
+
+    // --- Data ingestion ---
+
     addRxEntry(hash, repeater, type, rawHex, snr, rssi) {
         this.totalRxCount++;
         const now = Date.now();
         const isNewHash = !this.hashData.has(hash);
 
+        const oldOrder = [...this.repeaterColumns];
+        const canonicalKey = this.findOrCreateColumn(repeater);
+
         if (isNewHash) {
             this.hashData.set(hash, {
-                repeaters: new Map([[repeater, { snr, rssi }]]),
+                repeaters: new Map([[canonicalKey, { snr, rssi }]]),
                 firstSeen: now,
                 lastSeen: now,
                 type,
@@ -200,11 +302,11 @@ class MeshCoreMonitor {
         } else {
             const data = this.hashData.get(hash);
             data.lastSeen = now;
-            data.repeaters.set(repeater, { snr, rssi });
+            data.repeaters.set(canonicalKey, { snr, rssi });
         }
 
-        const existing = this.allRepeaters.get(repeater);
-        this.allRepeaters.set(repeater, {
+        const existing = this.allRepeaters.get(canonicalKey);
+        this.allRepeaters.set(canonicalKey, {
             lastSeen: now,
             count: (existing?.count ?? 0) + 1,
             lastSnr: snr,
@@ -212,11 +314,8 @@ class MeshCoreMonitor {
         });
         this.updateRepeaterTable();
 
-        const oldOrder = [...this.repeaterColumns];
-        const isNewRepeater = !this.repeaterColumns.includes(repeater);
-        if (isNewRepeater) this.repeaterColumns.push(repeater);
         this.sortColumns();
-        const orderChanged = isNewRepeater ||
+        const orderChanged = this.repeaterColumns.length !== oldOrder.length ||
             this.repeaterColumns.some((id, i) => id !== oldOrder[i]);
 
         if (orderChanged) {
@@ -224,7 +323,7 @@ class MeshCoreMonitor {
         } else if (isNewHash) {
             this.insertMsgRow(hash);
         } else {
-            this.updateMsgCells(hash, repeater, rssi, snr);
+            this.updateMsgCells(hash, canonicalKey, rssi, snr);
         }
 
         this.playRxSound(rssi);
@@ -250,25 +349,33 @@ class MeshCoreMonitor {
     abbreviateType(type) {
         if (!type) return '?';
         return type
-            .replace('GROUP_TEXT', 'GRP')
-            .replace('TRACEROUTE', 'TRC')
-            .replace('BROADCAST', 'BCT')
-            .replace('RESPONSE', 'RSP')
-            .replace('PRIVATE', 'PVT')
-            .replace('REPEATER', 'RPT')
-            .replace('FLOOD', 'FLD')
-            .replace('DIRECT', 'DIR');
+            .replace('GroupText',   'GRP')
+            .replace('TextMessage', 'TXT')
+            .replace('GROUP_TEXT',  'GRP')
+            .replace('Traceroute',  'TRC')
+            .replace('TRACEROUTE',  'TRC')
+            .replace('Broadcast',   'BCT')
+            .replace('BROADCAST',   'BCT')
+            .replace('Response',    'RSP')
+            .replace('RESPONSE',    'RSP')
+            .replace('Private',     'PVT')
+            .replace('PRIVATE',     'PVT')
+            .replace('Repeater',    'RPT')
+            .replace('REPEATER',    'RPT')
+            .replace('Flood',       'FLD')
+            .replace('FLOOD',       'FLD')
+            .replace('Direct',      'DIR')
+            .replace('DIRECT',      'DIR')
+            .trim();
     }
 
     // --- Table rendering ---
-    // Each repeater occupies two <td>: RSSI | SNR, under a shared <th colspan="2">
 
     renderMsgTable() {
         if (!this.msgTableHead || !this.msgTableBody) return;
 
-        // Two sub-header cells per repeater for RSSI and SNR labels
         const repHeaders = this.repeaterColumns.map(r =>
-            `<th colspan="2" class="msg-col-rep">${r}</th>`
+            `<th colspan="2" class="msg-col-rep">${this.displayId(r)}</th>`
         ).join('');
         const subHeaders = this.repeaterColumns.map(() =>
             `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
@@ -325,12 +432,11 @@ class MeshCoreMonitor {
         this.msgTableBody.prepend(tr);
     }
 
-    updateMsgCells(hash, repeater, rssi, snr) {
-        const colIdx = this.repeaterColumns.indexOf(repeater);
+    updateMsgCells(hash, canonicalKey, rssi, snr) {
+        const colIdx = this.repeaterColumns.indexOf(canonicalKey);
         if (colIdx === -1) return;
         const row = document.getElementById(`row-${hash}`);
         if (!row) return;
-        // +2 for time and type; each repeater occupies 2 cells
         const rssiCell = row.cells[2 + colIdx * 2];
         const snrCell  = row.cells[2 + colIdx * 2 + 1];
         if (!rssiCell || !snrCell) return;
@@ -403,7 +509,7 @@ class MeshCoreMonitor {
             const rc = this.signalColor(d.lastRssi, -70, -117);
             const sc = this.signalColor(d.lastSnr,  13,  -10);
             return `<tr>
-                <td class="rl-id">${repeater}</td>
+                <td class="rl-id">${this.displayId(repeater)}</td>
                 <td>${d.count}</td>
                 <td style="color:${rc}">${d.lastRssi}</td>
                 <td style="color:${sc}">${d.lastSnr.toFixed(1)}</td>
@@ -444,6 +550,25 @@ class MeshCoreMonitor {
         beep(baseFreq * Math.pow(2, (rssi + 100) / 30), 0.08, 0.05);
     }
 
+    // --- Wake Lock ---
+
+    async acquireWakeLock() {
+        if (!('wakeLock' in navigator)) return;
+        try {
+            this.wakeLock = await navigator.wakeLock.request('screen');
+            this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
+        } catch (e) {
+            // Wake lock may be denied (battery saver, permission, etc.)
+        }
+    }
+
+    releaseWakeLock() {
+        if (this.wakeLock) {
+            this.wakeLock.release();
+            this.wakeLock = null;
+        }
+    }
+
     // --- Stats & status ---
 
     updateStats() {
@@ -461,23 +586,6 @@ class MeshCoreMonitor {
 
     formatTime(timestamp) {
         return new Date(timestamp).toLocaleTimeString('en-GB');
-    }
-
-    async acquireWakeLock() {
-        if (!('wakeLock' in navigator)) return;
-        try {
-            this.wakeLock = await navigator.wakeLock.request('screen');
-            this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
-        } catch (e) {
-            // Wake lock may be denied (battery saver, permission, etc.)
-        }
-    }
-
-    releaseWakeLock() {
-        if (this.wakeLock) {
-            this.wakeLock.release();
-            this.wakeLock = null;
-        }
     }
 
     disconnect() {
@@ -505,7 +613,7 @@ if (document.readyState === 'loading') {
     init();
 }
 
-// Re-acquire wake lock when page becomes visible again (OS releases it on hide)
+// Re-acquire wake lock when page returns to foreground (OS releases it on hide)
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && monitor?.device?.gatt?.connected) {
         monitor.acquireWakeLock();
