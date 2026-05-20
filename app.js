@@ -284,16 +284,14 @@ class MeshCoreMonitor {
 
     idPrecision(id) {
         if (id === 'direct' || id.includes('/')) return 4;
-        const h = id.startsWith('!') ? id.slice(1) : id;
-        const padded = h.padStart(8, '0');
-        if (padded.startsWith('000000')) return 1;
-        if (padded.startsWith('0000'))   return 2;
-        if (padded.startsWith('00'))     return 3;
-        return 4;
+        const hex = id.startsWith('!') ? id.slice(1) : id;
+        return Math.ceil(hex.length / 2);
     }
 
     idSuffix(id, bytes) {
-        return id.slice(-(bytes * 2));
+        // IDs are high-byte-first: '5E' is the high byte of '5E9F', so compare from left
+        const hex = id.startsWith('!') ? id.slice(1) : id;
+        return hex.slice(0, bytes * 2).toUpperCase();
     }
 
     idsCompatible(id1, id2) {
