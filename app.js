@@ -323,9 +323,13 @@ class MeshCoreMonitor {
         const p = packet.payload;
         const meta = { pathLen, pathItemBytes, totalBytes: packet.totalBytes };
         if (p) {
-            if (p.text      != null) meta.text      = String(p.text);
-            if (p.name      != null) meta.name      = String(p.name);
-            if (p.sender    != null) meta.sender    = String(p.sender);
+            // GroupTextPayload: decrypted sub-object
+            const dec = p.decrypted;
+            if (dec?.message != null) meta.text   = String(dec.message);
+            if (dec?.sender  != null) meta.sender = String(dec.sender);
+            // AdvertPayload: name lives inside appData
+            if (p.appData?.name != null) meta.name = String(p.appData.name);
+            // public key (advert)
             const lk = p.publicKey ?? p.pubKey ?? p.linkKey ?? p.key ?? null;
             if (lk != null) meta.linkKey = String(lk);
         }

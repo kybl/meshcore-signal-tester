@@ -397,8 +397,8 @@ header {
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
-    padding: 2px 5px;
-    min-width: 70px;
+    padding: 2px 3px 2px 5px;
+    width: 1px;
 }
 
 .msg-col-rx:hover {
