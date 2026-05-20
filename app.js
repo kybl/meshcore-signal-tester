@@ -105,6 +105,13 @@ class MeshCoreMonitor {
                 this.updateRepeaterTable();
             });
         }
+
+        window.addEventListener('beforeunload', e => {
+            if (this.device) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
     }
 
     // --- Bluetooth connection ---
