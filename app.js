@@ -286,6 +286,7 @@ class MeshCoreMonitor {
     }
 
     processPacket(packet, rawHex, snr, rssi) {
+        console.log('[RX packet]', packet);
         const payloadRaw = packet.payload?.raw;
         const hash = payloadRaw ? this.hashPayload(payloadRaw) : packet.messageHash;
         const repeater = this.extractRepeater(packet);
@@ -794,6 +795,10 @@ class MeshCoreMonitor {
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
         this.device = null;
+        if (this.emptyState) {
+            const p = this.emptyState.querySelector('p');
+            if (p) p.textContent = 'Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.';
+        }
     }
 }
 
