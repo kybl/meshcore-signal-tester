@@ -7,7 +7,7 @@ class MeshCoreMonitor {
         this.bleRxCharacteristic = null;
         this.hashData = new Map();
         this.allRepeaters = new Map();
-        this.repeaterColumns = []; // sorted by min RSSI ascending; keys are canonical IDs
+        this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
@@ -16,6 +16,7 @@ class MeshCoreMonitor {
 
         this.initUI();
         this.startCleanupTimer();
+        this.renderSavedDevices();
     }
 
     initUI() {
@@ -41,18 +42,25 @@ class MeshCoreMonitor {
                 setTimeout(() => { cell.textContent = orig; }, 1000);
             });
         });
+
+        document.getElementById('savedDevices')?.addEventListener('click', e => {
+            const quickBtn = e.target.closest('.saved-btn');
+            const forgetBtn = e.target.closest('.forget-btn');
+            if (quickBtn) this.quickConnect(quickBtn.dataset.id);
+            if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
+        });
     }
+
+    // --- Bluetooth connection ---
 
     async connectBluetooth() {
         if (!navigator.bluetooth) {
             alert('Web Bluetooth API is not available.\n\nRequirements:\n• Chrome or Edge browser\n• Page must be served over HTTPS or localhost');
             return;
         }
-
         try {
             this.connectBtn.disabled = true;
-            this.updateStatus('Connecting...', 'disconnected');
-
+            this.updateStatus('Scanning...', 'disconnected');
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
                     { namePrefix: 'Meshtastic' },
@@ -60,39 +68,7 @@ class MeshCoreMonitor {
                 ],
                 optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
             });
-
-            this.device = device;
-            this.device.addEventListener('gattserverdisconnected', () => this.onDisconnected());
-
-            const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-            const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
-            const NUS_TX     = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
-
-            let service;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                    const server = await device.gatt.connect();
-                    service = await server.getPrimaryService(NUS_SERVICE);
-                    break;
-                } catch (e) {
-                    if (attempt === 3) throw e;
-                    await new Promise(r => setTimeout(r, attempt * 500));
-                }
-            }
-
-            this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
-            const txCharacteristic = await service.getCharacteristic(NUS_TX);
-            await txCharacteristic.startNotifications();
-            txCharacteristic.addEventListener('characteristicvaluechanged', e => this.handleData(e));
-
-            await this.sendAppStart();
-            this.acquireWakeLock();
-
-            this.updateStatus('Connected', 'connected');
-            this.connectBtn.textContent = 'Disconnect';
-            this.connectBtn.disabled = false;
-            this.connectBtn.onclick = () => this.disconnect();
-
+            await this.connectToDevice(device);
         } catch (error) {
             if (error.name !== 'NotFoundError') {
                 console.error('Bluetooth error:', error);
@@ -103,11 +79,112 @@ class MeshCoreMonitor {
         }
     }
 
+    async quickConnect(deviceId) {
+        if (!navigator.bluetooth?.getDevices) {
+            // Browser doesn't support getDevices — fall back to picker
+            this.connectBluetooth();
+            return;
+        }
+        try {
+            const devices = await navigator.bluetooth.getDevices();
+            const device = devices.find(d => d.id === deviceId);
+            if (!device) {
+                alert('Device not available. Please connect manually.');
+                return;
+            }
+            this.connectBtn.disabled = true;
+            this.updateStatus('Connecting...', 'disconnected');
+            await this.connectToDevice(device);
+        } catch (error) {
+            console.error('Quick connect error:', error);
+            alert('Connection error: ' + error.message);
+            this.updateStatus('Disconnected', 'disconnected');
+            this.connectBtn.disabled = false;
+        }
+    }
+
+    async connectToDevice(device) {
+        this.device = device;
+        device.addEventListener('gattserverdisconnected', () => this.onDisconnected());
+
+        const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+        const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+        const NUS_TX     = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+        let service;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                const server = await device.gatt.connect();
+                service = await server.getPrimaryService(NUS_SERVICE);
+                break;
+            } catch (e) {
+                if (attempt === 3) throw e;
+                await new Promise(r => setTimeout(r, attempt * 500));
+            }
+        }
+
+        this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
+        const txCharacteristic = await service.getCharacteristic(NUS_TX);
+        await txCharacteristic.startNotifications();
+        txCharacteristic.addEventListener('characteristicvaluechanged', e => this.handleData(e));
+
+        await this.sendAppStart();
+        this.acquireWakeLock();
+        this.saveDevice(device);
+
+        this.updateStatus('Connected', 'connected');
+        this.connectBtn.textContent = 'Disconnect';
+        this.connectBtn.disabled = false;
+        this.connectBtn.onclick = () => this.disconnect();
+    }
+
     async sendAppStart() {
         // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
         const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
         await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
     }
+
+    // --- Saved devices (localStorage) ---
+
+    getSavedDevices() {
+        try { return JSON.parse(localStorage.getItem('meshcore-devices') || '[]'); }
+        catch { return []; }
+    }
+
+    saveDevice(device) {
+        const devices = this.getSavedDevices();
+        if (!devices.find(d => d.id === device.id)) {
+            devices.push({ id: device.id, name: device.name || 'Unknown' });
+            localStorage.setItem('meshcore-devices', JSON.stringify(devices));
+        }
+        this.renderSavedDevices();
+    }
+
+    forgetDevice(deviceId) {
+        const devices = this.getSavedDevices().filter(d => d.id !== deviceId);
+        localStorage.setItem('meshcore-devices', JSON.stringify(devices));
+        this.renderSavedDevices();
+    }
+
+    renderSavedDevices() {
+        const el = document.getElementById('savedDevices');
+        if (!el) return;
+        const devices = this.getSavedDevices();
+        if (devices.length === 0) {
+            el.classList.add('hidden');
+            return;
+        }
+        el.classList.remove('hidden');
+        el.innerHTML = '<span class="saved-label">Saved:</span>' +
+            devices.map(d => `
+                <span class="saved-device">
+                    <button class="saved-btn" data-id="${d.id}">${d.name}</button>
+                    <button class="forget-btn" data-id="${d.id}" title="Forget">✕</button>
+                </span>
+            `).join('');
+    }
+
+    // --- Data handling ---
 
     handleData(event) {
         this.handlePayload(new Uint8Array(event.target.value.buffer));
@@ -144,6 +221,8 @@ class MeshCoreMonitor {
     }
 
     processPacket(packet, rawHex, snr, rssi) {
+        console.log('[path]', packet.path);
+
         const payloadRaw = packet.payload?.raw;
         const hash = payloadRaw ? this.hashPayload(payloadRaw) : packet.messageHash;
         const repeater = this.extractRepeater(packet);
@@ -183,19 +262,18 @@ class MeshCoreMonitor {
     }
 
     // --- Node ID prefix resolution ---
-    // IDs from the path may be 1/2/3-byte truncations of 4-byte node IDs.
-    // We track the most precise version seen and upgrade short IDs when possible.
+    // Path IDs can be 1/2/3-byte truncations of full 4-byte node IDs.
+    // We always use the longest (most precise) known version as the column key.
 
     idPrecision(id) {
         if (id === 'direct' || id.includes('/')) return 4;
-        const h = id.slice(1); // 8 hex chars
+        const h = id.slice(1); // 8 hex chars after '!'
         if (h.startsWith('000000')) return 1;
         if (h.startsWith('0000'))   return 2;
         if (h.startsWith('00'))     return 3;
         return 4;
     }
 
-    // Last `bytes` significant bytes as hex chars (not counting '!')
     idSuffix(id, bytes) {
         return id.slice(-(bytes * 2));
     }
@@ -207,7 +285,6 @@ class MeshCoreMonitor {
         return this.idSuffix(id1, minPrec) === this.idSuffix(id2, minPrec);
     }
 
-    // Returns the canonical column key for rawId, creating or upgrading as needed.
     findOrCreateColumn(rawId) {
         if (rawId === 'direct') {
             if (!this.repeaterColumns.includes('direct')) this.repeaterColumns.push('direct');
@@ -227,14 +304,13 @@ class MeshCoreMonitor {
         if (matches.length === 1) {
             const existing = matches[0];
             if (this.idPrecision(rawId) > this.idPrecision(existing)) {
-                // rawId is more precise — upgrade existing column
                 this.renameColumnKey(existing, rawId);
                 return rawId;
             }
             return existing;
         }
 
-        // Multiple compatible full columns → ambiguous short ID, create collision column
+        // Multiple compatible columns → ambiguous short ID
         const collisionKey = [...matches].sort().join('/');
         if (!this.repeaterColumns.includes(collisionKey)) {
             this.repeaterColumns.push(collisionKey);
@@ -246,7 +322,6 @@ class MeshCoreMonitor {
         const idx = this.repeaterColumns.indexOf(oldKey);
         if (idx >= 0) this.repeaterColumns[idx] = newKey;
 
-        // Merge allRepeaters entries
         const oldData = this.allRepeaters.get(oldKey);
         if (oldData) {
             const newData = this.allRepeaters.get(newKey);
@@ -264,7 +339,6 @@ class MeshCoreMonitor {
             this.allRepeaters.delete(oldKey);
         }
 
-        // Rename in hashData.repeaters
         for (const data of this.hashData.values()) {
             if (data.repeaters.has(oldKey)) {
                 data.repeaters.set(newKey, data.repeaters.get(oldKey));
@@ -273,11 +347,11 @@ class MeshCoreMonitor {
         }
     }
 
-    // Short display label: strip '!' and leading zeros, uppercase
     displayId(id) {
         if (id === 'direct') return 'direct';
         if (id.includes('/')) return id.split('/').map(p => this.displayId(p)).join('/');
-        const stripped = id.slice(1).replace(/^0+/, '') || '0';
+        // Strip '!' prefix and leading zeros, uppercase
+        const stripped = id.startsWith('!') ? id.slice(1).replace(/^0+/, '') || '0' : id.replace(/^0+/, '') || '0';
         return stripped.toUpperCase();
     }
 
@@ -334,16 +408,17 @@ class MeshCoreMonitor {
     // --- Column management ---
 
     sortColumns() {
-        this.repeaterColumns.sort((a, b) => this.getColMinRssi(a) - this.getColMinRssi(b));
+        // Strongest (highest max RSSI) first
+        this.repeaterColumns.sort((a, b) => this.getColMaxRssi(b) - this.getColMaxRssi(a));
     }
 
-    getColMinRssi(repeaterId) {
-        let min = null;
+    getColMaxRssi(repeaterId) {
+        let max = null;
         for (const data of this.hashData.values()) {
             const r = data.repeaters.get(repeaterId);
-            if (r && (min === null || r.rssi < min)) min = r.rssi;
+            if (r && (max === null || r.rssi > max)) max = r.rssi;
         }
-        return min ?? 0;
+        return max ?? -200;
     }
 
     abbreviateType(type) {
@@ -557,16 +632,11 @@ class MeshCoreMonitor {
         try {
             this.wakeLock = await navigator.wakeLock.request('screen');
             this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
-        } catch (e) {
-            // Wake lock may be denied (battery saver, permission, etc.)
-        }
+        } catch (e) { /* denied — battery saver etc. */ }
     }
 
     releaseWakeLock() {
-        if (this.wakeLock) {
-            this.wakeLock.release();
-            this.wakeLock = null;
-        }
+        if (this.wakeLock) { this.wakeLock.release(); this.wakeLock = null; }
     }
 
     // --- Stats & status ---
@@ -601,6 +671,7 @@ class MeshCoreMonitor {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
+        this.device = null;
     }
 }
 
@@ -613,7 +684,6 @@ if (document.readyState === 'loading') {
     init();
 }
 
-// Re-acquire wake lock when page returns to foreground (OS releases it on hide)
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && monitor?.device?.gatt?.connected) {
         monitor.acquireWakeLock();

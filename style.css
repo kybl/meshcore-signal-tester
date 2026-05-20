@@ -135,7 +135,7 @@ header {
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
     max-height: 160px;
-    overflow-y: auto;
+    overflow: auto;
 }
 
 .repeater-log-table {
@@ -266,6 +266,66 @@ header {
 
 .empty-state.hidden {
     display: none;
+}
+
+.saved-devices {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 8px;
+    border-top: 1px solid #f0f0f0;
+}
+
+.saved-devices.hidden {
+    display: none;
+}
+
+.saved-label {
+    font-size: 10px;
+    color: #aaa;
+    white-space: nowrap;
+}
+
+.saved-device {
+    display: inline-flex;
+    align-items: center;
+}
+
+.saved-btn {
+    background: #f0f0ff;
+    color: #667eea;
+    border: 1px solid #c8c8f0;
+    border-right: none;
+    border-radius: 5px 0 0 5px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.saved-btn:hover {
+    background: #667eea;
+    color: white;
+}
+
+.forget-btn {
+    background: #fff5f5;
+    color: #c33;
+    border: 1px solid #e8c0c0;
+    border-radius: 0 5px 5px 0;
+    padding: 3px 7px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1;
+}
+
+.forget-btn:hover {
+    background: #c33;
+    color: white;
 }
 
 @media (max-width: 600px) {
