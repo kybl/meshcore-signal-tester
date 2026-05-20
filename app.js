@@ -34,10 +34,23 @@ class MeshCoreMonitor {
         this.connectBtn = document.getElementById('connectBtn');
         this.statusEl = document.getElementById('status');
         this.batteryEl = document.getElementById('batteryStatus');
-        this.chartWrap = document.getElementById('chartWrap');
-        this.chartSvg = document.getElementById('rssiChart');
-        this.chartLegend = document.getElementById('chartLegend');
-        setInterval(() => { if (this.chartPoints.length) this.renderChart(); }, 10000);
+        this.rssiChartWrap = document.getElementById('rssiChartWrap');
+        this.rssiChartSvg  = document.getElementById('rssiChart');
+        this.rssiChartLegend = document.getElementById('rssiChartLegend');
+        this.snrChartWrap  = document.getElementById('snrChartWrap');
+        this.snrChartSvg   = document.getElementById('snrChart');
+        this.snrChartLegend = document.getElementById('snrChartLegend');
+        setInterval(() => { if (this.chartPoints.length) this.renderCharts(); }, 10000);
+
+        // Collapsible sections
+        document.querySelectorAll('.collapse-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const body = document.getElementById(btn.dataset.target);
+                if (!body) return;
+                const collapsed = body.classList.toggle('collapsed');
+                btn.classList.toggle('collapsed', collapsed);
+            });
+        });
         this.msgTableHead = document.getElementById('msgTableHead');
         this.msgTableBody = document.getElementById('msgTableBody');
         this.emptyState = document.getElementById('emptyState');
@@ -504,11 +517,11 @@ class MeshCoreMonitor {
             maxSnr:  Math.max(existing?.maxSnr  ?? -999, snr),
             maxRssi: Math.max(existing?.maxRssi ?? -999, rssi),
         });
-        this.chartPoints.push({ time: now, rssi, col: canonicalKey });
+        this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
-        this.renderChart();
+        this.renderCharts();
 
         this.playRxSound(rssi);
         this.updateStats();
@@ -695,20 +708,27 @@ class MeshCoreMonitor {
         return this.chartColors.get(col);
     }
 
-    renderChart() {
-        if (!this.chartSvg) return;
-
+    renderCharts() {
         const cutoff = Date.now() - this.HASH_LIFETIME;
         this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
+        this.renderChart('rssi');
+        this.renderChart('snr');
+    }
+
+    renderChart(type) {
+        const wrap   = type === 'rssi' ? this.rssiChartWrap   : this.snrChartWrap;
+        const svg    = type === 'rssi' ? this.rssiChartSvg    : this.snrChartSvg;
+        const legend = type === 'rssi' ? this.rssiChartLegend : this.snrChartLegend;
+        if (!svg) return;
 
         if (!this.chartPoints.length) {
-            this.chartWrap?.classList.add('hidden');
+            wrap?.classList.add('hidden');
             return;
         }
-        this.chartWrap?.classList.remove('hidden');
+        wrap?.classList.remove('hidden');
 
-        const W = this.chartSvg.clientWidth || 600;
-        const H = this.chartSvg.clientHeight || 120;
+        const W = svg.clientWidth || 600;
+        const H = svg.clientHeight || 180;
         const pl = 36, pr = 8, pt = 6, pb = 24;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
@@ -716,20 +736,21 @@ class MeshCoreMonitor {
         const now = Date.now();
         const tMin = now - this.HASH_LIFETIME;
 
-        const rssis = this.chartPoints.map(p => p.rssi);
-        const rMin = Math.min(...rssis), rMax = Math.max(...rssis);
-        const yPad = 5;
-        const yMin = Math.floor((rMin - yPad) / 10) * 10;
-        const yMax = Math.ceil((rMax + yPad) / 10) * 10;
+        const vals = this.chartPoints.map(p => type === 'rssi' ? p.rssi : p.snr);
+        const vMin = Math.min(...vals), vMax = Math.max(...vals);
+        const yPad = type === 'rssi' ? 5 : 2;
+        const yMin = Math.floor((vMin - yPad) / 5) * 5;
+        const yMax = Math.ceil((vMax + yPad) / 5) * 5;
 
-        const xOf = t  => (pl + (t - tMin) / (now - tMin) * cw).toFixed(1);
-        const yOf = r  => (pt + (1 - (r - yMin) / (yMax - yMin)) * ch).toFixed(1);
+        const xOf = t => (pl + (t - tMin) / (now - tMin) * cw).toFixed(1);
+        const yOf = v => (pt + (1 - (v - yMin) / (yMax - yMin)) * ch).toFixed(1);
+        const valOf = p => type === 'rssi' ? p.rssi : p.snr;
 
         const parts = [];
 
         // Y grid + labels
         const yRange = yMax - yMin;
-        const yStep = yRange <= 20 ? 5 : yRange <= 60 ? 10 : 20;
+        const yStep = yRange <= 10 ? 2 : yRange <= 20 ? 5 : yRange <= 60 ? 10 : 20;
         for (let y = yMin; y <= yMax; y += yStep) {
             const yp = yOf(y);
             parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#f0f0f0" stroke-width="1"/>`);
@@ -759,22 +780,22 @@ class MeshCoreMonitor {
             if (pts.length < 2) continue;
             pts.sort((a, b) => a.time - b.time);
             const color = this.getRepeaterColor(col);
-            const pointsStr = pts.map(p => `${xOf(p.time)},${yOf(p.rssi)}`).join(' ');
+            const pointsStr = pts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
             parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.35"/>`);
         }
 
         // Dots
         for (const p of this.chartPoints) {
-            parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(p.rssi)}" r="3.5" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.75"/>`);
+            parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="3.5" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.75"/>`);
         }
 
-        this.chartSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-        this.chartSvg.innerHTML = parts.join('');
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.innerHTML = parts.join('');
 
         // Legend — only repeaters visible in current window
         const visible = [...new Set(this.chartPoints.map(p => p.col))];
-        if (this.chartLegend) {
-            this.chartLegend.innerHTML = visible.map(col => {
+        if (legend) {
+            legend.innerHTML = visible.map(col => {
                 const c = this.getRepeaterColor(col);
                 return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))}</span>`;
             }).join('');

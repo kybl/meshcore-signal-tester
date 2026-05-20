@@ -25,49 +25,75 @@
         </header>
 
         <main>
-            <div class="repeater-log-wrap">
-                <div class="section-title">Seen repeaters</div>
-                <div class="repeater-log-scroll">
-                    <table class="repeater-log-table">
-                        <thead><tr>
-                            <th data-sort-key="id">Repeater</th>
-                            <th data-sort-key="count">RX</th>
-                            <th data-sort-key="maxRssi">Max RSSI</th>
-                            <th data-sort-key="maxSnr">Max SNR</th>
-                            <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
-                        </tr></thead>
-                        <tbody id="repeaterLogBody"></tbody>
-                    </table>
-                </div>
+            <div id="emptyState" class="empty-state">
+                <p>Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.</p>
             </div>
 
-            <div id="chartWrap" class="chart-wrap hidden">
-                <div class="section-title">Signal history</div>
-                <div class="chart-box">
-                    <svg id="rssiChart" class="rssi-chart"></svg>
-                    <div id="chartLegend" class="chart-legend"></div>
-                </div>
-            </div>
-
-            <div id="msgTableWrap" class="msg-table-wrap">
+            <div class="section-wrap" id="repeaterWrap">
                 <div class="section-header">
-                    <div class="section-title">Messages</div>
+                    <span class="section-title">Seen repeaters</span>
                     <label class="ttl-control">
                         <span class="ttl-label">TTL</span>
                         <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
                         <span id="ttlValue">5m</span>
                     </label>
+                    <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
                 </div>
-                <div class="msg-table-scroll">
-                    <table class="msg-table">
-                        <thead id="msgTableHead"></thead>
-                        <tbody id="msgTableBody"></tbody>
-                    </table>
+                <div class="section-body" id="repeaterBody">
+                    <div class="repeater-log-scroll">
+                        <table class="repeater-log-table">
+                            <thead><tr>
+                                <th data-sort-key="id">Repeater</th>
+                                <th data-sort-key="count">RX</th>
+                                <th data-sort-key="maxRssi">Max RSSI</th>
+                                <th data-sort-key="maxSnr">Max SNR</th>
+                                <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
+                            </tr></thead>
+                            <tbody id="repeaterLogBody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
-            <div id="emptyState" class="empty-state">
-                <p>Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.</p>
+            <div class="section-wrap hidden" id="rssiChartWrap">
+                <div class="section-header">
+                    <span class="section-title">RSSI history</span>
+                    <button class="collapse-btn" data-target="rssiChartBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="rssiChartBody">
+                    <div class="chart-box">
+                        <svg id="rssiChart" class="rssi-chart"></svg>
+                        <div id="rssiChartLegend" class="chart-legend"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-wrap hidden" id="snrChartWrap">
+                <div class="section-header">
+                    <span class="section-title">SNR history</span>
+                    <button class="collapse-btn" data-target="snrChartBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="snrChartBody">
+                    <div class="chart-box">
+                        <svg id="snrChart" class="rssi-chart"></svg>
+                        <div id="snrChartLegend" class="chart-legend"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-wrap" id="msgTableWrap">
+                <div class="section-header">
+                    <span class="section-title">Messages</span>
+                    <button class="collapse-btn" data-target="msgScrollBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="msgScrollBody">
+                    <div class="msg-table-scroll">
+                        <table class="msg-table">
+                            <thead id="msgTableHead"></thead>
+                            <tbody id="msgTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </main>
     </div>

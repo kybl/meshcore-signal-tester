@@ -123,7 +123,6 @@ header {
     color: #aaa;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    margin-bottom: 4px;
 }
 
 .section-header {
@@ -133,12 +132,37 @@ header {
     margin-bottom: 4px;
 }
 
-.section-header .section-title {
-    margin-bottom: 0;
+.section-wrap {
+    margin-bottom: 8px;
 }
 
-.repeater-log-wrap {
-    margin-bottom: 8px;
+.section-wrap.hidden {
+    display: none;
+}
+
+.section-body.collapsed {
+    display: none;
+}
+
+.collapse-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    color: #bbb;
+    padding: 0 2px;
+    line-height: 1;
+    margin-left: auto;
+    transition: transform 0.2s, color 0.15s;
+    flex-shrink: 0;
+}
+
+.collapse-btn:hover {
+    color: #667eea;
+}
+
+.collapse-btn.collapsed {
+    transform: rotate(-90deg);
 }
 
 .repeater-log-scroll {
@@ -194,10 +218,6 @@ header {
     font-weight: 700;
 }
 
-.chart-wrap {
-    margin-bottom: 8px;
-}
-
 .chart-box {
     background: white;
     border-radius: 8px;
@@ -232,10 +252,6 @@ header {
     height: 9px;
     border-radius: 50%;
     flex-shrink: 0;
-}
-
-.msg-table-wrap {
-    margin-bottom: 8px;
 }
 
 .msg-table-scroll {
