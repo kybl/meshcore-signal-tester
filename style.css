@@ -147,12 +147,12 @@ header {
 .repeater-log-table th {
     position: sticky;
     top: 0;
-    background: #f8f8f8;
-    color: #888;
+    background: #e4e4e4;
+    color: #666;
     font-weight: 600;
     text-align: left;
     padding: 5px 10px;
-    border-bottom: 1px solid #eee;
+    border-bottom: 1px solid #d0d0d0;
 }
 
 .repeater-log-table td {
@@ -195,8 +195,8 @@ header {
 .msg-table th {
     position: sticky;
     top: 0;
-    background: #f8f8f8;
-    color: #777;
+    background: #e4e4e4;
+    color: #555;
     font-weight: 600;
     text-align: center;
     padding: 3px 6px;
@@ -211,9 +211,9 @@ header {
 .msg-col-time {
     color: #aaa;
     font-size: 9px;
-    min-width: 60px;
-    text-align: left;
-    padding-right: 2px;
+    min-width: 54px;
+    text-align: center;
+    padding: 1px 3px;
 }
 
 .msg-col-type {
@@ -325,6 +325,51 @@ header {
 .forget-btn:hover {
     background: #c33;
     color: white;
+}
+
+/* Row animations */
+@keyframes rowFadeIn {
+    from { opacity: 0; background: #eef0ff; }
+    to   { opacity: 1; background: transparent; }
+}
+
+.row-new {
+    animation: rowFadeIn 0.4s ease forwards;
+}
+
+.row-removing {
+    transition: opacity 0.35s ease, transform 0.35s ease;
+    opacity: 0;
+    transform: translateX(12px);
+    pointer-events: none;
+}
+
+/* TTL slider */
+.ttl-control {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: #666;
+    cursor: default;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.ttl-label {
+    color: #aaa;
+}
+
+#ttlSlider {
+    width: 70px;
+    cursor: pointer;
+    accent-color: #667eea;
+}
+
+#ttlValue {
+    font-weight: 700;
+    color: #333;
+    min-width: 22px;
 }
 
 @media (max-width: 600px) {

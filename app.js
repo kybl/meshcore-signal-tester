@@ -49,6 +49,16 @@ class MeshCoreMonitor {
             if (quickBtn) this.quickConnect(quickBtn.dataset.id);
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
+
+        const ttlSlider = document.getElementById('ttlSlider');
+        const ttlValue  = document.getElementById('ttlValue');
+        if (ttlSlider) {
+            ttlSlider.addEventListener('input', () => {
+                const secs = +ttlSlider.value;
+                this.HASH_LIFETIME = secs * 1000;
+                ttlValue.textContent = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
+            });
+        }
     }
 
     // --- Bluetooth connection ---
@@ -342,12 +352,11 @@ class MeshCoreMonitor {
         if (oldData) {
             const newData = this.allRepeaters.get(newKey);
             if (newData) {
-                const latest = oldData.lastSeen > newData.lastSeen ? oldData : newData;
                 this.allRepeaters.set(newKey, {
                     lastSeen: Math.max(oldData.lastSeen, newData.lastSeen),
                     count: oldData.count + newData.count,
-                    lastSnr: latest.lastSnr,
-                    lastRssi: latest.lastRssi,
+                    maxSnr:  Math.max(oldData.maxSnr  ?? -999, newData.maxSnr  ?? -999),
+                    maxRssi: Math.max(oldData.maxRssi ?? -999, newData.maxRssi ?? -999),
                 });
             } else {
                 this.allRepeaters.set(newKey, oldData);
@@ -403,8 +412,8 @@ class MeshCoreMonitor {
         this.allRepeaters.set(canonicalKey, {
             lastSeen: now,
             count: (existing?.count ?? 0) + 1,
-            lastSnr: snr,
-            lastRssi: rssi,
+            maxSnr:  Math.max(existing?.maxSnr  ?? -999, snr),
+            maxRssi: Math.max(existing?.maxRssi ?? -999, rssi),
         });
         this.updateRepeaterTable();
 
@@ -443,17 +452,25 @@ class MeshCoreMonitor {
 
     abbreviateType(type) {
         if (!type) return '?';
-        return type
-            .replace(/GroupText|GROUP_TEXT/g,   'GT')
-            .replace(/TextMessage|TEXT_MESSAGE/g,'TX')
-            .replace(/Traceroute|TRACEROUTE/g,   'TR')
-            .replace(/Broadcast|BROADCAST/g,     'BC')
-            .replace(/Response|RESPONSE/g,       'RS')
-            .replace(/Private|PRIVATE/g,         'PV')
-            .replace(/Repeater|REPEATER/g,       'RP')
-            .replace(/Flood|FLOOD/g,             'FL')
-            .replace(/Direct|DIRECT/g,           'DR')
-            .trim();
+        // Show only payload type (2 chars); route type is visible from repeater columns
+        const payload = [
+            [/GroupText|GROUP_TEXT/,   'GT'],
+            [/TextMessage|TEXT_MESSAGE/,'TX'],
+            [/Traceroute|TRACEROUTE/,  'TR'],
+            [/Response|RESPONSE/,      'RS'],
+            [/Private|PRIVATE/,        'PV'],
+            [/Advert|ADVERT/,          'AD'],
+            [/Ping|PING/,              'PN'],
+        ];
+        for (const [re, abbr] of payload) {
+            if (re.test(type)) return abbr;
+        }
+        // Fall back to route type
+        if (/Flood|FLOOD/.test(type))     return 'FL';
+        if (/Direct|DIRECT/.test(type))   return 'DR';
+        if (/Broadcast|BROADCAST/.test(type)) return 'BC';
+        if (/Repeater|REPEATER/.test(type))   return 'RP';
+        return type.slice(0, 2).toUpperCase();
     }
 
     // --- Table rendering ---
@@ -508,6 +525,7 @@ class MeshCoreMonitor {
         const data = this.hashData.get(hash);
         const tr = document.createElement('tr');
         tr.id = `row-${hash}`;
+        tr.className = 'row-new';
         tr.innerHTML = `
             <td class="msg-col-time">${this.formatTime(data.firstSeen)}</td>
             <td class="msg-col-type msg-type-cell" title="${data.type}" data-hex="${data.rawHex}">${this.abbreviateType(data.type)}</td>
@@ -580,9 +598,8 @@ class MeshCoreMonitor {
     removeHashRow(hash) {
         const row = document.getElementById(`row-${hash}`);
         if (row) {
-            row.style.transition = 'opacity 0.5s';
-            row.style.opacity = '0';
-            setTimeout(() => row.remove(), 500);
+            row.classList.add('row-removing');
+            setTimeout(() => row.remove(), 400);
         }
     }
 
@@ -593,13 +610,13 @@ class MeshCoreMonitor {
         const sorted = Array.from(this.allRepeaters.entries())
             .sort((a, b) => b[1].lastSeen - a[1].lastSeen);
         this.repeaterLogBody.innerHTML = sorted.map(([repeater, d]) => {
-            const rc = this.signalColor(d.lastRssi, -70, -117);
-            const sc = this.signalColor(d.lastSnr,  13,  -10);
+            const rc = this.signalColor(d.maxRssi, -70, -117);
+            const sc = this.signalColor(d.maxSnr,  13,  -10);
             return `<tr>
                 <td class="rl-id">${this.displayId(repeater)}</td>
                 <td>${d.count}</td>
-                <td style="color:${rc}">${d.lastRssi}</td>
-                <td style="color:${sc}">${d.lastSnr.toFixed(1)}</td>
+                <td style="color:${rc}">${d.maxRssi}</td>
+                <td style="color:${sc}">${d.maxSnr.toFixed(1)}</td>
                 <td>${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
