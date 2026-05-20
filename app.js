@@ -11,6 +11,7 @@ class MeshCoreMonitor {
         this.totalRxCount = 0;
         this.HASH_LIFETIME = 300000;
         this.cleanupInterval = null;
+        this._connectionMonitor = null;
         this.audioCtx = null;
         this.wakeLock = null;
         this.repeaterSortKey = 'lastSeen';
@@ -296,6 +297,17 @@ class MeshCoreMonitor {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connected. Waiting for first RX log…';
         }
+        this._startConnectionMonitor();
+    }
+
+    _startConnectionMonitor() {
+        clearInterval(this._connectionMonitor);
+        this._connectionMonitor = setInterval(() => {
+            if (this.device && !this.device.gatt?.connected) {
+                console.warn('Bluetooth connection lost (detected by monitor)');
+                this.onDisconnected();
+            }
+        }, 2000);
     }
 
     async sendAppStart() {
@@ -1149,6 +1161,8 @@ class MeshCoreMonitor {
 
     onDisconnected() {
         this.releaseWakeLock();
+        clearInterval(this._connectionMonitor);
+        this._connectionMonitor = null;
         // Clean up listeners — needed when called from surprise disconnect (gattserverdisconnected event)
         if (this._onGattDisconnected) {
             this.device?.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
