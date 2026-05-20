@@ -144,7 +144,6 @@ header {
     gap: 10px;
     margin-bottom: 4px;
     cursor: pointer;
-    user-select: none;
     border-radius: 5px;
     padding: 3px 5px;
     margin-left: -5px;
@@ -171,8 +170,19 @@ header {
     display: none;
 }
 
+.section-body {
+    display: grid;
+    grid-template-rows: 1fr;
+    overflow: hidden;
+    transition: grid-template-rows 0.28s ease;
+}
+
+.section-body > * {
+    min-height: 0;
+}
+
 .section-body.collapsed {
-    display: none;
+    grid-template-rows: 0fr;
 }
 
 .collapse-btn {
@@ -447,16 +457,21 @@ header {
     color: white;
 }
 
-/* Clickable signal cells */
+/* Clickable signal cells — RSSI+SNR highlight together as a pair */
 .sig-rssi,
 .sig-snr {
     cursor: pointer;
     user-select: none;
 }
 
-.sig-rssi:hover,
-.sig-snr:hover {
-    background: #f0f0ff;
+.sig-rssi.sig-pair-hover,
+.sig-snr.sig-pair-hover {
+    background: #eaeaff;
+}
+
+.sig-rssi.sig-active,
+.sig-snr.sig-active {
+    background: #d8d8ff;
 }
 
 /* Row animations */
@@ -589,9 +604,7 @@ header {
     align-items: center;
     gap: 4px;
     font-size: 12px;
-    color: #666;
-    cursor: default;
-    user-select: none;
+    color: rgba(255,255,255,0.75);
     white-space: nowrap;
     margin-top: 6px;
     padding-left: 2px;
@@ -613,7 +626,7 @@ header {
 }
 
 .ttl-label {
-    color: #aaa;
+    color: rgba(255,255,255,0.55);
 }
 
 #ttlSelect {

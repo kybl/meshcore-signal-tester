@@ -28,6 +28,7 @@ class MeshCoreMonitor {
         ];
         this._batteryCharacteristic = null;
         this._onBatteryChanged = null;
+        this._useAbbreviatedTypes = false;
 
         this.initUI();
         this.startCleanupTimer();
@@ -69,10 +70,28 @@ class MeshCoreMonitor {
 
         this.connectBtn.onclick = () => this.connectBluetooth();
 
+        // Pair-hover: hovering RSSI or SNR highlights both cells for that repeater
+        if (this.msgTableBody) {
+            this.msgTableBody.addEventListener('mouseover', e => {
+                const cell = e.target.closest('.sig-rssi, .sig-snr');
+                if (!cell?.dataset.hash) return;
+                this.msgTableBody.querySelectorAll('.sig-pair-hover').forEach(el => el.classList.remove('sig-pair-hover'));
+                const { hash, col } = cell.dataset;
+                this.msgTableBody.querySelectorAll(`[data-hash="${hash}"][data-col="${col}"]`)
+                    .forEach(el => el.classList.add('sig-pair-hover'));
+            });
+            this.msgTableBody.addEventListener('mouseleave', () => {
+                this.msgTableBody.querySelectorAll('.sig-pair-hover').forEach(el => el.classList.remove('sig-pair-hover'));
+            });
+        }
+
         let _resizeTimer;
         window.addEventListener('resize', () => {
             clearTimeout(_resizeTimer);
-            _resizeTimer = setTimeout(() => { if (this.chartPoints.length) this.scheduleChartRender(); }, 150);
+            _resizeTimer = setTimeout(() => {
+                if (this.chartPoints.length) this.scheduleChartRender();
+                this._checkTableOverflow(true);
+            }, 150);
         });
 
         const bindChartTooltip = (svg, type) => {
@@ -396,6 +415,8 @@ class MeshCoreMonitor {
         } else if (pushCode === 0x84) {
             loraPacket = payload.slice(4);
         } else {
+            console.log('[NUS push] unknown code:', '0x' + pushCode.toString(16).padStart(2, '0'),
+                'payload:', Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join(' '));
             return;
         }
         if (loraPacket.length === 0) return;
@@ -594,6 +615,7 @@ class MeshCoreMonitor {
         this.totalRxCount++;
         const now = Date.now();
         const isNewHash = !this.hashData.has(hash);
+        const prevColCount = this.repeaterColumns.length;
         const canonicalKey = this.findOrCreateColumn(repeater);
 
         if (isNewHash) {
@@ -626,6 +648,9 @@ class MeshCoreMonitor {
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
+        if (this.repeaterColumns.length !== prevColCount) {
+            requestAnimationFrame(() => this._checkTableOverflow(false));
+        }
         this.scheduleChartRender();
 
         this.playRxSound(rssi);
@@ -670,6 +695,21 @@ class MeshCoreMonitor {
         if (/Broadcast|BROADCAST/.test(type)) return 'BC';
         if (/Repeater|REPEATER/.test(type))   return 'RP';
         return type.slice(0, 2).toUpperCase();
+    }
+
+    _checkTableOverflow(allowUpgrade) {
+        const scroll = this.msgTableHead?.closest('.msg-table-scroll');
+        if (!scroll) return;
+        const table = scroll.querySelector('.msg-table');
+        if (!table) return;
+        const overflows = table.scrollWidth > scroll.clientWidth + 2;
+        if (overflows && !this._useAbbreviatedTypes) {
+            this._useAbbreviatedTypes = true;
+            this.renderMsgTable();
+        } else if (!overflows && allowUpgrade && this._useAbbreviatedTypes) {
+            this._useAbbreviatedTypes = false;
+            this.renderMsgTable();
+        }
     }
 
     // --- Table rendering ---
@@ -717,6 +757,10 @@ class MeshCoreMonitor {
             if (col) detail.dataset.col = col;
             detail.innerHTML = this.buildDetailRowHtml(hash, col);
             row.after(detail);
+            if (col) {
+                this.msgTableBody.querySelectorAll(`[data-hash="${hash}"][data-col="${col}"]`)
+                    .forEach(el => el.classList.add('sig-active'));
+            }
         }
 
         if (flashHash) {
@@ -730,9 +774,12 @@ class MeshCoreMonitor {
             const sig = data.repeaters.get(r);
             return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr, hash, r) : '<td></td><td></td>';
         }).join('');
+        const typeDisplay = this._useAbbreviatedTypes
+            ? this.escHtml(this.abbreviateType(data.type))
+            : this.escHtml(data.type || '?');
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${this.escHtml(data.type || '?')}</span>
+                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
             </td>
             ${cells}
         </tr>`;
@@ -740,6 +787,7 @@ class MeshCoreMonitor {
 
     toggleDetailRow(hash, col = null) {
         const existing = document.getElementById(`detail-${hash}`);
+        this.msgTableBody?.querySelectorAll('.sig-active').forEach(el => el.classList.remove('sig-active'));
         // Same cell clicked again → close
         if (existing && existing.dataset.col === (col ?? '')) { existing.remove(); return; }
         const row = document.getElementById(`row-${hash}`);
@@ -752,6 +800,10 @@ class MeshCoreMonitor {
         }
         detail.dataset.col = col ?? '';
         detail.innerHTML = this.buildDetailRowHtml(hash, col);
+        if (col) {
+            this.msgTableBody?.querySelectorAll(`[data-hash="${hash}"][data-col="${col}"]`)
+                .forEach(el => el.classList.add('sig-active'));
+        }
     }
 
     syntaxHighlightJson(json) {
