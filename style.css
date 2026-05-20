@@ -23,9 +23,23 @@ header {
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     margin-bottom: 8px;
     display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.header-row {
+    display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 10px;
+}
+
+.header-stats-row {
+    display: flex;
+    align-items: center;
+    border-top: 1px solid #f0f0f0;
+    padding-top: 6px;
+    margin-top: 4px;
 }
 
 .app-title {
@@ -46,7 +60,6 @@ header {
     display: flex;
     align-items: center;
     gap: 14px;
-    margin-left: auto;
 }
 
 .hstat {
@@ -358,13 +371,12 @@ header {
 }
 
 .saved-devices {
-    width: 100%;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    padding-top: 8px;
-    border-top: 1px solid #f0f0f0;
+    flex: 1;
+    min-width: 0;
 }
 
 .saved-devices.hidden {
@@ -417,13 +429,16 @@ header {
     color: white;
 }
 
-/* Clickable data rows */
-.msg-table tr[id^="row-"] {
+/* Clickable signal cells */
+.sig-rssi,
+.sig-snr {
     cursor: pointer;
+    user-select: none;
 }
 
-.msg-table tr[id^="row-"]:hover td {
-    background: #f8f8ff;
+.sig-rssi:hover,
+.sig-snr:hover {
+    background: #f0f0ff;
 }
 
 /* Row animations */
@@ -514,6 +529,21 @@ header {
     color: #444;
 }
 
+.detail-sig {
+    font-size: 12px;
+    color: #444;
+    margin-bottom: 6px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #e8e8f0;
+}
+
+/* JSON syntax highlighting inside .detail-json */
+.detail-json .jh-key  { color: #7c3aed; font-weight: 600; }
+.detail-json .jh-str  { color: #059669; }
+.detail-json .jh-num  { color: #2563eb; }
+.detail-json .jh-bool { color: #d97706; }
+.detail-json .jh-null { color: #9ca3af; }
+
 .raw-hex {
     font-family: 'Courier New', monospace;
     font-size: 9px;
@@ -585,8 +615,3 @@ header {
     color: #c33;
 }
 
-@media (max-width: 600px) {
-    .header-stats {
-        margin-left: 0;
-    }
-}

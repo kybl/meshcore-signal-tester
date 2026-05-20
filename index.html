@@ -9,19 +9,23 @@
 <body>
     <div class="container">
         <header>
-            <span class="app-title">MeshCore RX Monitor</span>
-            <div class="header-controls">
-                <span id="status" class="status disconnected">Disconnected</span>
-                <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
-                <label class="sound-toggle"><input type="checkbox" id="soundEnabled"> Sound</label>
+            <div class="header-row">
+                <span class="app-title">MeshCore RX Monitor</span>
+                <div class="header-controls">
+                    <span id="status" class="status disconnected">Disconnected</span>
+                    <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
+                    <label class="sound-toggle"><input type="checkbox" id="soundEnabled"> Sound</label>
+                </div>
+                <span id="batteryStatus" class="battery-status hidden"></span>
+                <div id="savedDevices" class="saved-devices hidden"></div>
             </div>
-            <div class="header-stats">
-                <span class="hstat"><span class="hstat-label">Active</span> <span id="activeHashes">0</span></span>
-                <span class="hstat"><span class="hstat-label">Total RX</span> <span id="totalRx">0</span></span>
-                <span class="hstat"><span class="hstat-label">Repeaters</span> <span id="totalRepeaters">0</span></span>
-                <span id="batteryStatus" class="hstat battery-status hidden"></span>
+            <div class="header-stats-row">
+                <div class="header-stats">
+                    <span class="hstat"><span class="hstat-label">Active</span> <span id="activeHashes">0</span></span>
+                    <span class="hstat"><span class="hstat-label">Total RX</span> <span id="totalRx">0</span></span>
+                    <span class="hstat"><span class="hstat-label">Repeaters</span> <span id="totalRepeaters">0</span></span>
+                </div>
             </div>
-            <div id="savedDevices" class="saved-devices hidden"></div>
         </header>
 
         <main>

@@ -86,6 +86,7 @@ class MeshCoreMonitor {
         bindChartTooltip(this.snrChartSvg,  'snr');
 
         document.getElementById('msgTableWrap')?.addEventListener('click', e => {
+            // Detail row: close on click, or copy hex
             const detailRow = e.target.closest('tr.detail-row');
             if (detailRow) {
                 const hexEl = e.target.closest('.raw-hex');
@@ -100,8 +101,11 @@ class MeshCoreMonitor {
                 }
                 return;
             }
-            const dataRow = e.target.closest('tr[id^="row-"]');
-            if (dataRow) this.toggleDetailRow(dataRow.id.slice(4));
+            // RSSI or SNR cell: toggle per-repeater detail
+            const sigCell = e.target.closest('.sig-rssi, .sig-snr');
+            if (sigCell?.dataset.hash) {
+                this.toggleDetailRow(sigCell.dataset.hash, sigCell.dataset.col);
+            }
         });
 
         document.getElementById('savedDevices')?.addEventListener('click', e => {
@@ -655,9 +659,9 @@ class MeshCoreMonitor {
     renderMsgTable(flashHash = null) {
         if (!this.msgTableHead || !this.msgTableBody) return;
 
-        const openDetails = new Set(
+        const openDetails = new Map(
             [...this.msgTableBody.querySelectorAll('tr[id^="detail-"]')]
-                .map(tr => tr.id.slice(7))
+                .map(tr => [tr.id.slice(7), tr.dataset.col ?? null])
         );
 
         const colKey = this.repeaterColumns.join(',');
@@ -685,14 +689,15 @@ class MeshCoreMonitor {
             this.buildMsgRowHtml(hash, data)
         ).join('');
 
-        for (const hash of openDetails) {
+        for (const [hash, col] of openDetails) {
             if (!this.hashData.has(hash)) continue;
             const row = document.getElementById(`row-${hash}`);
             if (!row) continue;
             const detail = document.createElement('tr');
             detail.id = `detail-${hash}`;
             detail.className = 'detail-row';
-            detail.innerHTML = this.buildDetailRowHtml(hash);
+            if (col) detail.dataset.col = col;
+            detail.innerHTML = this.buildDetailRowHtml(hash, col);
             row.after(detail);
         }
 
@@ -705,26 +710,66 @@ class MeshCoreMonitor {
     buildMsgRowHtml(hash, data) {
         const cells = this.repeaterColumns.map(r => {
             const sig = data.repeaters.get(r);
-            return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr) : '<td></td><td></td>';
+            return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr, hash, r) : '<td></td><td></td>';
         }).join('');
         return `<tr id="row-${hash}">
-            <td class="msg-col-rx" data-hash="${hash}">
+            <td class="msg-col-rx">
                 <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-abbr">${this.abbreviateType(data.type)}</span>
             </td>
             ${cells}
         </tr>`;
     }
 
-    toggleDetailRow(hash) {
+    toggleDetailRow(hash, col = null) {
         const existing = document.getElementById(`detail-${hash}`);
-        if (existing) { existing.remove(); return; }
+        // Same cell clicked again → close
+        if (existing && existing.dataset.col === (col ?? '')) { existing.remove(); return; }
         const row = document.getElementById(`row-${hash}`);
         if (!row) return;
-        const detail = document.createElement('tr');
-        detail.id = `detail-${hash}`;
-        detail.className = 'detail-row';
-        detail.innerHTML = this.buildDetailRowHtml(hash);
-        row.after(detail);
+        const detail = existing ?? document.createElement('tr');
+        if (!existing) {
+            detail.id = `detail-${hash}`;
+            detail.className = 'detail-row';
+            row.after(detail);
+        }
+        detail.dataset.col = col ?? '';
+        detail.innerHTML = this.buildDetailRowHtml(hash, col);
+    }
+
+    syntaxHighlightJson(json) {
+        let out = '';
+        let i = 0;
+        const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        while (i < json.length) {
+            if (json[i] === '"') {
+                let j = i + 1;
+                while (j < json.length) {
+                    if (json[j] === '\\') { j += 2; continue; }
+                    if (json[j] === '"') { j++; break; }
+                    j++;
+                }
+                const str = json.slice(i, j);
+                let k = j;
+                while (k < json.length && json[k] === ' ') k++;
+                const cls = json[k] === ':' ? 'jh-key' : 'jh-str';
+                out += `<span class="${cls}">${esc(str)}</span>`;
+                i = j;
+            } else if (json[i] === '-' || (json[i] >= '0' && json[i] <= '9')) {
+                let j = i + 1;
+                while (j < json.length && /[\d.eE+\-]/.test(json[j])) j++;
+                out += `<span class="jh-num">${json.slice(i, j)}</span>`;
+                i = j;
+            } else if (json.slice(i, i + 4) === 'true') {
+                out += '<span class="jh-bool">true</span>'; i += 4;
+            } else if (json.slice(i, i + 5) === 'false') {
+                out += '<span class="jh-bool">false</span>'; i += 5;
+            } else if (json.slice(i, i + 4) === 'null') {
+                out += '<span class="jh-null">null</span>'; i += 4;
+            } else {
+                out += esc(json[i]); i++;
+            }
+        }
+        return out;
     }
 
     formatPacketDetail(packet) {
@@ -748,27 +793,43 @@ class MeshCoreMonitor {
         return JSON.stringify(clean, null, 2);
     }
 
-    buildDetailRowHtml(hash) {
+    buildDetailRowHtml(hash, col = null) {
         const data = this.hashData.get(hash);
         if (!data) return '';
         const colspan = 1 + this.repeaterColumns.length * 2;
 
-        let content = '';
-        if (data.packet) {
-            content += `<pre class="detail-json">${this.escHtml(this.formatPacketDetail(data.packet))}</pre>`;
+        let header = '';
+        if (col) {
+            const sig = data.repeaters.get(col);
+            if (sig) {
+                const rc = this.signalColor(sig.rssi, -70, -130);
+                const sc = this.signalColor(sig.snr, 13, -10, 0);
+                header = `<div class="detail-sig">` +
+                    `<b>${this.escHtml(this.displayId(col))}</b>` +
+                    ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${sig.rssi}</span>` +
+                    ` &nbsp; SNR <span style="color:${sc};font-weight:700">${sig.snr.toFixed(1)}</span>` +
+                    `</div>`;
+            }
         }
+
+        let jsonHtml = '';
+        if (data.packet) {
+            jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(data.packet))}</pre>`;
+        }
+
         const rawDisplay = data.rawHex.length > 64
             ? data.rawHex.slice(0, 64) + '…'
             : data.rawHex;
-        content += `<div class="detail-raw"><b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${this.escHtml(rawDisplay)}</code></div>`;
+        const rawHtml = `<div class="detail-raw"><b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${this.escHtml(rawDisplay)}</code></div>`;
 
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${content}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${header}${jsonHtml}${rawHtml}</div></td>`;
     }
 
-    buildSigCellsHtml(rssi, snr) {
+    buildSigCellsHtml(rssi, snr, hash, col) {
         const rc = this.signalColor(rssi, -70, -130);
         const sc = this.signalColor(snr,  13, -10, 0);
-        return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
+        return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssi}</td>` +
+               `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:${sc}">${snr.toFixed(1)}</td>`;
     }
 
     scheduleChartRender() {
@@ -906,22 +967,28 @@ class MeshCoreMonitor {
         });
 
         if (legend) {
-            const items = visible.map(col => {
+            const entries = visible.map(col => {
                 const c = this.getRepeaterColor(col);
                 const last = lastByCol.get(col);
                 const val = type === 'rssi' ? last.rssi : last.snr;
                 const valStr = type === 'rssi'
                     ? `${val} dBm`
                     : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
-                return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`;
-            }).join('');
-            let nfLegend = '';
+                return {
+                    val,
+                    html: `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
+                };
+            });
             if (type === 'rssi') {
                 const lastPt = [...lastByCol.values()].reduce((a, b) => a.time > b.time ? a : b);
                 const nf = lastPt.rssi - lastPt.snr;
-                nfLegend = `<span class="legend-item"><span class="legend-nf"></span>Noise floor <span class="legend-val">(${nf} dBm)</span></span>`;
+                entries.push({
+                    val: nf,
+                    html: `<span class="legend-item"><span class="legend-nf"></span>Noise floor <span class="legend-val">(${nf} dBm)</span></span>`,
+                });
+                entries.sort((a, b) => b.val - a.val);
             }
-            legend.innerHTML = items + nfLegend;
+            legend.innerHTML = entries.map(e => e.html).join('');
         }
     }
 
@@ -1100,7 +1167,7 @@ class MeshCoreMonitor {
         const pct = Math.round(this.battery.level * 100);
         const charging = this.battery.charging;
         this.batteryEl.innerHTML =
-            `<span class="hstat-label">${charging ? '⚡' : '🔋'}</span>${pct}%`;
+            `<span class="hstat-label">Browser </span>${charging ? '⚡' : '🔋'}${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (!charging && pct <= 20) this.batteryEl.classList.add('battery-low');
     }
