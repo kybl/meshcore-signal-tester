@@ -261,10 +261,7 @@ class MeshCoreMonitor {
         for (let attempt = 1; attempt <= 3; attempt++) {
             if (!alive()) return;
             try {
-                const server = await Promise.race([
-                    device.gatt.connect(),
-                    new Promise((_, rej) => setTimeout(() => rej(new Error('Connection timed out')), 8000)),
-                ]);
+                const server = await device.gatt.connect();
                 if (!alive()) { try { device.gatt.disconnect(); } catch (e) {} return; }
                 service = await server.getPrimaryService(NUS_SERVICE);
                 break;
