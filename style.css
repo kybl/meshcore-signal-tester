@@ -166,8 +166,7 @@ header {
 }
 
 .rl-id {
-    font-family: 'Courier New', monospace;
-    font-weight: 600;
+    font-weight: 700;
 }
 
 .msg-table-wrap {
@@ -214,6 +213,7 @@ header {
     font-size: 9px;
     min-width: 60px;
     text-align: left;
+    padding-right: 2px;
 }
 
 .msg-col-type {
@@ -231,7 +231,6 @@ header {
 }
 
 .msg-col-rep {
-    font-family: 'Courier New', monospace;
     font-size: 10px;
     font-weight: 700;
     text-align: center;

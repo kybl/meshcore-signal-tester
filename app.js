@@ -267,10 +267,11 @@ class MeshCoreMonitor {
 
     idPrecision(id) {
         if (id === 'direct' || id.includes('/')) return 4;
-        const h = id.slice(1); // 8 hex chars after '!'
-        if (h.startsWith('000000')) return 1;
-        if (h.startsWith('0000'))   return 2;
-        if (h.startsWith('00'))     return 3;
+        const h = id.startsWith('!') ? id.slice(1) : id;
+        const padded = h.padStart(8, '0');
+        if (padded.startsWith('000000')) return 1;
+        if (padded.startsWith('0000'))   return 2;
+        if (padded.startsWith('00'))     return 3;
         return 4;
     }
 
@@ -350,9 +351,13 @@ class MeshCoreMonitor {
     displayId(id) {
         if (id === 'direct') return 'direct';
         if (id.includes('/')) return id.split('/').map(p => this.displayId(p)).join('/');
-        // Strip '!' prefix and leading zeros, uppercase
-        const stripped = id.startsWith('!') ? id.slice(1).replace(/^0+/, '') || '0' : id.replace(/^0+/, '') || '0';
-        return stripped.toUpperCase();
+        const hex = id.startsWith('!') ? id.slice(1) : id;
+        const num = parseInt(hex, 16);
+        if (isNaN(num)) return id;
+        if (num === 0) return '00';
+        let h = num.toString(16).toUpperCase();
+        if (h.length % 2 !== 0) h = '0' + h;
+        return h;
     }
 
     // --- Data ingestion ---
