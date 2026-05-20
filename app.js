@@ -812,9 +812,13 @@ class MeshCoreMonitor {
         if (type === 'rssi') {
             const sorted = [...this.chartPoints].sort((a, b) => a.time - b.time);
             const bottom = (pt + ch).toFixed(1);
-            const topEdge = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`).join(' ');
+            const lastP = sorted[sorted.length - 1];
+            const nfPts = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`);
+            // Extend flat to the current time using the last known noise floor value
+            nfPts.push(`${xOf(now)},${yOf(lastP.rssi - lastP.snr)}`);
+            const topEdge = nfPts.join(' ');
             const firstX = xOf(sorted[0].time);
-            const lastX  = xOf(sorted[sorted.length - 1].time);
+            const lastX  = xOf(now);
             parts.push(
                 `<polygon points="${topEdge} ${lastX},${bottom} ${firstX},${bottom}" ` +
                 `fill="rgba(140,140,140,0.15)"/>`,
@@ -1062,37 +1066,40 @@ class MeshCoreMonitor {
     }
 
     async disconnect() {
-        // Grab refs before nulling them
         const device = this.device;
         const txChar = this.txCharacteristic;
 
-        // Clear instance refs immediately so nothing else can use them
         this.device = null;
         this.txCharacteristic = null;
+        this.bleRxCharacteristic = null;
 
-        // Remove GATT disconnect listener (prevents double onDisconnected call)
         if (this._onGattDisconnected && device) {
             device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
             this._onGattDisconnected = null;
         }
-        // Remove data listener
         if (this._onDataReceived && txChar) {
             try { txChar.removeEventListener('characteristicvaluechanged', this._onDataReceived); } catch (e) {}
             this._onDataReceived = null;
         }
 
-        // Disconnect synchronously FIRST — this is what actually releases the BLE link
-        try {
-            if (device?.gatt?.connected) device.gatt.disconnect();
-        } catch (e) { console.warn('gatt.disconnect error:', e); }
-
-        // Update UI immediately
-        this.onDisconnected();
-
-        // stopNotifications best-effort after disconnect (may throw — that's fine)
+        // stopNotifications BEFORE gatt.disconnect() so Chrome fully releases the notify pipe
         if (txChar) {
-            try { await txChar.stopNotifications(); } catch (e) {}
+            try { await txChar.stopNotifications(); } catch (e) { console.warn('stopNotifications:', e); }
         }
+
+        if (device?.gatt) {
+            await new Promise(resolve => {
+                const onDisc = () => { device.removeEventListener('gattserverdisconnected', onDisc); resolve(); };
+                device.addEventListener('gattserverdisconnected', onDisc);
+                const t = setTimeout(resolve, 3000);
+                try {
+                    if (device.gatt.connected) device.gatt.disconnect();
+                    else { clearTimeout(t); device.removeEventListener('gattserverdisconnected', onDisc); resolve(); }
+                } catch (e) { console.warn('gatt.disconnect:', e); clearTimeout(t); resolve(); }
+            });
+        }
+
+        this.onDisconnected();
     }
 
     onDisconnected() {
