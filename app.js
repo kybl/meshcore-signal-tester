@@ -893,9 +893,12 @@ class MeshCoreMonitor {
                     : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
                 return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`;
             }).join('');
-            const nfLegend = type === 'rssi'
-                ? `<span class="legend-item"><span class="legend-nf"></span>Noise floor</span>`
-                : '';
+            let nfLegend = '';
+            if (type === 'rssi') {
+                const lastPt = [...lastByCol.values()].reduce((a, b) => a.time > b.time ? a : b);
+                const nf = lastPt.rssi - lastPt.snr;
+                nfLegend = `<span class="legend-item"><span class="legend-nf"></span>Noise floor <span class="legend-val">(${nf} dBm)</span></span>`;
+            }
             legend.innerHTML = items + nfLegend;
         }
     }
