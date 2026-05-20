@@ -107,13 +107,11 @@ class MeshCoreMonitor {
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
-        const ttlSlider = document.getElementById('ttlSlider');
-        const ttlValue  = document.getElementById('ttlValue');
-        if (ttlSlider) {
-            ttlSlider.addEventListener('input', () => {
-                const secs = +ttlSlider.value;
-                this.HASH_LIFETIME = secs * 1000;
-                ttlValue.textContent = secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
+        const ttlSelect = document.getElementById('ttlSelect');
+        if (ttlSelect) {
+            ttlSelect.addEventListener('change', () => {
+                const v = ttlSelect.value;
+                this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
             });
         }
 
@@ -723,7 +721,7 @@ class MeshCoreMonitor {
 
     buildSigCellsHtml(rssi, snr) {
         const rc = this.signalColor(rssi, -70, -130);
-        const sc = this.signalColor(snr,  13,    7);
+        const sc = this.signalColor(snr,  13,  -10);
         return `<td class="sig-rssi" style="color:${rc}">${rssi}</td><td class="sig-snr" style="color:${sc}">${snr.toFixed(1)}</td>`;
     }
 
@@ -737,8 +735,10 @@ class MeshCoreMonitor {
     }
 
     renderCharts() {
-        const cutoff = Date.now() - this.HASH_LIFETIME;
-        this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
+        if (isFinite(this.HASH_LIFETIME)) {
+            const cutoff = Date.now() - this.HASH_LIFETIME;
+            this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
+        }
         this.renderChart('rssi');
         this.renderChart('snr');
     }
@@ -762,7 +762,9 @@ class MeshCoreMonitor {
         const ch = H - pt - pb;
 
         const now = Date.now();
-        const tMin = now - this.HASH_LIFETIME;
+        const tMin = isFinite(this.HASH_LIFETIME)
+            ? now - this.HASH_LIFETIME
+            : Math.min(...this.chartPoints.map(p => p.time));
 
         const vals = this.chartPoints.map(p => type === 'rssi' ? p.rssi : p.snr);
         const vMin = Math.min(...vals), vMax = Math.max(...vals);
@@ -845,7 +847,9 @@ class MeshCoreMonitor {
         const ch = H - pt - pb;
 
         const now = Date.now();
-        const tMin = now - this.HASH_LIFETIME;
+        const tMin = isFinite(this.HASH_LIFETIME)
+            ? now - this.HASH_LIFETIME
+            : Math.min(...this.chartPoints.map(p => p.time));
 
         const pts = this.chartPoints;
         const vals = pts.map(p => type === 'rssi' ? p.rssi : p.snr);
@@ -931,8 +935,8 @@ class MeshCoreMonitor {
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
             const mrc = this.signalColor(d.maxRssi,  -70, -130);
             const lrc = this.signalColor(d.lastRssi, -70, -130);
-            const msc = this.signalColor(d.maxSnr,   13,    7);
-            const lsc = this.signalColor(d.lastSnr,  13,    7);
+            const msc = this.signalColor(d.maxSnr,   13,  -10);
+            const lsc = this.signalColor(d.lastSnr,  13,  -10);
             return `<tr>
                 <td class="rl-id">${this.displayId(repeater)}</td>
                 <td>${d.count}</td>

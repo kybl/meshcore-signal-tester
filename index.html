@@ -52,8 +52,17 @@
                 </div>
                 <label class="ttl-control">
                     <span class="ttl-label">TTL</span>
-                    <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
-                    <span id="ttlValue">5m</span>
+                    <select id="ttlSelect">
+                        <option value="30">30s</option>
+                        <option value="60">1m</option>
+                        <option value="120">2m</option>
+                        <option value="300" selected>5m</option>
+                        <option value="600">10m</option>
+                        <option value="900">15m</option>
+                        <option value="1800">30m</option>
+                        <option value="3600">1h</option>
+                        <option value="Infinity">∞</option>
+                    </select>
                 </label>
             </div>
 

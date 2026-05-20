@@ -504,16 +504,15 @@ header {
     color: #aaa;
 }
 
-#ttlSlider {
-    width: 70px;
+#ttlSelect {
+    font-size: 12px;
+    padding: 2px 4px;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    background: white;
+    color: #333;
     cursor: pointer;
     accent-color: #667eea;
-}
-
-#ttlValue {
-    font-weight: 700;
-    color: #333;
-    min-width: 22px;
 }
 
 .battery-status {
