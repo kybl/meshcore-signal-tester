@@ -177,6 +177,7 @@ class MeshCoreMonitor {
         const repeaterHead = document.querySelector('.repeater-log-table thead');
         if (repeaterHead) {
             repeaterHead.addEventListener('click', e => {
+                if (e.target.closest('.help-icon')) return;
                 const th = e.target.closest('th[data-sort-key]');
                 if (!th) return;
                 const key = th.dataset.sortKey;
@@ -197,6 +198,76 @@ class MeshCoreMonitor {
                 e.preventDefault();
                 e.returnValue = '';
             }
+        });
+
+        this._initHelpSystem();
+    }
+
+    _initHelpSystem() {
+        const HELP = {
+            'active':
+                'Unique packets currently shown — within the auto-remove time window. Older packets are removed automatically.',
+            'totalrx':
+                'All packet arrivals this session. The same packet heard via two different repeaters counts as two.',
+            'repeaters-count':
+                'Number of distinct mesh nodes that have forwarded at least one packet to your device this session.',
+            'sound':
+                'Plays a short beep on each new incoming packet. Pitch varies with RSSI — stronger signal → higher pitch.',
+            'ttl':
+                'Packets not heard within this window are removed from the table and charts. "Never" keeps all data for the whole session.',
+            'repeater':
+                '"direct" = packet arrived with no intermediate node. Otherwise shows the ID of the last repeater that forwarded the packet.',
+            'rssi':
+                'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
+            'snr':
+                'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
+        };
+
+        const tipEl = document.getElementById('helpTip');
+        let _tipTarget = null;
+
+        const showTip = (icon) => {
+            const text = HELP[icon.dataset.help];
+            if (!text || !tipEl) return;
+            tipEl.textContent = text;
+            tipEl.style.display = 'block';
+            const r = icon.getBoundingClientRect();
+            const tipW = Math.min(260, window.innerWidth - 16);
+            let left = r.left + r.width / 2 - tipW / 2;
+            left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+            tipEl.style.left = `${left}px`;
+            tipEl.style.top = `${r.top - 8}px`;
+            tipEl.style.transform = 'translateY(-100%)';
+            tipEl.style.maxWidth = `${tipW}px`;
+            icon.classList.add('active');
+        };
+
+        const hideTip = () => {
+            if (tipEl) tipEl.style.display = 'none';
+            _tipTarget?.classList.remove('active');
+            _tipTarget = null;
+        };
+
+        document.addEventListener('click', e => {
+            const icon = e.target.closest('.help-icon');
+            if (icon) {
+                if (_tipTarget === icon) { hideTip(); return; }
+                hideTip();
+                _tipTarget = icon;
+                showTip(icon);
+                return;
+            }
+            if (_tipTarget) hideTip();
+        });
+
+        const helpModal = document.getElementById('helpModal');
+        document.getElementById('helpBtn')?.addEventListener('click', e => {
+            e.stopPropagation();
+            helpModal?.classList.remove('hidden');
+        });
+        document.getElementById('helpModalClose')?.addEventListener('click', () => helpModal?.classList.add('hidden'));
+        helpModal?.addEventListener('click', e => {
+            if (e.target === helpModal) helpModal.classList.add('hidden');
         });
     }
 
