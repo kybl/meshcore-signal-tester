@@ -309,15 +309,14 @@ class MeshCoreMonitor {
 
         const path = packet.path || [];
         const pathLen = path.length;
-        const pathItemBytes = pathLen > 0 ? path[0].length / 2 : 0;
+        const pathItemBytes = packet.pathHashSize ?? (pathLen > 0 ? path[0].length / 2 : 0);
 
         const p = packet.payload;
-        const meta = { pathLen, pathItemBytes };
+        const meta = { pathLen, pathItemBytes, totalBytes: packet.totalBytes };
         if (p) {
             if (p.text      != null) meta.text      = String(p.text);
             if (p.name      != null) meta.name      = String(p.name);
             if (p.sender    != null) meta.sender    = String(p.sender);
-            // public link key — try common field names
             const lk = p.publicKey ?? p.pubKey ?? p.linkKey ?? p.key ?? null;
             if (lk != null) meta.linkKey = String(lk);
         }
@@ -437,6 +436,15 @@ class MeshCoreMonitor {
                 data.repeaters.set(newKey, data.repeaters.get(oldKey));
                 data.repeaters.delete(oldKey);
             }
+        }
+
+        // Keep chart color and history consistent after rename
+        if (this.chartColors.has(oldKey) && !this.chartColors.has(newKey)) {
+            this.chartColors.set(newKey, this.chartColors.get(oldKey));
+        }
+        this.chartColors.delete(oldKey);
+        for (const p of this.chartPoints) {
+            if (p.col === oldKey) p.col = newKey;
         }
     }
 
@@ -640,6 +648,8 @@ class MeshCoreMonitor {
             lines.push(`<b>Path:</b> ${meta.pathLen} hop${meta.pathLen !== 1 ? 's' : ''} · ${meta.pathItemBytes}B/item`);
         else
             lines.push(`<b>Path:</b> direct`);
+        if (meta.totalBytes != null)
+            lines.push(`<b>Size:</b> ${meta.totalBytes}B`);
 
         if (meta.text != null)
             lines.push(`<b>Message:</b> ${this.escHtml(meta.text)}`);
@@ -722,6 +732,20 @@ class MeshCoreMonitor {
         // Axes
         parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
         parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
+
+        // Lines connecting dots per repeater (drawn before dots)
+        const groups = new Map();
+        for (const p of this.chartPoints) {
+            if (!groups.has(p.col)) groups.set(p.col, []);
+            groups.get(p.col).push(p);
+        }
+        for (const [col, pts] of groups) {
+            if (pts.length < 2) continue;
+            pts.sort((a, b) => a.time - b.time);
+            const color = this.getRepeaterColor(col);
+            const pointsStr = pts.map(p => `${xOf(p.time)},${yOf(p.rssi)}`).join(' ');
+            parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.35"/>`);
+        }
 
         // Dots
         for (const p of this.chartPoints) {
