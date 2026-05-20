@@ -133,7 +133,7 @@ header {
 .section-title {
     font-size: 10px;
     font-weight: 600;
-    color: #aaa;
+    color: rgba(255,255,255,0.75);
     text-transform: uppercase;
     letter-spacing: 0.06em;
 }
@@ -143,6 +143,24 @@ header {
     align-items: center;
     gap: 10px;
     margin-bottom: 4px;
+    cursor: pointer;
+    user-select: none;
+    border-radius: 5px;
+    padding: 3px 5px;
+    margin-left: -5px;
+    transition: background 0.15s;
+}
+
+.section-header:hover {
+    background: rgba(255,255,255,0.12);
+}
+
+.section-header:hover .section-title {
+    color: rgba(255,255,255,1);
+}
+
+.section-header:hover .collapse-btn {
+    color: rgba(255,255,255,0.9);
 }
 
 .section-wrap {
@@ -162,7 +180,7 @@ header {
     border: none;
     cursor: pointer;
     font-size: 13px;
-    color: #bbb;
+    color: rgba(255,255,255,0.5);
     padding: 0 2px;
     line-height: 1;
     margin-left: auto;
@@ -171,7 +189,7 @@ header {
 }
 
 .collapse-btn:hover {
-    color: #667eea;
+    color: rgba(255,255,255,0.9);
 }
 
 .collapse-btn.collapsed {
@@ -464,15 +482,9 @@ header {
 }
 
 .msg-col-rx {
-    cursor: pointer;
-    user-select: none;
     white-space: nowrap;
     padding: 2px 3px 2px 5px;
     width: 1px;
-}
-
-.msg-col-rx:hover {
-    background: #f0f0ff;
 }
 
 .rx-time {
@@ -480,12 +492,16 @@ header {
     font-size: 9px;
 }
 
-.rx-abbr {
+.rx-type {
     font-size: 10px;
     font-weight: 600;
     color: #555;
     margin-left: 4px;
-    text-align: center;
+    display: inline-block;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
 }
 
 /* Detail row */
@@ -509,17 +525,24 @@ header {
     font-weight: 600;
 }
 
+.detail-type {
+    font-size: 13px;
+    font-weight: 700;
+    color: #333;
+    margin-bottom: 6px;
+}
+
 .detail-json {
-    font-family: 'Courier New', monospace;
-    font-size: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 11px;
     background: #f5f5ff;
-    padding: 6px 8px;
+    padding: 7px 10px;
     border-radius: 4px;
     white-space: pre-wrap;
     word-break: break-all;
     color: #333;
     margin-bottom: 6px;
-    line-height: 1.5;
+    line-height: 1.6;
     max-height: 280px;
     overflow-y: auto;
 }

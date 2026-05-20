@@ -26,6 +26,8 @@ class MeshCoreMonitor {
             '#9b59b6','#1abc9c','#e67e22','#3498db',
             '#e91e63','#00bcd4',
         ];
+        this._batteryCharacteristic = null;
+        this._onBatteryChanged = null;
 
         this.initUI();
         this.startCleanupTimer();
@@ -44,9 +46,11 @@ class MeshCoreMonitor {
         this.snrChartLegend = document.getElementById('snrChartLegend');
         setInterval(() => { if (this.chartPoints.length) this.scheduleChartRender(); }, 2000);
 
-        // Collapsible sections
-        document.querySelectorAll('.collapse-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+        // Collapsible sections — clicking anywhere in the header row toggles
+        document.querySelectorAll('.section-header').forEach(header => {
+            const btn = header.querySelector('.collapse-btn');
+            if (!btn) return;
+            header.addEventListener('click', () => {
                 const body = document.getElementById(btn.dataset.target);
                 if (!body) return;
                 const collapsed = body.classList.toggle('collapsed');
@@ -123,15 +127,6 @@ class MeshCoreMonitor {
             });
         }
 
-        if (navigator.getBattery) {
-            navigator.getBattery().then(bat => {
-                this.battery = bat;
-                this.updateBattery();
-                bat.addEventListener('chargingchange', () => this.updateBattery());
-                bat.addEventListener('levelchange',    () => this.updateBattery());
-            }).catch(() => {});
-        }
-
         const repeaterHead = document.querySelector('.repeater-log-table thead');
         if (repeaterHead) {
             repeaterHead.addEventListener('click', e => {
@@ -173,7 +168,10 @@ class MeshCoreMonitor {
                     { namePrefix: 'Meshtastic' },
                     { namePrefix: 'MeshCore' }
                 ],
-                optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
+                optionalServices: [
+                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+                    '0000180f-0000-1000-8000-00805f9b34fb',
+                ]
             });
             await this.connectToDevice(device);
         } catch (error) {
@@ -220,7 +218,10 @@ class MeshCoreMonitor {
                 : [{ namePrefix: 'Meshtastic' }, { namePrefix: 'MeshCore' }];
             const device = await navigator.bluetooth.requestDevice({
                 filters,
-                optionalServices: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e'],
+                optionalServices: [
+                    '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+                    '0000180f-0000-1000-8000-00805f9b34fb',
+                ],
             });
             await this.connectToDevice(device);
         } catch (error) {
@@ -250,11 +251,11 @@ class MeshCoreMonitor {
         const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
         const NUS_TX     = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
-        let service;
+        let server, service;
         for (let attempt = 1; attempt <= 3; attempt++) {
             if (!this.device) return;
             try {
-                const server = await device.gatt.connect();
+                server = await device.gatt.connect();
                 if (!this.device) { try { device.gatt.disconnect(); } catch (e) {} return; }
                 service = await server.getPrimaryService(NUS_SERVICE);
                 break;
@@ -287,6 +288,23 @@ class MeshCoreMonitor {
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
+
+        // Try to read BLE device battery (standard Battery Service 0x180F)
+        if (this.device && server) {
+            try {
+                const battSvc  = await server.getPrimaryService('0000180f-0000-1000-8000-00805f9b34fb');
+                const battChar = await battSvc.getCharacteristic('00002a19-0000-1000-8000-00805f9b34fb');
+                const val = await battChar.readValue();
+                this._updateBleBattery(val.getUint8(0));
+                try {
+                    this._onBatteryChanged = e => this._updateBleBattery(e.target.value.getUint8(0));
+                    await battChar.startNotifications();
+                    battChar.addEventListener('characteristicvaluechanged', this._onBatteryChanged);
+                    this._batteryCharacteristic = battChar;
+                } catch (e) { /* notifications not supported — one-shot read is enough */ }
+            } catch (e) { /* device does not expose Battery Service */ }
+        }
+
         this.acquireWakeLock();
         this.saveDevice(device);
 
@@ -714,7 +732,7 @@ class MeshCoreMonitor {
         }).join('');
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-abbr">${this.abbreviateType(data.type)}</span>
+                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${this.escHtml(data.type || '?')}</span>
             </td>
             ${cells}
         </tr>`;
@@ -812,6 +830,10 @@ class MeshCoreMonitor {
             }
         }
 
+        const typeHtml = data.type
+            ? `<div class="detail-type">${this.escHtml(data.type)}</div>`
+            : '';
+
         let jsonHtml = '';
         if (data.packet) {
             jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(data.packet))}</pre>`;
@@ -822,7 +844,7 @@ class MeshCoreMonitor {
             : data.rawHex;
         const rawHtml = `<div class="detail-raw"><b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${this.escHtml(rawDisplay)}</code></div>`;
 
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${header}${jsonHtml}${rawHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}${rawHtml}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr, hash, col) {
@@ -1160,16 +1182,13 @@ class MeshCoreMonitor {
         beep(baseFreq * Math.pow(2, (rssi + 100) / 30), 0.08, 0.05);
     }
 
-    // --- Battery ---
+    // --- BLE Device Battery ---
 
-    updateBattery() {
-        if (!this.batteryEl || !this.battery) return;
-        const pct = Math.round(this.battery.level * 100);
-        const charging = this.battery.charging;
-        this.batteryEl.innerHTML =
-            `<span class="hstat-label">Browser </span>${charging ? '⚡' : '🔋'}${pct}%`;
+    _updateBleBattery(pct) {
+        if (!this.batteryEl) return;
+        this.batteryEl.innerHTML = `<span class="hstat-label">Device </span>🔋${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
-        if (!charging && pct <= 20) this.batteryEl.classList.add('battery-low');
+        if (pct <= 20) this.batteryEl.classList.add('battery-low');
     }
 
     // --- Wake Lock ---
@@ -1251,6 +1270,12 @@ class MeshCoreMonitor {
             this.txCharacteristic?.removeEventListener('characteristicvaluechanged', this._onDataReceived);
             this._onDataReceived = null;
         }
+        if (this._onBatteryChanged && this._batteryCharacteristic) {
+            try { this._batteryCharacteristic.removeEventListener('characteristicvaluechanged', this._onBatteryChanged); } catch (e) {}
+            this._onBatteryChanged = null;
+        }
+        this._batteryCharacteristic = null;
+        if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.txCharacteristic = null;
         this.bleRxCharacteristic = null;
         this.device = null;
