@@ -208,27 +208,6 @@ header {
     color: #444;
 }
 
-.msg-col-time {
-    color: #aaa;
-    font-size: 9px;
-    min-width: 54px;
-    text-align: center;
-    padding: 1px 3px;
-}
-
-.msg-col-type {
-    cursor: pointer;
-    user-select: none;
-    font-weight: 400;
-    font-size: 10px;
-    text-align: left;
-    min-width: 56px;
-}
-
-.msg-table td.msg-col-type:hover {
-    background: #f0f0ff;
-    color: #667eea;
-}
 
 .msg-col-rep {
     font-size: 10px;
@@ -328,20 +307,89 @@ header {
 }
 
 /* Row animations */
-@keyframes rowFadeIn {
-    from { opacity: 0; background: #eef0ff; }
-    to   { opacity: 1; background: transparent; }
+@keyframes rowFlash {
+    0%   { background-color: #d8dcff; }
+    100% { background-color: transparent; }
 }
 
 .row-new {
-    animation: rowFadeIn 0.4s ease forwards;
+    animation: rowFlash 0.8s ease-out forwards;
 }
 
 .row-removing {
     transition: opacity 0.35s ease, transform 0.35s ease;
-    opacity: 0;
-    transform: translateX(12px);
+    opacity: 0 !important;
+    transform: translateX(14px);
     pointer-events: none;
+}
+
+/* Combined RX log cell */
+.msg-col-rx-head {
+    text-align: center;
+}
+
+.msg-col-rx {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    padding: 2px 5px;
+    min-width: 70px;
+}
+
+.msg-col-rx:hover {
+    background: #f0f0ff;
+}
+
+.rx-time {
+    color: #aaa;
+    font-size: 9px;
+    display: block;
+    text-align: center;
+}
+
+.rx-abbr {
+    font-size: 10px;
+    font-weight: 600;
+    color: #555;
+    display: block;
+    text-align: center;
+}
+
+/* Detail row */
+.detail-row td {
+    background: #f7f7ff;
+    border-top: none;
+}
+
+.detail-cell {
+    padding: 6px 10px !important;
+}
+
+.detail-content {
+    font-size: 11px;
+    color: #444;
+    line-height: 1.7;
+}
+
+.detail-content b {
+    color: #888;
+    font-weight: 600;
+}
+
+.raw-hex {
+    font-family: 'Courier New', monospace;
+    font-size: 9px;
+    background: #eee;
+    padding: 1px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    word-break: break-all;
+    white-space: normal;
+}
+
+.raw-hex:hover {
+    background: #667eea;
+    color: white;
 }
 
 /* TTL slider */
