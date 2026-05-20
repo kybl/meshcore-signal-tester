@@ -454,20 +454,25 @@ class MeshCoreMonitor {
         if (!type) return '?';
         // Show only payload type (2 chars); route type is visible from repeater columns
         const payload = [
-            [/GroupText|GROUP_TEXT/,   'GT'],
-            [/TextMessage|TEXT_MESSAGE/,'TX'],
-            [/Traceroute|TRACEROUTE/,  'TR'],
-            [/Response|RESPONSE/,      'RS'],
-            [/Private|PRIVATE/,        'PV'],
-            [/Advert|ADVERT/,          'AD'],
-            [/Ping|PING/,              'PN'],
+            [/GroupText|GROUP_TEXT/,     'GT'],
+            [/TextMessage|TEXT_MESSAGE/, 'TX'],
+            [/Traceroute|TRACEROUTE/,    'TR'],
+            [/AnonRequest|ANON_REQUEST/, 'AQ'],
+            [/Response|RESPONSE/,        'RS'],
+            [/Request|REQUEST/,          'RQ'],
+            [/Private|PRIVATE/,          'PV'],
+            [/Control|CONTROL/,          'CT'],
+            [/Advert|ADVERT/,            'AD'],
+            [/Path|PATH/,                'PT'],
+            [/Ping|PING/,                'PN'],
         ];
         for (const [re, abbr] of payload) {
             if (re.test(type)) return abbr;
         }
         // Fall back to route type
-        if (/Flood|FLOOD/.test(type))     return 'FL';
-        if (/Direct|DIRECT/.test(type))   return 'DR';
+        if (/Transport|TRANSPORT/.test(type)) return 'TP';
+        if (/Flood|FLOOD/.test(type))         return 'FL';
+        if (/Direct|DIRECT/.test(type))       return 'DR';
         if (/Broadcast|BROADCAST/.test(type)) return 'BC';
         if (/Repeater|REPEATER/.test(type))   return 'RP';
         return type.slice(0, 2).toUpperCase();
