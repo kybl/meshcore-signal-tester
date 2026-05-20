@@ -218,6 +218,22 @@ header {
     font-weight: 700;
 }
 
+.rl-num {
+    text-align: right;
+}
+
+.rl-time {
+    text-align: center;
+}
+
+.repeater-log-table th:not(:first-child):last-child {
+    text-align: center;
+}
+
+.repeater-log-table th:not(:first-child):not(:last-child) {
+    text-align: right;
+}
+
 .chart-box {
     background: white;
     border-radius: 8px;

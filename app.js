@@ -1023,12 +1023,12 @@ class MeshCoreMonitor {
             const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
             return `<tr>
                 <td class="rl-id">${this.displayId(repeater)}</td>
-                <td>${d.count}</td>
-                <td style="color:${mrc}">${d.maxRssi}</td>
-                <td style="color:${lrc}">${d.lastRssi}</td>
-                <td style="color:${msc}">${d.maxSnr.toFixed(1)}</td>
-                <td style="color:${lsc}">${d.lastSnr.toFixed(1)}</td>
-                <td>${this.formatTime(d.lastSeen)}</td>
+                <td class="rl-num">${d.count}</td>
+                <td class="rl-num" style="color:${mrc}">${d.maxRssi}</td>
+                <td class="rl-num" style="color:${lrc}">${d.lastRssi}</td>
+                <td class="rl-num" style="color:${msc}">${d.maxSnr.toFixed(1)}</td>
+                <td class="rl-num" style="color:${lsc}">${d.lastSnr.toFixed(1)}</td>
+                <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
     }
