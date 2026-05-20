@@ -414,6 +414,8 @@ class MeshCoreMonitor {
             loraPacket = payload.slice(3);
         } else if (pushCode === 0x84) {
             loraPacket = payload.slice(4);
+        } else if (pushCode === 0x8e) {
+            loraPacket = payload.slice(4);
         } else {
             console.log('[NUS push] unknown code:', '0x' + pushCode.toString(16).padStart(2, '0'),
                 'payload:', Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join(' '));
@@ -620,7 +622,7 @@ class MeshCoreMonitor {
 
         if (isNewHash) {
             this.hashData.set(hash, {
-                repeaters: new Map([[canonicalKey, { snr, rssi }]]),
+                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex }]]),
                 firstSeen: now,
                 lastSeen: now,
                 insertOrder: ++this.hashCounter,
@@ -632,7 +634,7 @@ class MeshCoreMonitor {
         } else {
             const data = this.hashData.get(hash);
             data.lastSeen = now;
-            data.repeaters.set(canonicalKey, { snr, rssi });
+            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex });
         }
 
         const existing = this.allRepeaters.get(canonicalKey);
@@ -868,9 +870,14 @@ class MeshCoreMonitor {
         if (!data) return '';
         const colspan = 1 + this.repeaterColumns.length * 2;
 
+        // Use per-repeater packet/rawHex when available (each repeater receives a different path)
+        const repEntry = col ? data.repeaters.get(col) : null;
+        const pkt = repEntry?.packet ?? data.packet;
+        const hex = repEntry?.rawHex ?? data.rawHex;
+
         let header = '';
         if (col) {
-            const sig = data.repeaters.get(col);
+            const sig = repEntry;
             if (sig) {
                 const rc = this.signalColor(sig.rssi, -70, -130);
                 const sc = this.signalColor(sig.snr, 13, -10, 0);
@@ -887,14 +894,12 @@ class MeshCoreMonitor {
             : '';
 
         let jsonHtml = '';
-        if (data.packet) {
-            jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(data.packet))}</pre>`;
+        if (pkt) {
+            jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`;
         }
 
-        const rawDisplay = data.rawHex.length > 64
-            ? data.rawHex.slice(0, 64) + '…'
-            : data.rawHex;
-        const rawHtml = `<div class="detail-raw"><b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${this.escHtml(rawDisplay)}</code></div>`;
+        const rawDisplay = hex.length > 64 ? hex.slice(0, 64) + '…' : hex;
+        const rawHtml = `<div class="detail-raw"><b>Raw:</b> <code class="raw-hex" data-hex="${hex}" title="Click to copy">${this.escHtml(rawDisplay)}</code></div>`;
 
         return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}${rawHtml}</div></td>`;
     }
@@ -1173,8 +1178,9 @@ class MeshCoreMonitor {
         const entries = Array.from(this.allRepeaters.entries());
         entries.sort(([idA, dA], [idB, dB]) => {
             if (key === 'id') {
-                if (idA === 'direct' && idB !== 'direct') return -1;
-                if (idB === 'direct' && idA !== 'direct') return 1;
+                // 'direct' sorts first ascending, last descending
+                if (idA === 'direct' && idB !== 'direct') return -dir;
+                if (idB === 'direct' && idA !== 'direct') return dir;
                 return dir * idA.localeCompare(idB);
             }
             return dir * (dA[key] - dB[key]);

@@ -25,6 +25,7 @@ header {
     display: flex;
     flex-direction: column;
     gap: 0;
+    overflow: hidden;
 }
 
 .header-row {
@@ -54,6 +55,7 @@ header {
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    min-width: 0;
 }
 
 .header-stats {
