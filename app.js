@@ -52,6 +52,8 @@ class MeshCoreMonitor {
         document.getElementById('msgTableWrap')?.addEventListener('click', e => {
             const rxCell = e.target.closest('.msg-col-rx');
             if (rxCell) { this.toggleDetailRow(rxCell.dataset.hash); return; }
+            const detailRow = e.target.closest('tr.detail-row');
+            if (detailRow && !e.target.closest('.raw-hex')) { detailRow.remove(); return; }
             const hexEl = e.target.closest('.raw-hex');
             if (hexEl) {
                 navigator.clipboard.writeText(hexEl.dataset.hex).then(() => {
@@ -651,21 +653,24 @@ class MeshCoreMonitor {
         const meta = data.meta || {};
         const lines = [`<b>Type:</b> ${this.escHtml(data.type || '?')}`];
 
-        if (meta.pathLen > 0)
-            lines.push(`<b>Path:</b> ${meta.pathLen} hop${meta.pathLen !== 1 ? 's' : ''} · ${meta.pathItemBytes}B/item`);
+        if (meta.pathItemBytes > 0)
+            lines.push(`<b>Path hash size:</b> ${meta.pathItemBytes}B/item`);
         else
             lines.push(`<b>Path:</b> direct`);
         if (meta.totalBytes != null)
             lines.push(`<b>Size:</b> ${meta.totalBytes}B`);
 
-        if (meta.text != null)
+        // Public channel message: show sender + text
+        if (meta.text != null) {
+            if (meta.sender != null)
+                lines.push(`<b>From:</b> ${this.escHtml(meta.sender)}`);
             lines.push(`<b>Message:</b> ${this.escHtml(meta.text)}`);
+        }
+        // Advert: show node name + link key
         if (meta.name != null)
             lines.push(`<b>Node:</b> ${this.escHtml(meta.name)}`);
         if (meta.linkKey != null)
             lines.push(`<b>Link key:</b> <code>${this.escHtml(meta.linkKey)}</code>`);
-        if (meta.sender != null && meta.name == null)
-            lines.push(`<b>Sender:</b> ${this.escHtml(meta.sender)}`);
 
         lines.push(`<b>Raw:</b> <code class="raw-hex" data-hex="${data.rawHex}" title="Click to copy">${data.rawHex}</code>`);
         return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${lines.join('<br>')}</div></td>`;
