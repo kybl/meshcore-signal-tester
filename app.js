@@ -119,7 +119,7 @@ class MeshCoreMonitor {
                         hexEl.textContent = '✓ copied';
                         setTimeout(() => { hexEl.textContent = orig; }, 1000);
                     });
-                } else {
+                } else if (window.getSelection()?.type !== 'Range') {
                     detailRow.remove();
                 }
                 return;
@@ -409,12 +409,21 @@ class MeshCoreMonitor {
 
     handlePayload(payload) {
         const pushCode = payload[0];
+        // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
+        if (pushCode === 0x0c) {
+            if (payload.length >= 3) {
+                const milliVolts = payload[1] | (payload[2] << 8);
+                this._updateBleBatteryVoltage(milliVolts);
+            }
+            return;
+        }
+        // Known non-LoRa push codes — silently ignore
+        if (pushCode === 0x05 || pushCode === 0x80 || pushCode === 0x82 || pushCode === 0x83) return;
+
         let loraPacket;
         if (pushCode === 0x88) {
             loraPacket = payload.slice(3);
-        } else if (pushCode === 0x84) {
-            loraPacket = payload.slice(4);
-        } else if (pushCode === 0x8e) {
+        } else if (pushCode === 0x84 || pushCode === 0x8e) {
             loraPacket = payload.slice(4);
         } else {
             console.log('[NUS push] unknown code:', '0x' + pushCode.toString(16).padStart(2, '0'),
@@ -442,7 +451,6 @@ class MeshCoreMonitor {
     }
 
     processPacket(packet, rawHex, snr, rssi) {
-        console.log('[RX packet]', packet);
         const payloadRaw = packet.payload?.raw;
         const hash = payloadRaw ? this.hashPayload(payloadRaw) : packet.messageHash;
         const repeater = this.extractRepeater(packet);
@@ -613,7 +621,14 @@ class MeshCoreMonitor {
 
     // --- Data ingestion ---
 
+    _isAtPageBottom() {
+        const margin = 80;
+        if (document.body.scrollHeight <= window.innerHeight + margin) return false;
+        return window.scrollY + window.innerHeight >= document.body.scrollHeight - margin;
+    }
+
     addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null) {
+        const wasAtBottom = this._isAtPageBottom();
         this.totalRxCount++;
         const now = Date.now();
         const isNewHash = !this.hashData.has(hash);
@@ -652,6 +667,9 @@ class MeshCoreMonitor {
         this.renderMsgTable(isNewHash ? hash : null);
         if (this.repeaterColumns.length !== prevColCount) {
             requestAnimationFrame(() => this._checkTableOverflow(false));
+        }
+        if (wasAtBottom) {
+            requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' }));
         }
         this.scheduleChartRender();
 
@@ -881,10 +899,12 @@ class MeshCoreMonitor {
             if (sig) {
                 const rc = this.signalColor(sig.rssi, -70, -130);
                 const sc = this.signalColor(sig.snr, 13, -10, 0);
+                const hexShort = hex.slice(0, 12);
                 header = `<div class="detail-sig">` +
                     `<b>${this.escHtml(this.displayId(col))}</b>` +
                     ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${sig.rssi}</span>` +
                     ` &nbsp; SNR <span style="color:${sc};font-weight:700">${sig.snr.toFixed(1)}</span>` +
+                    ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
                     `</div>`;
             }
         }
@@ -898,10 +918,7 @@ class MeshCoreMonitor {
             jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`;
         }
 
-        const rawDisplay = hex.length > 64 ? hex.slice(0, 64) + '…' : hex;
-        const rawHtml = `<div class="detail-raw"><b>Raw:</b> <code class="raw-hex" data-hex="${hex}" title="Click to copy">${this.escHtml(rawDisplay)}</code></div>`;
-
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}${rawHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr, hash, col) {
@@ -1247,6 +1264,14 @@ class MeshCoreMonitor {
         this.batteryEl.innerHTML = `<span class="hstat-label">Device </span>🔋${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (pct <= 20) this.batteryEl.classList.add('battery-low');
+    }
+
+    _updateBleBatteryVoltage(milliVolts) {
+        if (!this.batteryEl) return;
+        const volts = (milliVolts / 1000).toFixed(2);
+        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span>🔋${volts}V`;
+        this.batteryEl.classList.remove('hidden', 'battery-low');
+        if (milliVolts < 3300) this.batteryEl.classList.add('battery-low');
     }
 
     // --- Wake Lock ---
