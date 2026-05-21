@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=19';
+import { Signal3DMap } from './signal3d.js?v=20';
 
 class MeshCoreMonitor {
     constructor() {
@@ -791,7 +791,8 @@ class MeshCoreMonitor {
 
     // --- Node ID prefix resolution ---
     // Path IDs can be 1/2/3-byte truncations of full 4-byte node IDs.
-    // We always use the longest (most precise) known version as the column key.
+    // The first ID seen wins as the column key; all compatible refinements
+    // (longer or shorter prefixes that share its bytes) merge into it.
 
     idPrecision(id) {
         if (id === 'direct' || id === 'unknown' || id.includes('/')) return 4;
@@ -830,12 +831,13 @@ class MeshCoreMonitor {
         }
 
         if (matches.length === 1) {
-            const existing = matches[0];
-            if (this.idPrecision(rawId) > this.idPrecision(existing)) {
-                this.renameColumnKey(existing, rawId);
-                return rawId;
-            }
-            return existing;
+            // Never auto-promote a less-precise column to a more-precise label.
+            // If we did (e.g. !12 → !1234 on the first 4-byte packet), a later
+            // sibling like !1289 — which is also a valid refinement of !12 —
+            // would no longer be recognised as a collision and would land in
+            // its own column. The first ID seen wins as the column label; all
+            // compatible refinements (shorter or longer) merge into it.
+            return matches[0];
         }
 
         // Multiple compatible columns → ambiguous short ID
@@ -844,53 +846,6 @@ class MeshCoreMonitor {
             this.repeaterColumns.push(collisionKey);
         }
         return collisionKey;
-    }
-
-    renameColumnKey(oldKey, newKey) {
-        const idx = this.repeaterColumns.indexOf(oldKey);
-        if (idx >= 0) this.repeaterColumns[idx] = newKey;
-
-        const oldData = this.allRepeaters.get(oldKey);
-        if (oldData) {
-            const newData = this.allRepeaters.get(newKey);
-            if (newData) {
-                const newer = oldData.lastSeen >= newData.lastSeen ? oldData : newData;
-                this.allRepeaters.set(newKey, {
-                    lastSeen: Math.max(oldData.lastSeen, newData.lastSeen),
-                    count:    oldData.count + newData.count,
-                    maxSnr:   Math.max(oldData.maxSnr,  newData.maxSnr),
-                    maxRssi:  Math.max(oldData.maxRssi, newData.maxRssi),
-                    lastSnr:  newer.lastSnr,
-                    lastRssi: newer.lastRssi,
-                });
-            } else {
-                this.allRepeaters.set(newKey, oldData);
-            }
-            this.allRepeaters.delete(oldKey);
-        }
-
-        for (const data of this.hashData.values()) {
-            if (data.repeaters.has(oldKey)) {
-                data.repeaters.set(newKey, data.repeaters.get(oldKey));
-                data.repeaters.delete(oldKey);
-            }
-        }
-
-        // Keep chart color and history consistent after rename
-        if (this.chartColors.has(oldKey) && !this.chartColors.has(newKey)) {
-            this.chartColors.set(newKey, this.chartColors.get(oldKey));
-        }
-        this.chartColors.delete(oldKey);
-        for (const p of this.chartPoints) {
-            if (p.col === oldKey) p.col = newKey;
-        }
-        if (this._chartSelected === oldKey) this._chartSelected = newKey;
-
-        // Update any open detail rows whose col attribute still references the old key,
-        // so that renderMsgTable's sig-active restoration uses the correct (new) col.
-        this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => {
-            if (tr.dataset.col === oldKey) tr.dataset.col = newKey;
-        });
     }
 
     displayId(id) {
