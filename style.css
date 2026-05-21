@@ -1022,7 +1022,8 @@ header {
 }
 
 .filter-applied-indicator.hidden {
-    display: none;
+    display: none !important;
+    animation: none !important;
 }
 
 @keyframes filterAppliedPulse {
@@ -1031,12 +1032,13 @@ header {
 }
 
 @keyframes cellFlash {
-    0%   { background-color: #b8f0c8; }
-    100% { background-color: transparent; }
+    0%   { background-color: #ffe066; box-shadow: inset 0 0 0 2px #f5a623; }
+    35%  { background-color: #ffe066; box-shadow: inset 0 0 0 2px #f5a623; }
+    100% { background-color: transparent; box-shadow: inset 0 0 0 0 transparent; }
 }
 
 .sig-rssi.cell-flash,
 .sig-snr.cell-flash {
-    animation: cellFlash 0.8s ease-out forwards;
+    animation: cellFlash 1.8s ease-out forwards;
 }
 

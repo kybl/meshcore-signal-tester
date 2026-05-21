@@ -702,11 +702,7 @@ class MeshCoreMonitor {
 
     extractRepeater(packet) {
         if (packet.path && packet.path.length > 0) {
-            const last = packet.path[packet.path.length - 1];
-            // MeshCore reserves all-zero and all-FF as prefixes — never a real node ID
-            const hex = (typeof last === 'string' ? last : last.toString(16)).toLowerCase();
-            if (/^0+$/.test(hex) || /^f+$/.test(hex)) return null;
-            return this.formatNodeId(last);
+            return this.formatNodeId(packet.path[packet.path.length - 1]);
         }
         return 'direct';
     }
