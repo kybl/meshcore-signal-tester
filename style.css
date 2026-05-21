@@ -193,6 +193,9 @@ header {
        the inner wrapper grows to fit a wide table, breaking horizontal
        scrolling and stretching the filter bar past the export button. */
     min-width: 0;
+    /* Without border-box, an inner wrapper's padding survives the grid
+       collapse and leaves a residual band of background. */
+    box-sizing: border-box;
 }
 
 .section-body.collapsed {
