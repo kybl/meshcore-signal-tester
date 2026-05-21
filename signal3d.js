@@ -223,6 +223,21 @@ export class Signal3DMap {
     // ---- Filter ----
 
     // Pass col => boolean to show only matching repeaters; null to show all.
+    // Migrate stored points/state when the main app renames a repeater column
+    // (e.g. promotion or demote-to-collision). Without this, beads would
+    // keep the stale col and lose their selection / color sync.
+    renameCol(oldCol, newCol) {
+        if (oldCol === newCol) return;
+        for (const p of this.points) {
+            if (p.col === oldCol) p.col = newCol;
+        }
+        if (this._selectedCol === oldCol) {
+            this._selectedCol = newCol;
+            this._updateInfoPanel();
+        }
+        this._repositionAll();
+    }
+
     setFilterFn(fn) {
         this.filterFn = fn;
         // If the currently selected repeater is now filtered out, deselect it
