@@ -1189,10 +1189,15 @@ class MeshCoreMonitor {
 
         const parts = [];
 
-        // Y grid + labels
+        // Y grid + labels (major every yStep, minor every yStep/2)
+        const yMinorStep = yStep / 2;
+        for (let y = yMin + yMinorStep; y < yMax; y += yStep) {
+            const yp = yOf(y);
+            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#f5f5f5" stroke-width="1"/>`);
+        }
         for (let y = yMin; y <= yMax; y += yStep) {
             const yp = yOf(y);
-            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#f0f0f0" stroke-width="1"/>`);
+            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#e8e8e8" stroke-width="1"/>`);
             parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${y}</text>`);
         }
 
@@ -1201,11 +1206,17 @@ class MeshCoreMonitor {
         const yLabelCy = (pt + ch / 2).toFixed(1);
         parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="#aaa" transform="rotate(-90,10,${yLabelCy})">${yLabel}</text>`);
 
-        // X grid + labels (every minute)
+        // X grid + labels (major every minute, minor every 30 s)
         const minMs = 60000;
+        const halfMinMs = 30000;
+        for (let t = Math.ceil(tMin / halfMinMs) * halfMinMs; t <= now; t += halfMinMs) {
+            if (t % minMs === 0) continue;
+            const xp = xOf(t);
+            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#f5f5f5" stroke-width="1"/>`);
+        }
         for (let t = Math.ceil(tMin / minMs) * minMs; t <= now; t += minMs) {
             const xp = xOf(t);
-            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#f0f0f0" stroke-width="1"/>`);
+            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#e8e8e8" stroke-width="1"/>`);
             const lbl = new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
             parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="#bbb">${lbl}</text>`);
         }
