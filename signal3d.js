@@ -1,21 +1,26 @@
-// 3D signal map: stitched OpenStreetMap tiles laid as a floor in Three.js;
+// 3D signal map: stitched map tiles laid as a floor in Three.js;
 // each captured packet is a colored bead floating above its GPS location at a
 // height proportional to RSSI.
 //
-// Mapy.cz would be the preferred backdrop, but their current tile API requires
-// a registered API key, so we fall back to public OSM tiles.
+// Prefers Mapy.cz tiles (API key required); falls back to OSM if they fail.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
 
-const PLANE_SIZE       = 100;   // world units, longest plane edge
-const MAX_HEIGHT       = 60;    // world units for strongest signal
-const MIN_HEIGHT       = 2;     // world units for weakest signal
-const RSSI_GOOD        = -50;
-const RSSI_BAD         = -130;
-const MAX_TILES_AXIS   = 4;
-const TILE_PX          = 256;
-const TILE_URL         = z => (x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+const PLANE_SIZE     = 100;   // world units, longest plane edge
+const MAX_HEIGHT     = 60;    // world units for strongest signal
+const MIN_HEIGHT     = 2;     // world units for weakest signal
+const RSSI_GOOD      = -50;
+const RSSI_BAD       = -130;
+const MAX_TILES_AXIS = 4;
+const TILE_PX        = 256;
+
+// Tile URL builders — Mapy.cz preferred, OSM fallback
+const MAPYCZ_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
+const tileUrlMapyCz = (z, x, y) =>
+    `https://api.mapy.cz/v1/maptiles/basic/${z}/${x}/${y}?apikey=${MAPYCZ_KEY}`;
+const tileUrlOsm    = (z, x, y) =>
+    `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 
 function lonLatToTile(lon, lat, zoom) {
     const n = Math.pow(2, zoom);
@@ -23,6 +28,23 @@ function lonLatToTile(lon, lat, zoom) {
     const latRad = lat * Math.PI / 180;
     const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
     return { x, y };
+}
+
+// Returns true if at least one test tile loads successfully from Mapy.cz
+async function probeMapyCz(zoom, x, y) {
+    return new Promise(res => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload  = () => res(true);
+        img.onerror = () => res(false);
+        // Short timeout so probe doesn't stall map rendering
+        const t = setTimeout(() => { img.src = ''; res(false); }, 4000);
+        img.onload = img.onerror = function (ok) {
+            clearTimeout(t);
+            res(this === img && img.naturalWidth > 0);
+        };
+        img.src = tileUrlMapyCz(zoom, x, y);
+    });
 }
 
 export class Signal3DMap {
@@ -34,16 +56,18 @@ export class Signal3DMap {
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
 
-        this.points       = [];     // { lat, lon, rssi, snr, col, time, mesh, line }
-        this.userLoc      = null;
-        this.watchId      = null;
-        this.tileBounds   = null;   // { x0, y0, nx, ny, zoom }
-        this.planeDim     = null;   // { w, h } in world units
-        this.mapMesh      = null;
-        this.userMarker   = null;
-        this.lastBboxKey  = null;
-        this._cameraFit   = false;
-        this._mapBusy     = false;
+        this.points      = [];     // { lat, lon, rssi, snr, col, time, mesh, line }
+        this.userLoc     = null;
+        this.watchId     = null;
+        this.tileBounds  = null;   // { x0, y0, nx, ny, zoom }
+        this.planeDim    = null;   // { w, h } in world units
+        this.mapMesh     = null;
+        this.userMarker  = null;
+        this.lastBboxKey = null;
+        this._cameraFit  = false;
+        this._mapBusy    = false;
+        this._useMapyCz  = null;   // null = unknown, true/false after probe
+        this.filterFn    = null;   // col => boolean, or null (show all)
 
         this._initScene();
         this._bindButton();
@@ -68,11 +92,11 @@ export class Signal3DMap {
 
         this.controls = new OrbitControls(this.camera, canvas);
         this.controls.target.set(0, MAX_HEIGHT * 0.25, 0);
-        this.controls.enableDamping  = true;
-        this.controls.dampingFactor  = 0.08;
-        this.controls.maxPolarAngle  = Math.PI / 2 - 0.02;
-        this.controls.minDistance    = 20;
-        this.controls.maxDistance    = 600;
+        this.controls.enableDamping = true;
+        this.controls.dampingFactor = 0.08;
+        this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
+        this.controls.minDistance   = 20;
+        this.controls.maxDistance   = 600;
         this.controls.update();
 
         this.scene.add(new THREE.AmbientLight(0xffffff, 0.85));
@@ -175,6 +199,14 @@ export class Signal3DMap {
         return this.userLoc;
     }
 
+    // ---- Filter ----
+
+    // Pass col => boolean to show only matching repeaters; null to show all.
+    setFilterFn(fn) {
+        this.filterFn = fn;
+        this._repositionAll();
+    }
+
     // ---- Packet ingestion ----
 
     addPacket(opts) {
@@ -203,12 +235,21 @@ export class Signal3DMap {
         return { minLat, maxLat, minLon, maxLon };
     }
 
+    async _tileUrlFor(z, x, y) {
+        // Probe Mapy.cz once; remember result for the whole session
+        if (this._useMapyCz === null) {
+            this._useMapyCz = await probeMapyCz(z, x, y);
+        }
+        return this._useMapyCz
+            ? tileUrlMapyCz(z, x, y)
+            : tileUrlOsm(z, x, y);
+    }
+
     async _updateMap() {
         if (this._mapBusy) { this._scheduleMapUpdate(); return; }
         const bb = this._bbox();
         if (!bb) return;
 
-        // Pad bbox so points are not at the very edge
         let { minLat, maxLat, minLon, maxLon } = bb;
         const padLat = (maxLat - minLat) * 0.3 || 0.0008;
         const padLon = (maxLon - minLon) * 0.3 || 0.0008;
@@ -247,7 +288,12 @@ export class Signal3DMap {
             ctx.fillStyle = '#dfdfdf';
             ctx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
 
-            const url = TILE_URL(zoom);
+            // Determine tile source (Mapy.cz or OSM) — probe uses corner tile
+            if (this._useMapyCz === null) {
+                this._useMapyCz = await probeMapyCz(zoom, x0, y0);
+            }
+            const urlFn = this._useMapyCz ? tileUrlMapyCz : tileUrlOsm;
+
             const tasks = [];
             for (let dx = 0; dx < nx; dx++) {
                 for (let dy = 0; dy < ny; dy++) {
@@ -257,25 +303,27 @@ export class Signal3DMap {
                         img.referrerPolicy = 'no-referrer';
                         img.onload  = () => { ctx.drawImage(img, dx * TILE_PX, dy * TILE_PX); res(); };
                         img.onerror = () => res();
-                        img.src = url(x0 + dx, y0 + dy);
+                        img.src = urlFn(zoom, x0 + dx, y0 + dy);
                     }));
                 }
             }
             await Promise.all(tasks);
 
-            // Attribution baked into the texture (OSM tile usage policy)
-            ctx.font = '12px system-ui, sans-serif';
-            const attrib = '© OpenStreetMap contributors';
+            // Attribution strip (required by OSM usage policy; Mapy.cz also requires it)
+            const attrib = this._useMapyCz
+                ? '© Mapy.cz a přispěvatelé'
+                : '© OpenStreetMap contributors';
+            ctx.font = '11px system-ui, sans-serif';
             const tw = ctx.measureText(attrib).width;
-            ctx.fillStyle = 'rgba(255,255,255,0.7)';
-            ctx.fillRect(tileCanvas.width - tw - 10, tileCanvas.height - 18, tw + 8, 16);
-            ctx.fillStyle = '#222';
+            ctx.fillStyle = 'rgba(255,255,255,0.75)';
+            ctx.fillRect(tileCanvas.width - tw - 10, tileCanvas.height - 17, tw + 8, 15);
+            ctx.fillStyle = '#333';
             ctx.fillText(attrib, tileCanvas.width - tw - 6, tileCanvas.height - 6);
 
             const texture = new THREE.CanvasTexture(tileCanvas);
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.minFilter  = THREE.LinearFilter;
-            texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+            texture.colorSpace  = THREE.SRGBColorSpace;
+            texture.minFilter   = THREE.LinearFilter;
+            texture.anisotropy  = this.renderer.capabilities.getMaxAnisotropy();
             texture.needsUpdate = true;
 
             const aspect = nx / ny;
@@ -319,25 +367,20 @@ export class Signal3DMap {
     _latLonToWorld(lat, lon) {
         if (!this.tileBounds || !this.planeDim) return null;
         const { x0, y0, nx, ny, zoom } = this.tileBounds;
-        const t = lonLatToTile(lon, lat, zoom);
-        const fx = (t.x - x0) / nx;  // 0..1 across width  (east →)
-        const fy = (t.y - y0) / ny;  // 0..1 across height (south ↓ in image)
+        const t  = lonLatToTile(lon, lat, zoom);
+        const fx = (t.x - x0) / nx;
+        const fy = (t.y - y0) / ny;
         const { w, h } = this.planeDim;
-        // Plane rotated -π/2 around X: local +Y → world -Z.
-        // Top of texture (north, smaller fy) sits at local +Y = +h/2,
-        // which maps to world -Z. So:
-        const wx = (fx - 0.5) * w;
-        const wz = (fy - 0.5) * h;   // south in image → +Z in world (in front of camera looking -Z)
-        return new THREE.Vector3(wx, 0, wz);
+        return new THREE.Vector3((fx - 0.5) * w, 0, (fy - 0.5) * h);
     }
 
     _rssiToHeight(rssi) {
         const t = (rssi - RSSI_BAD) / (RSSI_GOOD - RSSI_BAD);
-        const clamped = Math.max(0, Math.min(1, t));
-        return MIN_HEIGHT + clamped * (MAX_HEIGHT - MIN_HEIGHT);
+        return MIN_HEIGHT + Math.max(0, Math.min(1, t)) * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
     _repositionAll() {
+        // Remove all existing meshes
         for (const p of this.points) {
             if (p.mesh) {
                 this.pointsGroup.remove(p.mesh);
@@ -352,15 +395,18 @@ export class Signal3DMap {
                 p.line = null;
             }
         }
+        // Rebuild — respecting current filter
         for (const p of this.points) {
+            if (this.filterFn && !this.filterFn(p.col)) continue;
             const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) continue;
             const height = this._rssiToHeight(p.rssi);
             const color  = new THREE.Color(this.colorFor(p.col));
 
-            const sphereGeo = new THREE.SphereGeometry(1.1, 14, 12);
-            const sphereMat = new THREE.MeshBasicMaterial({ color });
-            const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+            const sphere = new THREE.Mesh(
+                new THREE.SphereGeometry(1.1, 14, 12),
+                new THREE.MeshBasicMaterial({ color })
+            );
             sphere.position.set(pos.x, height, pos.z);
             this.pointsGroup.add(sphere);
             p.mesh = sphere;
@@ -369,8 +415,10 @@ export class Signal3DMap {
                 new THREE.Vector3(pos.x, 0,      pos.z),
                 new THREE.Vector3(pos.x, height, pos.z),
             ]);
-            const lineMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.45 });
-            const line = new THREE.Line(lineGeo, lineMat);
+            const line = new THREE.Line(
+                lineGeo,
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.45 })
+            );
             this.pointsGroup.add(line);
             p.line = line;
         }

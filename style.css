@@ -1057,8 +1057,8 @@ header {
 }
 
 .location-status {
-    color: #555;
-    font-weight: 500;
+    color: #aaa;
+    font-weight: 400;
 }
 
 .signal-map-hint {

@@ -1765,6 +1765,9 @@ class MeshCoreMonitor {
         this.renderMsgTable();
         this.scheduleChartRender();
         this.updateStats();
+        this.signalMap?.setFilterFn(
+            this._repFilterTerms.length ? col => this._colMatchesRepFilter(col) : null
+        );
     }
 
     _exportCsv() {
