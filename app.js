@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=5';
+import { Signal3DMap } from './signal3d.js?v=6';
 
 class MeshCoreMonitor {
     constructor() {
@@ -278,9 +278,14 @@ class MeshCoreMonitor {
             statusEl:      document.getElementById('locationStatus'),
             btnEl:         document.getElementById('enableLocationBtn'),
             emptyEl:       document.getElementById('signalMapEmpty'),
+            infoEl:        document.getElementById('signalMapInfo'),
             colorFor:      col => this.getRepeaterColor(col),
             displayId:     col => this.displayId(col),
             initialSource: sourceSel?.value,
+            onSelect:      col => {
+                this._chartSelected = col;
+                this.scheduleChartRender();
+            },
         });
 
         sourceSel?.addEventListener('change', () => {
@@ -1636,7 +1641,7 @@ class MeshCoreMonitor {
             const msc = d.maxSnr   !== null ? this.signalColor(d.maxSnr,   13, -10, 0) : '#bbb';
             const lsc = d.lastSnr  !== null ? this.signalColor(d.lastSnr,  13, -10, 0) : '#bbb';
             return `<tr>
-                <td class="rl-id">${this.displayId(repeater)}</td>
+                <td class="rl-id"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}</td>
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${mrc}">${d.maxRssi  !== null ? d.maxRssi          : '—'}</td>
                 <td class="rl-num" style="color:${lrc}">${d.lastRssi !== null ? d.lastRssi         : '—'}</td>

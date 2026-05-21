@@ -267,6 +267,17 @@ header {
 
 .rl-id {
     font-weight: 700;
+    white-space: nowrap;
+}
+
+.rl-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+    flex-shrink: 0;
 }
 
 .rl-num {
@@ -1126,6 +1137,36 @@ header {
 
 .signal-map-empty.hidden {
     display: none;
+}
+
+.signal-map-info {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 9px 13px;
+    font-size: 12px;
+    line-height: 1.65;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.13);
+    backdrop-filter: blur(4px);
+    min-width: 160px;
+    pointer-events: none;
+}
+
+.signal-map-info.hidden {
+    display: none;
+}
+
+.smi-name {
+    font-size: 13px;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+}
+
+.smi-stat {
+    color: #555;
 }
 
 @media (max-width: 600px) {

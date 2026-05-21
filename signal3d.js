@@ -51,19 +51,23 @@ export class Signal3DMap {
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
 
-        this.points      = [];     // { lat, lon, rssi, snr, col, time, mesh, line }
-        this.userLoc     = null;
-        this.watchId     = null;
-        this.tileBounds  = null;   // { x0, y0, nx, ny, zoom }
-        this.planeDim    = null;   // { w, h } in world units
-        this.mapMesh     = null;
-        this.userMarker  = null;
-        this.lastBboxKey = null;
-        this._cameraFit  = false;
-        this._mapBusy    = false;
-        this.filterFn    = null;   // col => boolean, or null (show all)
-        this.mapSource   = (opts.initialSource && TILE_SOURCES[opts.initialSource])
+        this.points       = [];     // { lat, lon, rssi, snr, col, time, mesh, line, hitMesh }
+        this.userLoc      = null;
+        this.watchId      = null;
+        this.tileBounds   = null;   // { x0, y0, nx, ny, zoom }
+        this.planeDim     = null;   // { w, h } in world units
+        this.mapMesh      = null;
+        this.userMarker   = null;
+        this.lastBboxKey  = null;
+        this._cameraFit   = false;
+        this._mapBusy     = false;
+        this.filterFn     = null;   // col => boolean, or null (show all)
+        this.mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
             ? opts.initialSource : DEFAULT_SOURCE;
+        this._selectedCol = null;
+        this._meshToPoint = new Map();  // hitMesh → point
+        this.infoEl       = opts.infoEl   || null;
+        this.onSelect     = opts.onSelect || null;
 
         this._initScene();
         this._bindButton();
@@ -110,6 +114,20 @@ export class Signal3DMap {
 
         this.pointsGroup = new THREE.Group();
         this.scene.add(this.pointsGroup);
+
+        this._raycaster = new THREE.Raycaster();
+
+        // Distinguish click from drag: track pointer displacement
+        let _ptrStart = null;
+        canvas.addEventListener('pointerdown', e => { _ptrStart = { x: e.clientX, y: e.clientY }; });
+        canvas.addEventListener('click', e => {
+            if (!_ptrStart) return;
+            const dx = e.clientX - _ptrStart.x;
+            const dy = e.clientY - _ptrStart.y;
+            _ptrStart = null;
+            if (Math.sqrt(dx * dx + dy * dy) > 5) return; // drag, not click
+            this._onCanvasClick(e);
+        });
 
         this._onResize = () => this._resize();
         window.addEventListener('resize', this._onResize);
@@ -200,7 +218,57 @@ export class Signal3DMap {
     // Pass col => boolean to show only matching repeaters; null to show all.
     setFilterFn(fn) {
         this.filterFn = fn;
+        // If the currently selected repeater is now filtered out, deselect it
+        if (this._selectedCol && fn && !fn(this._selectedCol)) {
+            this._selectedCol = null;
+            this._updateInfoPanel();
+            this.onSelect?.(null);
+        }
         this._repositionAll();
+    }
+
+    // ---- Click / selection ----
+
+    _onCanvasClick(e) {
+        const rect  = this.canvas.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+            ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+            -((e.clientY - rect.top)  / rect.height) * 2 + 1
+        );
+        this._raycaster.setFromCamera(mouse, this.camera);
+        const hits = this._raycaster.intersectObjects([...this._meshToPoint.keys()]);
+        let newCol = null;
+        if (hits.length > 0) {
+            const p = this._meshToPoint.get(hits[0].object);
+            if (p) newCol = (this._selectedCol === p.col) ? null : p.col;
+        }
+        this._selectedCol = newCol;
+        this._repositionAll();
+        this._updateInfoPanel();
+        this.onSelect?.(newCol);
+    }
+
+    _updateInfoPanel() {
+        if (!this.infoEl) return;
+        const col = this._selectedCol;
+        if (!col) { this.infoEl.classList.add('hidden'); return; }
+        const pts = this.points.filter(p => p.col === col);
+        if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
+        const maxRssi  = Math.max(...pts.map(p => p.rssi));
+        const last     = pts[pts.length - 1];
+        const color    = this.colorFor(col);
+        const dot      = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle;flex-shrink:0"></span>`;
+        const snrStr   = last.snr != null ? `${last.snr >= 0 ? '+' : ''}${last.snr.toFixed(1)} dB` : '—';
+        this.infoEl.innerHTML =
+            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b></div>` +
+            `<div class="smi-stat">${pts.length} packet${pts.length !== 1 ? 's' : ''}</div>` +
+            `<div class="smi-stat">Best RSSI <span style="color:${color};font-weight:600">${maxRssi} dBm</span></div>` +
+            `<div class="smi-stat">Last RSSI <span style="color:${color};font-weight:600">${last.rssi} dBm</span> · SNR ${snrStr}</div>`;
+        this.infoEl.classList.remove('hidden');
+    }
+
+    _escHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     // ---- Map source ----
@@ -372,32 +440,37 @@ export class Signal3DMap {
     }
 
     _repositionAll() {
-        // Remove all existing meshes
+        // Remove all existing meshes and hit targets
+        this._meshToPoint.clear();
         for (const p of this.points) {
-            if (p.mesh) {
-                this.pointsGroup.remove(p.mesh);
-                p.mesh.geometry.dispose();
-                p.mesh.material.dispose();
-                p.mesh = null;
-            }
-            if (p.line) {
-                this.pointsGroup.remove(p.line);
-                p.line.geometry.dispose();
-                p.line.material.dispose();
-                p.line = null;
+            for (const k of ['mesh', 'line', 'hitMesh']) {
+                if (p[k]) {
+                    this.pointsGroup.remove(p[k]);
+                    p[k].geometry?.dispose();
+                    p[k].material?.dispose();
+                    p[k] = null;
+                }
             }
         }
-        // Rebuild — respecting current filter
+        const sel = this._selectedCol;
+        // Rebuild — respecting current filter and selection
         for (const p of this.points) {
             if (this.filterFn && !this.filterFn(p.col)) continue;
             const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) continue;
-            const height = this._rssiToHeight(p.rssi);
-            const color  = new THREE.Color(this.colorFor(p.col));
+            const height      = this._rssiToHeight(p.rssi);
+            const color       = new THREE.Color(this.colorFor(p.col));
+            const isSelected  = sel === p.col;
+            const isLit       = !sel || isSelected;
+            const sphereR     = isSelected ? 1.6 : 1.1;
 
             const sphere = new THREE.Mesh(
-                new THREE.SphereGeometry(1.1, 14, 12),
-                new THREE.MeshBasicMaterial({ color })
+                new THREE.SphereGeometry(sphereR, 14, 12),
+                new THREE.MeshBasicMaterial({
+                    color,
+                    transparent: !isLit,
+                    opacity:     isLit ? 1 : 0.15,
+                })
             );
             sphere.position.set(pos.x, height, pos.z);
             this.pointsGroup.add(sphere);
@@ -409,10 +482,20 @@ export class Signal3DMap {
             ]);
             const line = new THREE.Line(
                 lineGeo,
-                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.45 })
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity: isLit ? 0.45 : 0.08 })
             );
             this.pointsGroup.add(line);
             p.line = line;
+
+            // Invisible larger hit-target sphere for easier clicking
+            const hitMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(2.8, 6, 4),
+                new THREE.MeshBasicMaterial({ visible: false })
+            );
+            hitMesh.position.set(pos.x, height, pos.z);
+            this.pointsGroup.add(hitMesh);
+            p.hitMesh = hitMesh;
+            this._meshToPoint.set(hitMesh, p);
         }
     }
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
     <div class="container">
@@ -106,9 +106,9 @@
             <div class="section-wrap" id="signalMapWrap">
                 <div class="section-header">
                     <span class="section-title">Signal 3D map</span>
-                    <button class="collapse-btn" data-target="signalMapBody" title="Toggle section">▾</button>
+                    <button class="collapse-btn" data-target="signalMapControlsBody" title="Toggle controls">▾</button>
                 </div>
-                <div class="section-body" id="signalMapBody">
+                <div class="section-body" id="signalMapControlsBody">
                     <div class="signal-map-controls">
                         <button id="enableLocationBtn" class="btn-primary">Enable location</button>
                         <span id="locationStatus" class="location-status">Location not enabled — packets won't appear on the 3D map until you allow it.</span>
@@ -121,10 +121,11 @@
                         </label>
                         <span class="signal-map-hint">Drag to rotate · scroll / pinch to zoom</span>
                     </div>
-                    <div class="signal-map-container">
-                        <canvas id="signalMapCanvas" class="signal-map-canvas"></canvas>
-                        <div id="signalMapEmpty" class="signal-map-empty">Allow location and capture some packets to populate the 3D map.</div>
-                    </div>
+                </div>
+                <div class="signal-map-container">
+                    <canvas id="signalMapCanvas" class="signal-map-canvas"></canvas>
+                    <div id="signalMapEmpty" class="signal-map-empty">Allow location and capture some packets to populate the 3D map.</div>
+                    <div id="signalMapInfo" class="signal-map-info hidden"></div>
                 </div>
             </div>
 
@@ -201,6 +202,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=5"></script>
+    <script type="module" src="app.js?v=6"></script>
 </body>
 </html>
