@@ -201,11 +201,14 @@ class MeshCoreMonitor {
 
         const msgFilterInput = document.getElementById('msgFilter');
         const msgFilterClear = document.getElementById('msgFilterClear');
+        const msgFilterApplied = document.getElementById('msgFilterApplied');
         if (msgFilterInput) {
             msgFilterInput.addEventListener('input', () => {
                 this._msgFilter = msgFilterInput.value;
-                msgFilterInput.classList.toggle('has-value', !!this._msgFilter);
-                msgFilterClear?.classList.toggle('hidden', !this._msgFilter);
+                const active = !!this._msgFilter;
+                msgFilterInput.classList.toggle('has-value', active);
+                msgFilterClear?.classList.toggle('hidden', !active);
+                msgFilterApplied?.classList.toggle('hidden', !active);
                 this.renderMsgTable();
             });
         }
@@ -214,6 +217,7 @@ class MeshCoreMonitor {
                 this._msgFilter = '';
                 if (msgFilterInput) { msgFilterInput.value = ''; msgFilterInput.classList.remove('has-value'); }
                 msgFilterClear.classList.add('hidden');
+                msgFilterApplied?.classList.add('hidden');
                 this.renderMsgTable();
                 msgFilterInput?.focus();
             });
@@ -222,12 +226,15 @@ class MeshCoreMonitor {
 
         const repFilterInput = document.getElementById('repFilter');
         const repFilterClear = document.getElementById('repFilterClear');
+        const repFilterApplied = document.getElementById('repFilterApplied');
         if (repFilterInput) {
             repFilterInput.addEventListener('input', () => {
                 this._repFilterTerms = repFilterInput.value
                     .split(',').map(s => s.trim().toUpperCase().replace(/^!/, '')).filter(Boolean);
-                repFilterInput.classList.toggle('has-value', this._repFilterTerms.length > 0);
-                repFilterClear?.classList.toggle('hidden', this._repFilterTerms.length === 0);
+                const active = this._repFilterTerms.length > 0;
+                repFilterInput.classList.toggle('has-value', active);
+                repFilterClear?.classList.toggle('hidden', !active);
+                repFilterApplied?.classList.toggle('hidden', !active);
                 this._applyRepFilter();
             });
         }
@@ -236,6 +243,7 @@ class MeshCoreMonitor {
                 this._repFilterTerms = [];
                 if (repFilterInput) { repFilterInput.value = ''; repFilterInput.classList.remove('has-value'); }
                 repFilterClear.classList.add('hidden');
+                repFilterApplied?.classList.add('hidden');
                 this._applyRepFilter();
                 repFilterInput?.focus();
             });
@@ -609,7 +617,9 @@ class MeshCoreMonitor {
             const rawHex = this.bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
             if (packet.isValid) {
-                this.processPacket(packet, rawHex, snr, rssi);
+                // For unknown push codes we don't know the byte layout — bytes 1-2 may
+                // not be SNR/RSSI at all, so pass null to avoid bogus values in the UI.
+                this.processPacket(packet, rawHex, knownFormat ? snr : null, knownFormat ? rssi : null);
             } else if (!knownFormat) {
                 this._addRawEntry(payload, pushCode);
             }
@@ -867,6 +877,14 @@ class MeshCoreMonitor {
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
+        // Flash the two signal cells that just received new values
+        this.msgTableBody?.querySelectorAll(`[data-hash="${hash}"][data-col="${canonicalKey}"]`)
+            .forEach(el => {
+                el.classList.remove('cell-flash');
+                // Force reflow so the animation restarts even on rapid back-to-back updates
+                void el.offsetWidth;
+                el.classList.add('cell-flash');
+            });
         if (this.repeaterColumns.length !== prevColCount) {
             requestAnimationFrame(() => this._checkTableOverflow(false));
         }
@@ -875,7 +893,12 @@ class MeshCoreMonitor {
         }
         this.scheduleChartRender();
 
-        if (hasSignal) this.playRxSound(rssi);
+        // Sound only when the entry would actually appear under the current filters
+        const data = this.hashData.get(hash);
+        const filterText = this._msgFilter.toLowerCase().trim();
+        const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
+        const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
+        if (hasSignal && matchesMsgFilter && matchesRepFilter) this.playRxSound(rssi);
         this.updateStats();
         this.emptyState?.classList.add('hidden');
     }

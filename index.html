@@ -40,6 +40,11 @@
                     <span class="section-title">Seen repeaters</span>
                     <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
                 </div>
+                <div class="rep-filter-bar" id="repFilterBar">
+                    <input type="text" id="repFilter" class="rep-filter-input" placeholder="Filter repeaters…" autocomplete="off" spellcheck="false">
+                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
+                    <span id="repFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
+                </div>
                 <div class="section-body" id="repeaterBody">
                     <div class="repeater-log-scroll">
                         <table class="repeater-log-table">
@@ -69,10 +74,6 @@
                         <option value="3600">1 hour</option>
                         <option value="Infinity">Never</option>
                     </select>
-                    <span class="ttl-sep">·</span>
-                    <span class="ttl-label">Repeaters</span>
-                    <input type="text" id="repFilter" class="rep-filter-input" placeholder="all" autocomplete="off" spellcheck="false">
-                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
                 </label>
             </div>
 
@@ -111,6 +112,7 @@
                     <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
                     <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
                     <span id="msgFilterCount" class="msg-filter-count hidden"></span>
+                    <span id="msgFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
                     <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
                 </div>
                 <div class="section-body" id="msgScrollBody">
