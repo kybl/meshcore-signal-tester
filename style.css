@@ -189,6 +189,10 @@ header {
 
 .section-body > * {
     min-height: 0;
+    /* Grid items default to min-width: auto (= content size). Without this
+       the inner wrapper grows to fit a wide table, breaking horizontal
+       scrolling and stretching the filter bar past the export button. */
+    min-width: 0;
 }
 
 .section-body.collapsed {
@@ -785,25 +789,21 @@ header {
     color: white;
 }
 
-/* On dark / purple backgrounds the blue-on-blue default disappears —
-   force a contrasting white-on-translucent variant. */
-.hstat .help-icon,
-.sound-toggle .help-icon,
+/* The default blue-on-translucent-blue help icon disappears on the
+   purple section backgrounds (.ttl-control, .rep-filter-bar). Force a
+   white-on-translucent variant in those contexts. The header has a
+   white background, so .hstat / .sound-toggle keep the default style. */
 .ttl-control .help-icon,
-.rep-filter-label .help-icon {
+.rep-filter-bar .help-icon {
     background: rgba(255, 255, 255, 0.18);
     color: rgba(255, 255, 255, 0.85);
     border-color: rgba(255, 255, 255, 0.28);
 }
 
-.hstat .help-icon:hover,
-.sound-toggle .help-icon:hover,
 .ttl-control .help-icon:hover,
-.rep-filter-label .help-icon:hover,
-.hstat .help-icon.active,
-.sound-toggle .help-icon.active,
+.rep-filter-bar .help-icon:hover,
 .ttl-control .help-icon.active,
-.rep-filter-label .help-icon.active {
+.rep-filter-bar .help-icon.active {
     background: rgba(255, 255, 255, 0.32);
     color: white;
     border-color: rgba(255, 255, 255, 0.45);

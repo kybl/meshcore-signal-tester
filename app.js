@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=16';
+import { Signal3DMap } from './signal3d.js?v=17';
 
 class MeshCoreMonitor {
     constructor() {
@@ -330,14 +330,21 @@ class MeshCoreMonitor {
             if (!text || !tipEl) return;
             tipEl.textContent = text;
             tipEl.style.display = 'block';
-            const r = icon.getBoundingClientRect();
             const tipW = Math.min(260, window.innerWidth - 16);
+            tipEl.style.maxWidth = `${tipW}px`;
+            const r = icon.getBoundingClientRect();
+            const tipH = tipEl.offsetHeight;
             let left = r.left + r.width / 2 - tipW / 2;
             left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
             tipEl.style.left = `${left}px`;
-            tipEl.style.top = `${r.top - 8}px`;
-            tipEl.style.transform = 'translateY(-100%)';
-            tipEl.style.maxWidth = `${tipW}px`;
+            // Default: float above the icon. If there's no room, flip below.
+            if (r.top < tipH + 12) {
+                tipEl.style.top = `${r.bottom + 8}px`;
+                tipEl.style.transform = 'none';
+            } else {
+                tipEl.style.top = `${r.top - 8}px`;
+                tipEl.style.transform = 'translateY(-100%)';
+            }
             icon.classList.add('active');
         };
 
@@ -350,6 +357,9 @@ class MeshCoreMonitor {
         document.addEventListener('click', e => {
             const icon = e.target.closest('.help-icon');
             if (icon) {
+                // Prevent the enclosing <label> from focusing its input
+                e.preventDefault();
+                e.stopPropagation();
                 if (_tipTarget === icon) { hideTip(); return; }
                 hideTip();
                 _tipTarget = icon;
