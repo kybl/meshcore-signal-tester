@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=8';
+import { Signal3DMap } from './signal3d.js?v=9';
 
 class MeshCoreMonitor {
     constructor() {
@@ -1603,6 +1603,7 @@ class MeshCoreMonitor {
                 // Re-check TTL: a fresh packet may have arrived during the animation delay
                 if (data && data.lastSeen <= cutoff) this.hashData.delete(hash);
             }
+            this.signalMap?.purgeOlderThan(cutoff);
             this.repeaterColumns = this.repeaterColumns.filter(r =>
                 Array.from(this.hashData.values()).some(d => d.repeaters.has(r))
             );

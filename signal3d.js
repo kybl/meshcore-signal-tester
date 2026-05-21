@@ -297,6 +297,32 @@ export class Signal3DMap {
         this._scheduleMapUpdate();
     }
 
+    // Drop packets older than the given timestamp. Disposes their meshes and
+    // refreshes selection / info panel if the active repeater goes away.
+    purgeOlderThan(cutoff) {
+        if (!Number.isFinite(cutoff)) return;
+        const before = this.points.length;
+        this.points = this.points.filter(p => {
+            if (p.time >= cutoff) return true;
+            for (const k of ['mesh', 'line', 'hitMesh']) {
+                if (p[k]) {
+                    this.pointsGroup.remove(p[k]);
+                    p[k].geometry?.dispose();
+                    p[k].material?.dispose();
+                    if (k === 'hitMesh') this._meshToPoint.delete(p[k]);
+                }
+            }
+            return false;
+        });
+        if (this.points.length === before) return;
+        if (this._selectedCol && !this.points.some(p => p.col === this._selectedCol)) {
+            this._selectedCol = null;
+            this._updateInfoPanel();
+            this.onSelect?.(null);
+            this._repositionAll();
+        }
+    }
+
     _scheduleMapUpdate() {
         clearTimeout(this._mapTimer);
         this._mapTimer = setTimeout(() => this._updateMap(), 250);
