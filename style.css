@@ -74,6 +74,12 @@ header {
     margin-right: 3px;
 }
 
+.hstat-unit {
+    color: #bbb;
+    font-size: 10px;
+    margin-left: 1px;
+}
+
 .hstat span:not(.hstat-label) {
     font-weight: 700;
     color: #333;
@@ -857,5 +863,96 @@ header {
 
 .help-list li {
     margin-bottom: 6px;
+}
+
+/* ── Filter bar & export ────────────────────────────── */
+
+.msg-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0 5px;
+}
+
+.msg-filter-bar.hidden {
+    display: none;
+}
+
+.msg-filter-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 5px;
+    outline: none;
+    color: #333;
+    background: rgba(255, 255, 255, 0.9);
+    transition: border-color 0.15s, background 0.15s;
+    font-family: inherit;
+}
+
+.msg-filter-input:focus {
+    border-color: white;
+    background: white;
+}
+
+.msg-filter-input.has-value {
+    background: white;
+    border-color: #a8b8f8;
+}
+
+.msg-filter-clear {
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    font-size: 11px;
+    padding: 3px 7px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+.msg-filter-clear:hover {
+    background: rgba(255, 255, 255, 0.28);
+    color: white;
+}
+
+.msg-filter-clear.hidden {
+    display: none;
+}
+
+.msg-filter-count {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.msg-filter-count.hidden {
+    display: none;
+}
+
+.btn-export {
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-family: inherit;
+}
+
+.btn-export:hover {
+    background: rgba(255, 255, 255, 0.26);
+    border-color: rgba(255, 255, 255, 0.5);
+    color: white;
 }
 

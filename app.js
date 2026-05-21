@@ -30,6 +30,8 @@ class MeshCoreMonitor {
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
         this._chartSelected = null;
+        this._rxTimestamps = [];
+        this._msgFilter = '';
 
         this.initUI();
         this.startCleanupTimer();
@@ -193,6 +195,30 @@ class MeshCoreMonitor {
             });
         }
 
+        this.packetRateEl   = document.getElementById('packetRate');
+        this.msgFilterCountEl = document.getElementById('msgFilterCount');
+
+        const msgFilterInput = document.getElementById('msgFilter');
+        const msgFilterClear = document.getElementById('msgFilterClear');
+        if (msgFilterInput) {
+            msgFilterInput.addEventListener('input', () => {
+                this._msgFilter = msgFilterInput.value;
+                msgFilterInput.classList.toggle('has-value', !!this._msgFilter);
+                msgFilterClear?.classList.toggle('hidden', !this._msgFilter);
+                this.renderMsgTable();
+            });
+        }
+        if (msgFilterClear) {
+            msgFilterClear.addEventListener('click', () => {
+                this._msgFilter = '';
+                if (msgFilterInput) { msgFilterInput.value = ''; msgFilterInput.classList.remove('has-value'); }
+                msgFilterClear.classList.add('hidden');
+                this.renderMsgTable();
+                msgFilterInput?.focus();
+            });
+        }
+        document.getElementById('exportCsvBtn')?.addEventListener('click', () => this._exportCsv());
+
         window.addEventListener('beforeunload', e => {
             if (this.device) {
                 e.preventDefault();
@@ -221,6 +247,8 @@ class MeshCoreMonitor {
                 'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
             'snr':
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
+            'rate':
+                'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
         };
 
         const tipEl = document.getElementById('helpTip');
@@ -752,6 +780,7 @@ class MeshCoreMonitor {
         const wasAtBottom = this._isAtPageBottom();
         this.totalRxCount++;
         const now = Date.now();
+        this._rxTimestamps.push(now);
         const isNewHash = !this.hashData.has(hash);
         const prevColCount = this.repeaterColumns.length;
         const canonicalKey = this.findOrCreateColumn(repeater);
@@ -884,8 +913,22 @@ class MeshCoreMonitor {
             `;
         }
 
-        const rows = Array.from(this.hashData.entries())
+        // Show filter bar whenever there is data
+        document.getElementById('msgFilterBar')?.classList.toggle('hidden', this.hashData.size === 0);
+
+        const filter = this._msgFilter.toLowerCase().trim();
+        const allRows = Array.from(this.hashData.entries())
             .sort(([, a], [, b]) => b.insertOrder - a.insertOrder);
+        const rows = filter
+            ? allRows.filter(([, data]) => this._rowMatchesFilter(data, filter))
+            : allRows;
+
+        // Filter count badge
+        if (this.msgFilterCountEl) {
+            const show = filter && allRows.length > 0;
+            this.msgFilterCountEl.textContent = show ? `${rows.length} / ${allRows.length}` : '';
+            this.msgFilterCountEl.classList.toggle('hidden', !show);
+        }
 
         this.msgTableBody.innerHTML = rows.map(([hash, data]) =>
             this.buildMsgRowHtml(hash, data)
@@ -1509,6 +1552,90 @@ class MeshCoreMonitor {
         this.activeHashesEl.textContent = this.hashData.size;
         this.totalRxEl.textContent = this.totalRxCount;
         this.totalRepeatersEl.textContent = this.repeaterColumns.length;
+        if (this.packetRateEl) {
+            const now = Date.now();
+            this._rxTimestamps = this._rxTimestamps.filter(t => t > now - 120000);
+            const count = this._rxTimestamps.filter(t => t > now - 60000).length;
+            this.packetRateEl.textContent = (this.device || count > 0) ? String(count) : '—';
+        }
+    }
+
+    _rowMatchesFilter(data, filter) {
+        if ((data.type || '').toLowerCase().includes(filter)) return true;
+        if (this.abbreviateType(data.type).toLowerCase().includes(filter)) return true;
+        for (const col of data.repeaters.keys()) {
+            if (this.displayId(col).toLowerCase().includes(filter)) return true;
+        }
+        const m = data.meta;
+        if (m?.text?.toLowerCase().includes(filter)) return true;
+        if (m?.sender?.toLowerCase().includes(filter)) return true;
+        if (m?.name?.toLowerCase().includes(filter)) return true;
+        return false;
+    }
+
+    _formatPath(packet) {
+        if (!packet?.path?.length) return '';
+        return packet.path.map(id =>
+            typeof id === 'number'
+                ? '!' + id.toString(16).padStart(8, '0')
+                : String(id ?? 'unknown')
+        ).join(' > ');
+    }
+
+    _exportCsv() {
+        if (this.hashData.size === 0) return;
+
+        const filter = this._msgFilter.toLowerCase().trim();
+        const rows = Array.from(this.hashData.entries())
+            .sort(([, a], [, b]) => a.insertOrder - b.insertOrder)
+            .filter(([, data]) => !filter || this._rowMatchesFilter(data, filter));
+
+        const cols = this.repeaterColumns;
+        const header = [
+            'time', 'type', 'path', 'hash',
+            ...cols.flatMap(c => [`rssi_${this.displayId(c)}`, `snr_${this.displayId(c)}`]),
+            'text', 'sender', 'raw_hex',
+        ];
+
+        const esc = v => {
+            if (v == null || v === '') return '';
+            const s = String(v);
+            return (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
+                ? '"' + s.replace(/"/g, '""') + '"' : s;
+        };
+
+        const lines = [header.join(',')];
+        for (const [hash, data] of rows) {
+            // Pick the packet with the longest path for the path column
+            let bestPkt = data.packet;
+            for (const [, rep] of data.repeaters) {
+                if ((rep.packet?.path?.length ?? 0) > (bestPkt?.path?.length ?? 0)) bestPkt = rep.packet;
+            }
+            const sigCols = cols.flatMap(c => {
+                const sig = data.repeaters.get(c);
+                return sig ? [sig.rssi != null ? String(sig.rssi) : '', sig.snr != null ? sig.snr.toFixed(1) : ''] : ['', ''];
+            });
+            lines.push([
+                new Date(data.firstSeen).toISOString(),
+                data.type || '',
+                this._formatPath(bestPkt),
+                hash,
+                ...sigCols,
+                data.meta?.text   || '',
+                data.meta?.sender || '',
+                data.rawHex       || '',
+            ].map(esc).join(','));
+        }
+
+        const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `meshcore-rx-${new Date().toISOString().slice(0, 16).replace('T', '_')}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     updateStatus(text, className) {

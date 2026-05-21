@@ -25,6 +25,7 @@
                     <span class="hstat"><span class="hstat-label">Active</span> <span id="activeHashes">0</span><span class="help-icon" data-help="active">?</span></span>
                     <span class="hstat"><span class="hstat-label">Total RX</span> <span id="totalRx">0</span><span class="help-icon" data-help="totalrx">?</span></span>
                     <span class="hstat"><span class="hstat-label">Repeaters</span> <span id="totalRepeaters">0</span><span class="help-icon" data-help="repeaters-count">?</span></span>
+                    <span class="hstat"><span class="hstat-label">Rate</span> <span id="packetRate">—</span><span class="hstat-unit">/min</span><span class="help-icon" data-help="rate">?</span></span>
                 </div>
             </div>
         </header>
@@ -101,6 +102,12 @@
                 <div class="section-header">
                     <span class="section-title">Messages</span>
                     <button class="collapse-btn" data-target="msgScrollBody" title="Toggle section">▾</button>
+                </div>
+                <div class="msg-filter-bar hidden" id="msgFilterBar">
+                    <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
+                    <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
+                    <span id="msgFilterCount" class="msg-filter-count hidden"></span>
+                    <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
                 </div>
                 <div class="section-body" id="msgScrollBody">
                     <div class="msg-table-scroll">
