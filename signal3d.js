@@ -197,6 +197,9 @@ export class Signal3DMap {
                 const { latitude, longitude, accuracy } = pos.coords;
                 this.userLoc = { lat: latitude, lon: longitude, accuracy };
                 this._setStatus(`📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}  (±${Math.round(accuracy)} m)`);
+                if (this.emptyEl && !this.points.length) {
+                    this.emptyEl.textContent = 'Waiting for packets to populate the 3D map.';
+                }
                 this._scheduleMapUpdate();
                 this._updateUserMarker();
             },
@@ -318,11 +321,14 @@ export class Signal3DMap {
         const bb = this._bbox();
         if (!bb) return;
 
+        // Only pad when bbox has zero extent (single point) — otherwise the
+        // +1 tile margin below already gives plenty of context, and bbox
+        // padding here would only shrink the data area on screen.
         let { minLat, maxLat, minLon, maxLon } = bb;
-        const padLat = (maxLat - minLat) * 0.3 || 0.0008;
-        const padLon = (maxLon - minLon) * 0.3 || 0.0008;
-        minLat -= padLat; maxLat += padLat;
-        minLon -= padLon; maxLon += padLon;
+        const padLat = (maxLat - minLat) || 0.0008;
+        const padLon = (maxLon - minLon) || 0.0008;
+        if (maxLat === minLat) { minLat -= padLat / 2; maxLat += padLat / 2; }
+        if (maxLon === minLon) { minLon -= padLon / 2; maxLon += padLon / 2; }
 
         let zoom = 19;
         let tl, br;
