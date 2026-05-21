@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=17">
+    <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
     <div class="container">
@@ -165,6 +165,23 @@
                     </div>
                 </div>
             </div>
+
+            <div class="section-wrap" id="debugWrap">
+                <div class="section-header">
+                    <span class="section-title">Debug</span>
+                    <button class="collapse-btn collapsed" data-target="debugBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body collapsed" id="debugBody">
+                    <div class="debug-inner">
+                        <p class="debug-hint">Inject a fake RX entry to test prefix-collision handling. Hex is interpreted high-byte first, the same way path IDs arrive from the decoder. Examples: <code>5E</code> (1-byte), <code>5E9F</code>, <code>5E9F1234</code>, or <code>direct</code>.</p>
+                        <div class="debug-row">
+                            <input id="debugRepeater" type="text" class="debug-input" placeholder="Repeater hex prefix or 'direct'" autocomplete="off" spellcheck="false">
+                            <button id="debugInject" class="btn-primary">Inject RX</button>
+                            <span id="debugFeedback" class="debug-feedback"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -220,6 +237,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=17"></script>
+    <script type="module" src="app.js?v=18"></script>
 </body>
 </html>

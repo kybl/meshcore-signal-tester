@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=17';
+import { Signal3DMap } from './signal3d.js?v=18';
 
 class MeshCoreMonitor {
     constructor() {
@@ -261,6 +261,45 @@ class MeshCoreMonitor {
 
         this._initHelpSystem();
         this._initSignalMap();
+        this._initDebug();
+    }
+
+    _initDebug() {
+        const btn  = document.getElementById('debugInject');
+        const inp  = document.getElementById('debugRepeater');
+        const fbk  = document.getElementById('debugFeedback');
+        if (!btn || !inp) return;
+
+        const inject = () => {
+            const raw = inp.value.trim();
+            if (!raw) return;
+            let repeater;
+            if (raw.toLowerCase() === 'direct') {
+                repeater = 'direct';
+            } else {
+                let hex = raw.replace(/^!/, '').toUpperCase();
+                if (!/^[0-9A-F]+$/.test(hex)) {
+                    if (fbk) { fbk.textContent = 'hex digits only'; setTimeout(() => fbk.textContent = '', 1500); }
+                    return;
+                }
+                if (hex.length % 2) hex = '0' + hex;
+                repeater = '!' + hex;
+            }
+            // Unique payload so each inject creates a fresh row, not a merge
+            const fakeHex = 'debug-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
+            const hash    = this.hashPayload(fakeHex);
+            const rssi    = -60 - Math.floor(Math.random() * 50);
+            const snr     = Math.round((Math.random() * 25 - 10) * 10) / 10;
+            this.addRxEntry(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null);
+            if (fbk) {
+                const col = this.findOrCreateColumn(repeater);
+                fbk.textContent = `→ column ${this.displayId(col)}`;
+                setTimeout(() => fbk.textContent = '', 2500);
+            }
+        };
+
+        btn.addEventListener('click', inject);
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inject(); } });
     }
 
     _initSignalMap() {

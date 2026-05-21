@@ -1195,3 +1195,54 @@ header {
     .signal-map-hint { display: none; }
 }
 
+/* ---- Debug section ---- */
+
+.debug-inner {
+    padding: 6px 4px 4px;
+}
+
+.debug-hint {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 11px;
+    margin: 0 0 8px;
+    line-height: 1.5;
+}
+
+.debug-hint code {
+    background: rgba(255, 255, 255, 0.16);
+    color: white;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+}
+
+.debug-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.debug-input {
+    flex: 0 1 220px;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #333;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.debug-input:focus {
+    outline: none;
+    background: white;
+    border-color: white;
+}
+
+.debug-feedback {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
