@@ -10,7 +10,6 @@ class MeshCoreMonitor {
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
         this.HASH_LIFETIME = 300000;
-        this.MAX_CHART_POINTS = 5000;
         this.cleanupInterval = null;
         this._connectionMonitor = null;
         this._monitorDelay = null;
@@ -1202,8 +1201,6 @@ class MeshCoreMonitor {
         if (isFinite(this.HASH_LIFETIME)) {
             const cutoff = Date.now() - this.HASH_LIFETIME;
             this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
-        } else if (this.chartPoints.length > this.MAX_CHART_POINTS) {
-            this.chartPoints = this.chartPoints.slice(-this.MAX_CHART_POINTS);
         }
         if (this._chartSelected && !this._visibleChartPoints().some(p => p.col === this._chartSelected)) {
             this._chartSelected = null;
