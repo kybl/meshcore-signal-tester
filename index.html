@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=9">
+    <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
     <div class="container">
@@ -168,7 +168,7 @@
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
                 <div class="help-dt">Repeater</div>
-                <div class="help-dd"><b>direct</b> means the packet arrived with no intermediate node. Otherwise the ID shown is the last mesh node that forwarded the packet toward your device.</div>
+                <div class="help-dd"><b>direct</b> means a flood-routed packet was received at the first hop — no intermediate repeater. Otherwise the ID shown is the last mesh node that forwarded the packet toward your device.</div>
 
                 <div class="help-dt">RSSI</div>
                 <div class="help-dd">Received Signal Strength Indicator — radio power in dBm. Less negative = stronger. −70 dBm: excellent &nbsp;·&nbsp; −120 dBm: very weak.</div>
@@ -186,7 +186,7 @@
                 <div class="help-dd">All packet arrivals this session — the same packet heard via two repeaters counts as two.</div>
 
                 <div class="help-dt">Message type</div>
-                <div class="help-dd">Packet type abbreviations: <b>AD</b> = Advert, <b>GT</b> = GroupText, <b>TR</b> = Traceroute, <b>RS</b> = Response, <b>RQ</b> = Request, <b>PN</b> = Ping. Red type codes (e.g. <span style="color:#c33">8F</span>) are unknown push codes — raw data is shown.</div>
+                <div class="help-dd">Packet type abbreviations: <b>AD</b> = Advert, <b>GT</b> = GroupText, <b>TR</b> = Traceroute, <b>RS</b> = Response, <b>RQ</b> = Request, <b>PN</b> = Ping.</div>
             </div>
 
             <div class="help-section-title">Interactions</div>
@@ -202,6 +202,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=9"></script>
+    <script type="module" src="app.js?v=10"></script>
 </body>
 </html>

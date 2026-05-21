@@ -587,11 +587,6 @@ header {
     line-height: 1.3;
 }
 
-.detail-raw {
-    font-size: 11px;
-    color: #444;
-}
-
 .detail-sig {
     font-size: 12px;
     color: #444;
@@ -704,10 +699,6 @@ header {
 }
 
 .battery-status.battery-low {
-    color: #c33;
-}
-
-.rx-type-raw {
     color: #c33;
 }
 

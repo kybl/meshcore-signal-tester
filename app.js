@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=9';
+import { Signal3DMap } from './signal3d.js?v=10';
 
 class MeshCoreMonitor {
     constructor() {
@@ -307,7 +307,7 @@ class MeshCoreMonitor {
             'ttl':
                 'Packets not heard within this window are removed from the table and charts. "Never" keeps all data for the whole session.',
             'repeater':
-                '"direct" = packet arrived with no intermediate node. Otherwise shows the ID of the last repeater that forwarded the packet.',
+                '"direct" = flood-routed packet received at first hop (no intermediate repeater). Otherwise shows the ID of the last repeater that forwarded the packet.',
             'rssi':
                 'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
             'snr':
@@ -621,9 +621,6 @@ class MeshCoreMonitor {
 
     handlePayload(payload) {
         const pushCode = payload[0];
-        // Debug: full BLE notification hex with push code + length (drop after diagnosis)
-        const dbgHex = this.bufferToHex(payload.buffer);
-        console.log(`[BLE-RX] push=0x${pushCode.toString(16).padStart(2, '0').toUpperCase()} len=${payload.length} ${dbgHex}`);
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
@@ -632,19 +629,16 @@ class MeshCoreMonitor {
             }
             return;
         }
-        // Known non-LoRa push codes — silently ignore
-        if (pushCode === 0x05 || pushCode === 0x80 || pushCode === 0x82 || pushCode === 0x83) return;
 
+        // Only the three known LoRa RX push codes carry the SNR/RSSI/path
+        // layout we trust. Everything else is silently ignored.
         let loraPacket;
-        let knownFormat = true;
         if (pushCode === 0x88) {
             loraPacket = payload.slice(3);
         } else if (pushCode === 0x84 || pushCode === 0x8e) {
             loraPacket = payload.slice(4);
         } else {
-            // Unknown code — try 3-byte header (same as 0x88); fall back to raw row if decode fails
-            loraPacket = payload.slice(3);
-            knownFormat = false;
+            return;
         }
         if (loraPacket.length === 0) return;
 
@@ -654,27 +648,10 @@ class MeshCoreMonitor {
         try {
             const rawHex = this.bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
-            if (packet.isValid) {
-                // For unknown push codes we don't know the byte layout — bytes 1-2 may
-                // not be SNR/RSSI at all, so pass null to avoid bogus values in the UI.
-                this.processPacket(packet, rawHex, knownFormat ? snr : null, knownFormat ? rssi : null);
-            } else if (!knownFormat) {
-                this._addRawEntry(payload, pushCode);
-            }
+            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
         } catch (e) {
-            if (!knownFormat) {
-                this._addRawEntry(payload, pushCode);
-            } else {
-                console.error('Decode error:', e);
-            }
+            console.error('Decode error:', e);
         }
-    }
-
-    _addRawEntry(payload, pushCode) {
-        const fullHex = this.bufferToHex(payload.buffer);
-        const hash = this.hashPayload(fullHex);
-        const label = '0x' + pushCode.toString(16).toUpperCase().padStart(2, '0');
-        this.addRxEntry(hash, 'direct', label, fullHex, null, null, {}, null);
     }
 
     bufferToHex(buffer) {
@@ -737,7 +714,13 @@ class MeshCoreMonitor {
         if (packet.path && packet.path.length > 0) {
             return this.formatNodeId(packet.path[packet.path.length - 1]);
         }
-        return 'direct';
+        // Empty path is only meaningful when the route accumulates hops.
+        // Flood-routed packets append the forwarder ID at every hop, so an
+        // empty path proves the packet was heard at first hop = direct RF.
+        // Other routing modes (unicast Direct, etc.) leave path empty by
+        // design and tell us nothing about coverage — drop them.
+        const routeName = Utils.getRouteTypeName(packet.routeType) || '';
+        return /Flood/i.test(routeName) ? 'direct' : null;
     }
 
     formatNodeId(nodeId) {
@@ -820,8 +803,8 @@ class MeshCoreMonitor {
                 this.allRepeaters.set(newKey, {
                     lastSeen: Math.max(oldData.lastSeen, newData.lastSeen),
                     count:    oldData.count + newData.count,
-                    maxSnr:   Math.max(oldData.maxSnr  ?? -999, newData.maxSnr  ?? -999),
-                    maxRssi:  Math.max(oldData.maxRssi ?? -999, newData.maxRssi ?? -999),
+                    maxSnr:   Math.max(oldData.maxSnr,  newData.maxSnr),
+                    maxRssi:  Math.max(oldData.maxRssi, newData.maxRssi),
                     lastSnr:  newer.lastSnr,
                     lastRssi: newer.lastRssi,
                 });
@@ -901,21 +884,18 @@ class MeshCoreMonitor {
             data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex });
         }
 
-        const hasSignal = snr !== null && rssi !== null;
         const existing = this.allRepeaters.get(canonicalKey);
         this.allRepeaters.set(canonicalKey, {
             lastSeen: now,
             count:    (existing?.count ?? 0) + 1,
-            maxSnr:   hasSignal ? Math.max(existing?.maxSnr  ?? -999, snr)  : (existing?.maxSnr  ?? null),
-            maxRssi:  hasSignal ? Math.max(existing?.maxRssi ?? -999, rssi) : (existing?.maxRssi ?? null),
-            lastSnr:  hasSignal ? snr  : (existing?.lastSnr  ?? null),
-            lastRssi: hasSignal ? rssi : (existing?.lastRssi ?? null),
+            maxSnr:   Math.max(existing?.maxSnr  ?? -Infinity, snr),
+            maxRssi:  Math.max(existing?.maxRssi ?? -Infinity, rssi),
+            lastSnr:  snr,
+            lastRssi: rssi,
         });
-        if (hasSignal) {
-            this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
-            const loc = this.signalMap?.currentLocation();
-            if (loc) this.signalMap.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now });
-        }
+        this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
+        const loc = this.signalMap?.currentLocation();
+        if (loc) this.signalMap.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now });
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
@@ -940,7 +920,7 @@ class MeshCoreMonitor {
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
         const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
-        if (hasSignal && matchesMsgFilter && matchesRepFilter) this.playRxSound(rssi);
+        if (matchesMsgFilter && matchesRepFilter) this.playRxSound(rssi);
         this.updateStats();
         this.emptyState?.classList.add('hidden');
     }
@@ -955,8 +935,6 @@ class MeshCoreMonitor {
 
     abbreviateType(type) {
         if (!type) return '?';
-        // Hex push codes like "0x8F" → show just the hex digits "8F"
-        if (/^0x[0-9A-Fa-f]+$/i.test(type)) return type.slice(2).toUpperCase();
         // Show only payload type (2 chars); route type is visible from repeater columns
         const payload = [
             [/GroupText|GROUP_TEXT/,     'GT'],
@@ -1081,14 +1059,12 @@ class MeshCoreMonitor {
             const sig = data.repeaters.get(r);
             return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr, hash, r) : '<td></td><td></td>';
         }).join('');
-        const isRawType = /^0x[0-9A-Fa-f]+$/i.test(data.type);
         const typeDisplay = this._useAbbreviatedTypes
             ? this.escHtml(this.abbreviateType(data.type))
             : this.escHtml(data.type || '?');
-        const typeClass = isRawType ? 'rx-type rx-type-raw' : 'rx-type';
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="${typeClass}" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
+                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
             </td>
             ${cells}
         </tr>`;
@@ -1195,49 +1171,29 @@ class MeshCoreMonitor {
         const hex = repEntry?.rawHex ?? data.rawHex;
 
         let header = '';
-        if (col) {
-            const sig = repEntry;
-            if (sig) {
-                const hasSignal = sig.rssi !== null && sig.snr !== null;
-                let sigLine = '';
-                if (hasSignal) {
-                    const rc = this.signalColor(sig.rssi, -70, -130);
-                    const sc = this.signalColor(sig.snr, 13, -10, 0);
-                    sigLine = ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${sig.rssi}</span>` +
-                        ` &nbsp; SNR <span style="color:${sc};font-weight:700">${sig.snr.toFixed(1)}</span>`;
-                }
-                const hexShort = hex.slice(0, 12);
-                header = `<div class="detail-sig">` +
-                    `<b>${this.escHtml(this.displayId(col))}</b>` +
-                    sigLine +
-                    ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
-                    `</div>`;
-            }
+        if (repEntry) {
+            const rc = this.signalColor(repEntry.rssi, -70, -130);
+            const sc = this.signalColor(repEntry.snr,  13, -10, 0);
+            const hexShort = hex.slice(0, 12);
+            header = `<div class="detail-sig">` +
+                `<b>${this.escHtml(this.displayId(col))}</b>` +
+                ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi}</span>` +
+                ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr.toFixed(1)}</span>` +
+                ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
+                `</div>`;
         }
 
-        const isRawCode = /^0x[0-9A-Fa-f]+$/i.test(data.type);
         const typeHtml = data.type
             ? `<div class="detail-type">${this.escHtml(data.type)}</div>`
             : '';
-        const unknownNote = isRawCode
-            ? `<div class="detail-raw" style="color:#c33;margin-bottom:6px">Unknown packet type — raw data</div>`
+        const jsonHtml = pkt
+            ? `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`
             : '';
 
-        let jsonHtml = '';
-        if (pkt) {
-            jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`;
-        } else if (isRawCode) {
-            jsonHtml = `<code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex" style="display:block;margin-top:2px">${this.escHtml(hex)}</code>`;
-        }
-
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${unknownNote}${header}${jsonHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr, hash, col) {
-        if (rssi === null || snr === null) {
-            return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:#bbb;text-align:right">—</td>` +
-                   `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:#bbb;text-align:right">—</td>`;
-        }
         const rc = this.signalColor(rssi, -70, -130);
         const sc = this.signalColor(snr,  13, -10, 0);
         return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssi}</td>` +
@@ -1637,17 +1593,17 @@ class MeshCoreMonitor {
             return dir * (va - vb);
         });
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
-            const mrc = d.maxRssi  !== null ? this.signalColor(d.maxRssi,  -70, -130) : '#bbb';
-            const lrc = d.lastRssi !== null ? this.signalColor(d.lastRssi, -70, -130) : '#bbb';
-            const msc = d.maxSnr   !== null ? this.signalColor(d.maxSnr,   13, -10, 0) : '#bbb';
-            const lsc = d.lastSnr  !== null ? this.signalColor(d.lastSnr,  13, -10, 0) : '#bbb';
+            const mrc = this.signalColor(d.maxRssi,  -70, -130);
+            const lrc = this.signalColor(d.lastRssi, -70, -130);
+            const msc = this.signalColor(d.maxSnr,   13, -10, 0);
+            const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
             return `<tr>
                 <td class="rl-id"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}</td>
                 <td class="rl-num">${d.count}</td>
-                <td class="rl-num" style="color:${mrc}">${d.maxRssi  !== null ? d.maxRssi          : '—'}</td>
-                <td class="rl-num" style="color:${lrc}">${d.lastRssi !== null ? d.lastRssi         : '—'}</td>
-                <td class="rl-num" style="color:${msc}">${d.maxSnr   !== null ? d.maxSnr.toFixed(1)  : '—'}</td>
-                <td class="rl-num" style="color:${lsc}">${d.lastSnr  !== null ? d.lastSnr.toFixed(1) : '—'}</td>
+                <td class="rl-num" style="color:${mrc}">${d.maxRssi}</td>
+                <td class="rl-num" style="color:${lrc}">${d.lastRssi}</td>
+                <td class="rl-num" style="color:${msc}">${d.maxSnr.toFixed(1)}</td>
+                <td class="rl-num" style="color:${lsc}">${d.lastSnr.toFixed(1)}</td>
                 <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
@@ -1820,7 +1776,7 @@ class MeshCoreMonitor {
             }
             const sigCols = cols.flatMap(c => {
                 const sig = data.repeaters.get(c);
-                return sig ? [sig.rssi != null ? String(sig.rssi) : '', sig.snr != null ? sig.snr.toFixed(1) : ''] : ['', ''];
+                return sig ? [String(sig.rssi), sig.snr.toFixed(1)] : ['', ''];
             });
             lines.push([
                 new Date(data.firstSeen).toISOString(),
