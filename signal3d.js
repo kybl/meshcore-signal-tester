@@ -21,10 +21,10 @@ const MAPYCOM_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
 const mapycomUrl = type => (z, x, y) =>
     `https://api.mapy.cz/v1/maptiles/${type}/256/${z}/${x}/${y}?apikey=${MAPYCOM_KEY}`;
 const TILE_SOURCES = {
-    'mapycom-basic':   { label: 'Mapy.com — Basic',                url: mapycomUrl('basic'),   attrib: '© Mapy.com' },
-    'mapycom-outdoor': { label: 'Mapy.com — Outdoor (turistická)', url: mapycomUrl('outdoor'), attrib: '© Mapy.com' },
-    'mapycom-winter':  { label: 'Mapy.com — Winter',               url: mapycomUrl('winter'),  attrib: '© Mapy.com' },
-    'mapycom-aerial':  { label: 'Mapy.com — Aerial (ortofoto)',    url: mapycomUrl('aerial'),  attrib: '© Mapy.com' },
+    'mapycom-basic':   { label: 'Mapy.com — Basic',             url: mapycomUrl('basic'),   attrib: '© Mapy.com' },
+    'mapycom-outdoor': { label: 'Mapy.com — Outdoor (hiking)',   url: mapycomUrl('outdoor'), attrib: '© Mapy.com' },
+    'mapycom-aerial':  { label: 'Mapy.com — Aerial (ortofoto)', url: mapycomUrl('aerial'),  attrib: '© Mapy.com' },
+    'mapycom-winter':  { label: 'Mapy.com — Winter',             url: mapycomUrl('winter'),  attrib: '© Mapy.com' },
     'osm':             {
         label:  'OpenStreetMap',
         url:    (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
