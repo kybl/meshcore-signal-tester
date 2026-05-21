@@ -4,57 +4,175 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
     <div class="container">
         <header>
-            <span class="app-title">MeshCore RX Monitor</span>
-            <div class="header-controls">
-                <span id="status" class="status disconnected">Disconnected</span>
-                <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
-                <label class="sound-toggle"><input type="checkbox" id="soundEnabled"> Sound</label>
-                <label class="ttl-control">
-                    <span class="ttl-label">TTL</span>
-                    <input type="range" id="ttlSlider" min="60" max="1800" step="60" value="300">
-                    <span id="ttlValue">5m</span>
-                </label>
+            <div class="header-row">
+                <span class="app-title">MeshCore RX Monitor</span>
+                <div class="header-controls">
+                    <span id="status" class="status disconnected">Disconnected</span>
+                    <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
+                    <label class="sound-toggle"><input type="checkbox" id="soundEnabled"> Sound<span class="help-icon" data-help="sound">?</span></label>
+                    <button class="help-btn" id="helpBtn" aria-label="Help / About">?</button>
+                </div>
+                <span id="batteryStatus" class="battery-status hidden"></span>
+                <div id="savedDevices" class="saved-devices hidden"></div>
             </div>
-            <div class="header-stats">
-                <span class="hstat"><span class="hstat-label">Active</span> <span id="activeHashes">0</span></span>
-                <span class="hstat"><span class="hstat-label">Total RX</span> <span id="totalRx">0</span></span>
-                <span class="hstat"><span class="hstat-label">Repeaters</span> <span id="totalRepeaters">0</span></span>
+            <div class="header-stats-row">
+                <div class="header-stats">
+                    <span class="hstat"><span class="hstat-label">Active</span> <span id="activeHashes">0</span><span class="help-icon" data-help="active">?</span></span>
+                    <span class="hstat"><span class="hstat-label">Total RX</span> <span id="totalRx">0</span><span class="help-icon" data-help="totalrx">?</span></span>
+                    <span class="hstat"><span class="hstat-label">Repeaters</span> <span id="totalRepeaters">0</span><span class="help-icon" data-help="repeaters-count">?</span></span>
+                    <span class="hstat"><span class="hstat-label">Rate</span> <span id="packetRate">—</span><span class="hstat-unit">/min</span><span class="help-icon" data-help="rate">?</span></span>
+                </div>
             </div>
-            <div id="savedDevices" class="saved-devices hidden"></div>
         </header>
 
         <main>
-            <div class="repeater-log-wrap">
-                <div class="section-title">Seen repeaters</div>
-                <div class="repeater-log-scroll">
-                    <table class="repeater-log-table">
-                        <thead><tr><th>Repeater</th><th>RX</th><th>Max RSSI</th><th>Max SNR</th><th>Last seen</th></tr></thead>
-                        <tbody id="repeaterLogBody"></tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div id="msgTableWrap" class="msg-table-wrap">
-                <div class="section-title">Messages</div>
-                <div class="msg-table-scroll">
-                    <table class="msg-table">
-                        <thead id="msgTableHead"></thead>
-                        <tbody id="msgTableBody"></tbody>
-                    </table>
-                </div>
-            </div>
-
             <div id="emptyState" class="empty-state">
                 <p>Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.</p>
+            </div>
+
+            <div class="section-wrap" id="repeaterWrap">
+                <div class="section-header">
+                    <span class="section-title">Seen repeaters</span>
+                    <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="repeaterBody">
+                    <div class="repeater-log-scroll">
+                        <table class="repeater-log-table">
+                            <thead><tr>
+                                <th data-sort-key="id">Repeater<span class="help-icon" data-help="repeater">?</span></th>
+                                <th data-sort-key="count">RX</th>
+                                <th data-sort-key="maxRssi">Max RSSI<span class="help-icon" data-help="rssi">?</span></th>
+                                <th data-sort-key="lastRssi">Last RSSI</th>
+                                <th data-sort-key="maxSnr">Max SNR<span class="help-icon" data-help="snr">?</span></th>
+                                <th data-sort-key="lastSnr">Last SNR</th>
+                                <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
+                            </tr></thead>
+                            <tbody id="repeaterLogBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <label class="ttl-control">
+                    <span class="ttl-label">Auto-remove after</span><span class="help-icon" data-help="ttl">?</span>
+                    <select id="ttlSelect">
+                        <option value="30">30 seconds</option>
+                        <option value="60">1 minute</option>
+                        <option value="120">2 minutes</option>
+                        <option value="300" selected>5 minutes</option>
+                        <option value="600">10 minutes</option>
+                        <option value="900">15 minutes</option>
+                        <option value="1800">30 minutes</option>
+                        <option value="3600">1 hour</option>
+                        <option value="Infinity">Never</option>
+                    </select>
+                    <span class="ttl-sep">·</span>
+                    <span class="ttl-label">Repeaters</span>
+                    <input type="text" id="repFilter" class="rep-filter-input" placeholder="all" autocomplete="off" spellcheck="false">
+                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
+                </label>
+            </div>
+
+            <div class="section-wrap hidden" id="rssiChartWrap">
+                <div class="section-header">
+                    <span class="section-title">Repeaters RSSI history</span>
+                    <button class="collapse-btn" data-target="rssiChartBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="rssiChartBody">
+                    <div class="chart-box">
+                        <svg id="rssiChart" class="rssi-chart"></svg>
+                        <div id="rssiChartLegend" class="chart-legend"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-wrap hidden" id="snrChartWrap">
+                <div class="section-header">
+                    <span class="section-title">Repeaters SNR history</span>
+                    <button class="collapse-btn" data-target="snrChartBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="snrChartBody">
+                    <div class="chart-box">
+                        <svg id="snrChart" class="rssi-chart"></svg>
+                        <div id="snrChartLegend" class="chart-legend"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-wrap" id="msgTableWrap">
+                <div class="section-header">
+                    <span class="section-title">Messages</span>
+                    <button class="collapse-btn" data-target="msgScrollBody" title="Toggle section">▾</button>
+                </div>
+                <div class="msg-filter-bar hidden" id="msgFilterBar">
+                    <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
+                    <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
+                    <span id="msgFilterCount" class="msg-filter-count hidden"></span>
+                    <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
+                </div>
+                <div class="section-body" id="msgScrollBody">
+                    <div class="msg-table-scroll">
+                        <table class="msg-table">
+                            <thead id="msgTableHead"></thead>
+                            <tbody id="msgTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </main>
     </div>
 
-    <script type="module" src="app.js"></script>
+    <div id="chartTooltip" class="chart-tooltip"></div>
+    <div id="helpTip" class="chart-tooltip help-tip-float"></div>
+
+    <div id="helpModal" class="help-modal-overlay hidden">
+        <div class="help-modal">
+            <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
+            <div class="help-modal-title">MeshCore RX Monitor</div>
+            <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality.</p>
+
+            <div class="help-section-title">Getting started</div>
+            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons.</p>
+
+            <div class="help-section-title">Key concepts</div>
+            <div class="help-dl">
+                <div class="help-dt">Repeater</div>
+                <div class="help-dd"><b>direct</b> means the packet arrived with no intermediate node. Otherwise the ID shown is the last mesh node that forwarded the packet toward your device.</div>
+
+                <div class="help-dt">RSSI</div>
+                <div class="help-dd">Received Signal Strength Indicator — radio power in dBm. Less negative = stronger. −70 dBm: excellent &nbsp;·&nbsp; −120 dBm: very weak.</div>
+
+                <div class="help-dt">SNR</div>
+                <div class="help-dd">Signal-to-Noise Ratio in dB. Positive = signal is above the noise floor. LoRa can decode even at negative SNR (down to about −20 dB).</div>
+
+                <div class="help-dt">Noise floor</div>
+                <div class="help-dd">Background RF noise level, estimated as RSSI − SNR. Shown as the shaded area on the RSSI chart.</div>
+
+                <div class="help-dt">Active</div>
+                <div class="help-dd">Number of unique packets in the current time window (within the auto-remove TTL).</div>
+
+                <div class="help-dt">Total RX</div>
+                <div class="help-dd">All packet arrivals this session — the same packet heard via two repeaters counts as two.</div>
+
+                <div class="help-dt">Message type</div>
+                <div class="help-dd">Packet type abbreviations: <b>AD</b> = Advert, <b>GT</b> = GroupText, <b>TR</b> = Traceroute, <b>RS</b> = Response, <b>RQ</b> = Request, <b>PN</b> = Ping. Red type codes (e.g. <span style="color:#c33">8F</span>) are unknown push codes — raw data is shown.</div>
+            </div>
+
+            <div class="help-section-title">Interactions</div>
+            <ul class="help-list">
+                <li>Click an <b>RSSI or SNR cell</b> in Messages → see full packet detail and raw hex</li>
+                <li>Click a <b>chart dot or legend label</b> → highlight that repeater across both charts; click again or elsewhere to deselect</li>
+                <li>Click <b>column headers</b> in Seen Repeaters → sort the table (click again to reverse)</li>
+                <li>Click <b>section titles</b> → collapse / expand that section</li>
+                <li>Click the <b>hex string</b> in a packet detail → copies it to clipboard</li>
+                <li>The <b>Sound</b> checkbox plays a beep on each new packet; pitch reflects signal strength</li>
+            </ul>
+        </div>
+    </div>
+
+    <script type="module" src="app.js?v=2"></script>
 </body>
 </html>
