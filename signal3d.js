@@ -18,21 +18,25 @@ const TILE_PX        = 256;
 // Mapy.com tile API: path includes tile size (256) before z/x/y.
 // Reference: https://developer.mapy.com/rest-api/maptiles/
 const MAPYCOM_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
+const mapycomUrl = type => (z, x, y) =>
+    `https://api.mapy.cz/v1/maptiles/${type}/256/${z}/${x}/${y}?apikey=${MAPYCOM_KEY}`;
 const TILE_SOURCES = {
-    mapycom: {
-        label: 'Mapy.com',
-        url: (z, x, y) =>
-            `https://api.mapy.cz/v1/maptiles/basic/256/${z}/${x}/${y}?apikey=${MAPYCOM_KEY}`,
-        attrib: '© Mapy.com',
-    },
-    osm: {
-        label: 'OpenStreetMap',
-        url: (z, x, y) =>
-            `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+    'mapycom-basic':   { label: 'Mapy.com — Basic',                url: mapycomUrl('basic'),   attrib: '© Mapy.com' },
+    'mapycom-outdoor': { label: 'Mapy.com — Outdoor (turistická)', url: mapycomUrl('outdoor'), attrib: '© Mapy.com' },
+    'mapycom-winter':  { label: 'Mapy.com — Winter',               url: mapycomUrl('winter'),  attrib: '© Mapy.com' },
+    'mapycom-aerial':  { label: 'Mapy.com — Aerial (ortofoto)',    url: mapycomUrl('aerial'),  attrib: '© Mapy.com' },
+    'osm':             {
+        label:  'OpenStreetMap',
+        url:    (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
         attrib: '© OpenStreetMap contributors',
     },
+    'opentopo':        {
+        label:  'OpenTopoMap',
+        url:    (z, x, y) => `https://tile.opentopomap.org/${z}/${x}/${y}.png`,
+        attrib: '© OpenTopoMap (CC-BY-SA), © OpenStreetMap contributors',
+    },
 };
-const DEFAULT_SOURCE = 'mapycom';
+const DEFAULT_SOURCE = 'mapycom-basic';
 
 function lonLatToTile(lon, lat, zoom) {
     const n = Math.pow(2, zoom);

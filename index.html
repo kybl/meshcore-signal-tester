@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=12">
+    <link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
     <div class="container">
@@ -117,8 +117,16 @@
                         <label class="map-source-label">
                             Map:
                             <select id="mapSourceSelect" class="map-source-select">
-                                <option value="mapycom">Mapy.com</option>
-                                <option value="osm">OpenStreetMap</option>
+                                <optgroup label="Mapy.com">
+                                    <option value="mapycom-basic">Basic</option>
+                                    <option value="mapycom-outdoor">Outdoor (turistická)</option>
+                                    <option value="mapycom-winter">Winter</option>
+                                    <option value="mapycom-aerial">Aerial (ortofoto)</option>
+                                </optgroup>
+                                <optgroup label="OpenStreetMap">
+                                    <option value="osm">Standard</option>
+                                    <option value="opentopo">OpenTopoMap</option>
+                                </optgroup>
                             </select>
                         </label>
                         <span class="signal-map-hint">Drag to rotate · scroll / pinch to zoom</span>
@@ -182,13 +190,16 @@
                 <div class="help-dd">Background RF noise level, estimated as RSSI − SNR. Shown as the shaded area on the RSSI chart.</div>
 
                 <div class="help-dt">Active</div>
-                <div class="help-dd">Number of unique packets in the current time window (within the auto-remove TTL).</div>
+                <div class="help-dd">Number of unique packets in the current time window (within the auto-remove TTL — applies to the Messages table, charts, and 3D map).</div>
 
                 <div class="help-dt">Total RX</div>
                 <div class="help-dd">All packet arrivals this session — the same packet heard via two repeaters counts as two.</div>
 
                 <div class="help-dt">Message type</div>
                 <div class="help-dd">Packet type abbreviations: <b>AD</b> = Advert, <b>GT</b> = GroupText, <b>TR</b> = Traceroute, <b>RS</b> = Response, <b>RQ</b> = Request, <b>PN</b> = Ping.</div>
+
+                <div class="help-dt">Column order in Messages</div>
+                <div class="help-dd">Repeater columns are sorted by: packets in the last 5 min (desc), then last RSSI (best first), then last SNR, then total RX count, then alphabetically.</div>
             </div>
 
             <div class="help-section-title">Interactions</div>
@@ -199,11 +210,11 @@
                 <li>Click <b>section titles</b> → collapse / expand that section</li>
                 <li>Click the <b>hex string</b> in a packet detail → copies it to clipboard</li>
                 <li>The <b>Sound</b> checkbox plays a beep on each new packet; pitch reflects signal strength</li>
-                <li>In <b>Signal 3D map</b>, allow location and drag to rotate the scene — each bead's height reflects RSSI at the spot where your browser received it (uses OpenStreetMap tiles)</li>
+                <li>In <b>Signal 3D map</b>, allow location, then drag to rotate / scroll to zoom. Each bead sits at your browser's GPS position with height proportional to RSSI. Click a bead to highlight that repeater (also synced to the RSSI / SNR charts). Choose between Mapy.com (basic, outdoor, winter, aerial / ortofoto) and OpenStreetMap (standard, OpenTopoMap) as the floor tiles.</li>
             </ul>
         </div>
     </div>
 
-    <script type="module" src="app.js?v=12"></script>
+    <script type="module" src="app.js?v=13"></script>
 </body>
 </html>

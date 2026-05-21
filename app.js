@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=12';
+import { Signal3DMap } from './signal3d.js?v=13';
 
 class MeshCoreMonitor {
     constructor() {
@@ -269,7 +269,11 @@ class MeshCoreMonitor {
 
         const sourceSel = document.getElementById('mapSourceSelect');
         const savedSource = (() => {
-            try { return localStorage.getItem('mapSource') || ''; } catch { return ''; }
+            try {
+                const v = localStorage.getItem('mapSource') || '';
+                // Migrate the original single-key 'mapycom' value
+                return v === 'mapycom' ? 'mapycom-basic' : v;
+            } catch { return ''; }
         })();
         if (sourceSel && savedSource) sourceSel.value = savedSource;
 
@@ -297,7 +301,7 @@ class MeshCoreMonitor {
     _initHelpSystem() {
         const HELP = {
             'active':
-                'Unique packets currently shown — within the auto-remove time window. Older packets are removed automatically.',
+                'Unique packets currently visible — within the auto-remove time window. Older packets disappear automatically.',
             'totalrx':
                 'All packet arrivals this session. The same packet heard via two different repeaters counts as two.',
             'repeaters-count':
@@ -305,9 +309,9 @@ class MeshCoreMonitor {
             'sound':
                 'Plays a short beep on each new incoming packet. Pitch varies with RSSI — stronger signal → higher pitch.',
             'ttl':
-                'Packets not heard within this window are removed from the table and charts. "Never" keeps all data for the whole session.',
+                'Packets not heard within this window are removed from the Messages table, charts, and the 3D map. "Never" keeps everything for the whole session.',
             'repeater':
-                '"direct" = flood-routed packet received at first hop (no intermediate repeater). Otherwise shows the ID of the last repeater that forwarded the packet.',
+                '"direct" = flood-routed packet received at first hop (no intermediate repeater). Otherwise shows the ID of the last repeater that forwarded the packet. Columns are sorted by recent activity (last 5 min), then last RSSI, last SNR, total RX, and finally alphabetically.',
             'rssi':
                 'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
             'snr':
