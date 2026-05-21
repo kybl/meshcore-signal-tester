@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=4';
+import { Signal3DMap } from './signal3d.js?v=5';
 
 class MeshCoreMonitor {
     constructor() {
@@ -266,13 +266,26 @@ class MeshCoreMonitor {
     _initSignalMap() {
         const canvas = document.getElementById('signalMapCanvas');
         if (!canvas) return;
+
+        const sourceSel = document.getElementById('mapSourceSelect');
+        const savedSource = (() => {
+            try { return localStorage.getItem('mapSource') || ''; } catch { return ''; }
+        })();
+        if (sourceSel && savedSource) sourceSel.value = savedSource;
+
         this.signalMap = new Signal3DMap({
             canvas,
-            statusEl:  document.getElementById('locationStatus'),
-            btnEl:     document.getElementById('enableLocationBtn'),
-            emptyEl:   document.getElementById('signalMapEmpty'),
-            colorFor:  col => this.getRepeaterColor(col),
-            displayId: col => this.displayId(col),
+            statusEl:      document.getElementById('locationStatus'),
+            btnEl:         document.getElementById('enableLocationBtn'),
+            emptyEl:       document.getElementById('signalMapEmpty'),
+            colorFor:      col => this.getRepeaterColor(col),
+            displayId:     col => this.displayId(col),
+            initialSource: sourceSel?.value,
+        });
+
+        sourceSel?.addEventListener('change', () => {
+            this.signalMap.setMapSource(sourceSel.value);
+            try { localStorage.setItem('mapSource', sourceSel.value); } catch {}
         });
     }
 

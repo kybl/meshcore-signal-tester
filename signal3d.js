@@ -2,7 +2,7 @@
 // each captured packet is a colored bead floating above its GPS location at a
 // height proportional to RSSI.
 //
-// Prefers Mapy.cz tiles (API key required); falls back to OSM if they fail.
+// Two tile sources: Mapy.com (default, requires API key) and OpenStreetMap.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
@@ -15,12 +15,24 @@ const RSSI_BAD       = -130;
 const MAX_TILES_AXIS = 4;
 const TILE_PX        = 256;
 
-// Tile URL builders — Mapy.cz preferred, OSM fallback
-const MAPYCZ_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
-const tileUrlMapyCz = (z, x, y) =>
-    `https://api.mapy.cz/v1/maptiles/basic/${z}/${x}/${y}?apikey=${MAPYCZ_KEY}`;
-const tileUrlOsm    = (z, x, y) =>
-    `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+// Mapy.com tile API: path includes tile size (256) before z/x/y.
+// Reference: https://developer.mapy.com/rest-api/maptiles/
+const MAPYCOM_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
+const TILE_SOURCES = {
+    mapycom: {
+        label: 'Mapy.com',
+        url: (z, x, y) =>
+            `https://api.mapy.cz/v1/maptiles/basic/256/${z}/${x}/${y}?apikey=${MAPYCOM_KEY}`,
+        attrib: '© Mapy.com',
+    },
+    osm: {
+        label: 'OpenStreetMap',
+        url: (z, x, y) =>
+            `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+        attrib: '© OpenStreetMap contributors',
+    },
+};
+const DEFAULT_SOURCE = 'mapycom';
 
 function lonLatToTile(lon, lat, zoom) {
     const n = Math.pow(2, zoom);
@@ -28,23 +40,6 @@ function lonLatToTile(lon, lat, zoom) {
     const latRad = lat * Math.PI / 180;
     const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
     return { x, y };
-}
-
-// Returns true if at least one test tile loads successfully from Mapy.cz
-async function probeMapyCz(zoom, x, y) {
-    return new Promise(res => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload  = () => res(true);
-        img.onerror = () => res(false);
-        // Short timeout so probe doesn't stall map rendering
-        const t = setTimeout(() => { img.src = ''; res(false); }, 4000);
-        img.onload = img.onerror = function (ok) {
-            clearTimeout(t);
-            res(this === img && img.naturalWidth > 0);
-        };
-        img.src = tileUrlMapyCz(zoom, x, y);
-    });
 }
 
 export class Signal3DMap {
@@ -66,8 +61,9 @@ export class Signal3DMap {
         this.lastBboxKey = null;
         this._cameraFit  = false;
         this._mapBusy    = false;
-        this._useMapyCz  = null;   // null = unknown, true/false after probe
         this.filterFn    = null;   // col => boolean, or null (show all)
+        this.mapSource   = (opts.initialSource && TILE_SOURCES[opts.initialSource])
+            ? opts.initialSource : DEFAULT_SOURCE;
 
         this._initScene();
         this._bindButton();
@@ -207,6 +203,20 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
+    // ---- Map source ----
+
+    setMapSource(source) {
+        if (!TILE_SOURCES[source] || source === this.mapSource) return;
+        this.mapSource = source;
+        // Force a tile reload on next update
+        this.lastBboxKey = null;
+        this._scheduleMapUpdate();
+    }
+
+    availableSources() {
+        return Object.entries(TILE_SOURCES).map(([id, s]) => ({ id, label: s.label }));
+    }
+
     // ---- Packet ingestion ----
 
     addPacket(opts) {
@@ -233,16 +243,6 @@ export class Signal3DMap {
             if (l.lon > maxLon) maxLon = l.lon;
         }
         return { minLat, maxLat, minLon, maxLon };
-    }
-
-    async _tileUrlFor(z, x, y) {
-        // Probe Mapy.cz once; remember result for the whole session
-        if (this._useMapyCz === null) {
-            this._useMapyCz = await probeMapyCz(z, x, y);
-        }
-        return this._useMapyCz
-            ? tileUrlMapyCz(z, x, y)
-            : tileUrlOsm(z, x, y);
     }
 
     async _updateMap() {
@@ -272,7 +272,8 @@ export class Signal3DMap {
         const nx = x1 - x0 + 1;
         const ny = y1 - y0 + 1;
 
-        const key = `${zoom}/${x0}/${y0}/${x1}/${y1}`;
+        const sourceId = this.mapSource;
+        const key = `${sourceId}/${zoom}/${x0}/${y0}/${x1}/${y1}`;
         if (key === this.lastBboxKey) {
             this._repositionAll();
             this._updateUserMarker();
@@ -288,31 +289,22 @@ export class Signal3DMap {
             ctx.fillStyle = '#dfdfdf';
             ctx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
 
-            // Determine tile source (Mapy.cz or OSM) — probe uses corner tile
-            if (this._useMapyCz === null) {
-                this._useMapyCz = await probeMapyCz(zoom, x0, y0);
-            }
-            const urlFn = this._useMapyCz ? tileUrlMapyCz : tileUrlOsm;
-
+            const src = TILE_SOURCES[sourceId];
             const tasks = [];
             for (let dx = 0; dx < nx; dx++) {
                 for (let dy = 0; dy < ny; dy++) {
                     tasks.push(new Promise(res => {
                         const img = new Image();
                         img.crossOrigin = 'anonymous';
-                        img.referrerPolicy = 'no-referrer';
                         img.onload  = () => { ctx.drawImage(img, dx * TILE_PX, dy * TILE_PX); res(); };
                         img.onerror = () => res();
-                        img.src = urlFn(zoom, x0 + dx, y0 + dy);
+                        img.src = src.url(zoom, x0 + dx, y0 + dy);
                     }));
                 }
             }
             await Promise.all(tasks);
 
-            // Attribution strip (required by OSM usage policy; Mapy.cz also requires it)
-            const attrib = this._useMapyCz
-                ? '© Mapy.cz a přispěvatelé'
-                : '© OpenStreetMap contributors';
+            const attrib = src.attrib;
             ctx.font = '11px system-ui, sans-serif';
             const tw = ctx.measureText(attrib).width;
             ctx.fillStyle = 'rgba(255,255,255,0.75)';

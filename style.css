@@ -1067,6 +1067,28 @@ header {
     font-size: 11px;
 }
 
+.map-source-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #888;
+}
+
+.map-source-select {
+    border: 1px solid #ddd;
+    background: #fff;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    color: #444;
+    cursor: pointer;
+}
+
+.map-source-select:hover {
+    border-color: #bbb;
+}
+
 .signal-map-container {
     position: relative;
     width: 100%;
