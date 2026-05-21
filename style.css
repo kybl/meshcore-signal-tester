@@ -80,7 +80,7 @@ header {
     margin-left: 1px;
 }
 
-.hstat span:not(.hstat-label) {
+.hstat span:not(.hstat-label):not(.help-icon) {
     font-weight: 700;
     color: #333;
 }
@@ -633,7 +633,9 @@ header {
     border-radius: 4px;
     background: rgba(255,255,255,0.92);
     color: #333;
-    width: 140px;
+    flex: 1 1 80px;
+    min-width: 0;
+    max-width: 140px;
     outline: none;
     font-family: inherit;
     transition: border-color 0.15s, background 0.15s;
@@ -753,12 +755,12 @@ header {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 13px;
-    height: 13px;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
-    background: #e8e8f8;
-    color: #999;
-    font-size: 8px;
+    background: rgba(102, 126, 234, 0.13);
+    color: #667eea;
+    font-size: 9px;
     font-weight: 700;
     cursor: pointer;
     margin-left: 3px;
@@ -768,6 +770,7 @@ header {
     transition: all 0.15s;
     position: relative;
     top: -1px;
+    border: 1px solid rgba(102, 126, 234, 0.22);
 }
 
 .help-icon:hover {
@@ -793,13 +796,20 @@ header {
 /* Help modal */
 .help-modal-overlay {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
     z-index: 2000;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     padding: 16px;
+    overflow-y: auto;
+    box-sizing: border-box;
 }
 
 .help-modal-overlay.hidden {
@@ -811,14 +821,14 @@ header {
     border-radius: 12px;
     max-width: 520px;
     width: 100%;
-    max-height: 88vh;
-    overflow-y: auto;
-    padding: 22px 26px 26px;
+    padding: 22px 20px 26px;
     position: relative;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
     font-size: 13px;
     line-height: 1.6;
     color: #333;
+    margin: auto;
+    align-self: center;
 }
 
 .help-modal-close {

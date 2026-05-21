@@ -311,13 +311,24 @@ class MeshCoreMonitor {
         });
 
         const helpModal = document.getElementById('helpModal');
+        const openHelp = () => {
+            helpModal?.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        };
+        const closeHelp = () => {
+            helpModal?.classList.add('hidden');
+            document.body.style.overflow = '';
+        };
         document.getElementById('helpBtn')?.addEventListener('click', e => {
             e.stopPropagation();
-            helpModal?.classList.remove('hidden');
+            openHelp();
         });
-        document.getElementById('helpModalClose')?.addEventListener('click', () => helpModal?.classList.add('hidden'));
+        document.getElementById('helpModalClose')?.addEventListener('click', e => {
+            e.stopPropagation();
+            closeHelp();
+        });
         helpModal?.addEventListener('click', e => {
-            if (e.target === helpModal) helpModal.classList.add('hidden');
+            if (e.target === helpModal) closeHelp();
         });
     }
 
