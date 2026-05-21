@@ -1057,13 +1057,13 @@ header {
 }
 
 .location-status {
-    color: #aaa;
+    color: #c0c0c0;
     font-weight: 400;
 }
 
 .signal-map-hint {
     margin-left: auto;
-    color: #999;
+    color: #c0c0c0;
     font-size: 11px;
 }
 
