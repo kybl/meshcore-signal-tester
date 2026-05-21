@@ -789,7 +789,8 @@ header {
    force a contrasting white-on-translucent variant. */
 .hstat .help-icon,
 .sound-toggle .help-icon,
-.ttl-control .help-icon {
+.ttl-control .help-icon,
+.rep-filter-label .help-icon {
     background: rgba(255, 255, 255, 0.18);
     color: rgba(255, 255, 255, 0.85);
     border-color: rgba(255, 255, 255, 0.28);
@@ -798,9 +799,11 @@ header {
 .hstat .help-icon:hover,
 .sound-toggle .help-icon:hover,
 .ttl-control .help-icon:hover,
+.rep-filter-label .help-icon:hover,
 .hstat .help-icon.active,
 .sound-toggle .help-icon.active,
-.ttl-control .help-icon.active {
+.ttl-control .help-icon.active,
+.rep-filter-label .help-icon.active {
     background: rgba(255, 255, 255, 0.32);
     color: white;
     border-color: rgba(255, 255, 255, 0.45);

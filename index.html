@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=15">
+    <link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
     <div class="container">
@@ -37,7 +37,7 @@
 
             <div class="section-wrap" id="repeaterWrap">
                 <div class="rep-filter-bar" id="repFilterBar">
-                    <label class="rep-filter-label" for="repFilter">Filter repeaters</label>
+                    <label class="rep-filter-label" for="repFilter">Filter repeaters<span class="help-icon" data-help="rep-filter">?</span></label>
                     <input type="text" id="repFilter" class="rep-filter-input" autocomplete="off" spellcheck="false">
                     <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
                     <span id="repFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
@@ -70,10 +70,10 @@
                         <option value="120">2 minutes</option>
                         <option value="300">5 minutes</option>
                         <option value="600">10 minutes</option>
-                        <option value="900">15 minutes</option>
+                        <option value="900" selected>15 minutes</option>
                         <option value="1800">30 minutes</option>
                         <option value="3600">1 hour</option>
-                        <option value="Infinity" selected>Never</option>
+                        <option value="Infinity">Never</option>
                     </select>
                     <span class="help-icon" data-help="ttl">?</span>
                 </label>
@@ -111,30 +111,32 @@
                     <button class="collapse-btn" data-target="signalMapBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="signalMapBody">
-                    <div class="signal-map-controls">
-                        <button id="enableLocationBtn" class="btn-primary">Enable location</button>
-                        <span id="locationStatus" class="location-status">Location not enabled — packets won't appear on the 3D map until you allow it.</span>
-                        <label class="map-source-label">
-                            Map:
-                            <select id="mapSourceSelect" class="map-source-select">
-                                <optgroup label="Mapy.com">
-                                    <option value="mapycom-basic">Basic</option>
-                                    <option value="mapycom-outdoor">Outdoor (hiking)</option>
-                                    <option value="mapycom-aerial">Aerial (ortofoto)</option>
-                                    <option value="mapycom-winter">Winter</option>
-                                </optgroup>
-                                <optgroup label="OpenStreetMap">
-                                    <option value="osm">Standard</option>
-                                    <option value="opentopo">OpenTopoMap</option>
-                                </optgroup>
-                            </select>
-                        </label>
-                        <span class="signal-map-hint">Drag to rotate · scroll / pinch to zoom</span>
-                    </div>
-                    <div class="signal-map-container">
-                        <canvas id="signalMapCanvas" class="signal-map-canvas"></canvas>
-                        <div id="signalMapEmpty" class="signal-map-empty">Allow location and capture some packets to populate the 3D map.</div>
-                        <div id="signalMapInfo" class="signal-map-info hidden"></div>
+                    <div class="signal-map-inner">
+                        <div class="signal-map-controls">
+                            <button id="enableLocationBtn" class="btn-primary">Enable location</button>
+                            <span id="locationStatus" class="location-status">Location not enabled — packets won't appear on the 3D map until you allow it.</span>
+                            <label class="map-source-label">
+                                Map:
+                                <select id="mapSourceSelect" class="map-source-select">
+                                    <optgroup label="Mapy.com">
+                                        <option value="mapycom-basic">Basic</option>
+                                        <option value="mapycom-outdoor">Outdoor (hiking)</option>
+                                        <option value="mapycom-aerial">Aerial (ortofoto)</option>
+                                        <option value="mapycom-winter">Winter</option>
+                                    </optgroup>
+                                    <optgroup label="OpenStreetMap">
+                                        <option value="osm">Standard</option>
+                                        <option value="opentopo">OpenTopoMap</option>
+                                    </optgroup>
+                                </select>
+                            </label>
+                            <span class="signal-map-hint">Drag to rotate · scroll / pinch to zoom</span>
+                        </div>
+                        <div class="signal-map-container">
+                            <canvas id="signalMapCanvas" class="signal-map-canvas"></canvas>
+                            <div id="signalMapEmpty" class="signal-map-empty">Allow location and capture some packets to populate the 3D map.</div>
+                            <div id="signalMapInfo" class="signal-map-info hidden"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -144,19 +146,21 @@
                     <span class="section-title">Received packets</span>
                     <button class="collapse-btn" data-target="msgScrollBody" title="Toggle section">▾</button>
                 </div>
-                <div class="msg-filter-bar hidden" id="msgFilterBar">
-                    <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
-                    <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
-                    <span id="msgFilterCount" class="msg-filter-count hidden"></span>
-                    <span id="msgFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
-                    <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
-                </div>
                 <div class="section-body" id="msgScrollBody">
-                    <div class="msg-table-scroll">
-                        <table class="msg-table">
-                            <thead id="msgTableHead"></thead>
-                            <tbody id="msgTableBody"></tbody>
-                        </table>
+                    <div class="msg-section-inner">
+                        <div class="msg-filter-bar hidden" id="msgFilterBar">
+                            <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
+                            <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
+                            <span id="msgFilterCount" class="msg-filter-count hidden"></span>
+                            <span id="msgFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
+                            <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
+                        </div>
+                        <div class="msg-table-scroll">
+                            <table class="msg-table">
+                                <thead id="msgTableHead"></thead>
+                                <tbody id="msgTableBody"></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -215,6 +219,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=15"></script>
+    <script type="module" src="app.js?v=16"></script>
 </body>
 </html>

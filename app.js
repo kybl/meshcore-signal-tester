@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=15';
+import { Signal3DMap } from './signal3d.js?v=16';
 
 class MeshCoreMonitor {
     constructor() {
@@ -10,7 +10,7 @@ class MeshCoreMonitor {
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
-        this.HASH_LIFETIME = Infinity;
+        this.HASH_LIFETIME = 15 * 60 * 1000;
         this.cleanupInterval = null;
         this._connectionMonitor = null;
         this._monitorDelay = null;
@@ -318,6 +318,8 @@ class MeshCoreMonitor {
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
+            'rep-filter':
+                'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "5E9F1234" and vice versa. Affects the table, charts, Received packets, and 3D map.',
         };
 
         const tipEl = document.getElementById('helpTip');
