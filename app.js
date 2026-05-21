@@ -9,7 +9,7 @@ class MeshCoreMonitor {
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
-        this.HASH_LIFETIME = 300000;
+        this.HASH_LIFETIME = Infinity;
         this.cleanupInterval = null;
         this._connectionMonitor = null;
         this._monitorDelay = null;
@@ -37,6 +37,8 @@ class MeshCoreMonitor {
         this.initUI();
         this.startCleanupTimer();
         this.renderSavedDevices();
+        // Render empty chart axes immediately so the section is visible from page load
+        requestAnimationFrame(() => this.scheduleChartRender());
     }
 
     initUI() {
@@ -49,7 +51,7 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
-        setInterval(() => { if (this.chartPoints.length) this.scheduleChartRender(); }, 2000);
+        setInterval(() => this.scheduleChartRender(), 2000);
 
         // Collapsible sections — clicking anywhere in the header row toggles
         document.querySelectorAll('.section-header').forEach(header => {
@@ -586,6 +588,9 @@ class MeshCoreMonitor {
 
     handlePayload(payload) {
         const pushCode = payload[0];
+        // Debug: full BLE notification hex with push code + length (drop after diagnosis)
+        const dbgHex = this.bufferToHex(payload.buffer);
+        console.log(`[BLE-RX] push=0x${pushCode.toString(16).padStart(2, '0').toUpperCase()} len=${payload.length} ${dbgHex}`);
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
@@ -697,7 +702,11 @@ class MeshCoreMonitor {
 
     extractRepeater(packet) {
         if (packet.path && packet.path.length > 0) {
-            return this.formatNodeId(packet.path[packet.path.length - 1]);
+            const last = packet.path[packet.path.length - 1];
+            // MeshCore reserves all-zero and all-FF as prefixes — never a real node ID
+            const hex = (typeof last === 'string' ? last : last.toString(16)).toLowerCase();
+            if (/^0+$/.test(hex) || /^f+$/.test(hex)) return null;
+            return this.formatNodeId(last);
         }
         return 'direct';
     }
@@ -1298,18 +1307,27 @@ class MeshCoreMonitor {
         this.scheduleChartRender();
     }
 
+    _xLabelStepMs(rangeMs, chartWidthPx) {
+        // ~50 px per label for readability
+        const targetSteps = Math.max(2, Math.floor(chartWidthPx / 50));
+        const targetStep = rangeMs / targetSteps;
+        const steps = [
+            15000, 30000, 60000, 2*60000, 5*60000, 10*60000, 15*60000, 30*60000,
+            3600000, 2*3600000, 3*3600000, 6*3600000, 12*3600000, 24*3600000,
+        ];
+        for (const s of steps) if (s >= targetStep) return s;
+        return steps[steps.length - 1];
+    }
+
     renderChart(type) {
         const wrap   = type === 'rssi' ? this.rssiChartWrap   : this.snrChartWrap;
         const svg    = type === 'rssi' ? this.rssiChartSvg    : this.snrChartSvg;
         const legend = type === 'rssi' ? this.rssiChartLegend : this.snrChartLegend;
         if (!svg) return;
+        wrap?.classList.remove('hidden');
 
         const pts = this._visibleChartPoints();
-        if (!pts.length) {
-            wrap?.classList.add('hidden');
-            return;
-        }
-        wrap?.classList.remove('hidden');
+        const hasData = pts.length > 0;
 
         const W = svg.clientWidth || 600;
         const H = svg.clientHeight || 180;
@@ -1318,11 +1336,19 @@ class MeshCoreMonitor {
         const ch = H - pt - pb;
 
         const now = Date.now();
-        const tMin = isFinite(this.HASH_LIFETIME)
-            ? now - this.HASH_LIFETIME
-            : this._earliestTime(pts);
+        const defaultWindow = 5 * 60000;
+        let tMin;
+        if (!hasData) tMin = now - defaultWindow;
+        else if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
+        else tMin = this._earliestTime(pts);
 
-        const { yMin, yMax, yStep } = this._chartYBounds(type);
+        let yMin, yMax, yStep;
+        if (!hasData) {
+            if (type === 'rssi') { yMin = -130; yMax = -30; yStep = 20; }
+            else                 { yMin = -20;  yMax = 15;  yStep = 5;  }
+        } else {
+            ({ yMin, yMax, yStep } = this._chartYBounds(type));
+        }
         const tRange = Math.max(1, now - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
@@ -1349,18 +1375,25 @@ class MeshCoreMonitor {
         const yLabelCy = (pt + ch / 2).toFixed(1);
         parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="#aaa" transform="rotate(-90,10,${yLabelCy})">${yLabel}</text>`);
 
-        // X grid + labels (major every minute, minor every 30 s)
-        const minMs = 60000;
-        const halfMinMs = 30000;
-        for (let t = Math.ceil(tMin / halfMinMs) * halfMinMs; t <= now; t += halfMinMs) {
-            if (t % minMs === 0) continue;
+        // X grid + labels — adaptive step based on chart width and visible range
+        const labelStep = this._xLabelStepMs(tRange, cw);
+        const minorStep = labelStep / 2;
+        // Use date+time when the visible range spans more than ~12 h
+        const useDate = tRange > 12 * 3600000;
+        const fmtOpts = useDate
+            ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+            : (labelStep < 60000
+                ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+                : { hour: '2-digit', minute: '2-digit' });
+        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= now; t += minorStep) {
+            if (t % labelStep === 0) continue;
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#f5f5f5" stroke-width="1"/>`);
         }
-        for (let t = Math.ceil(tMin / minMs) * minMs; t <= now; t += minMs) {
+        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= now; t += labelStep) {
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#e8e8e8" stroke-width="1"/>`);
-            const lbl = new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
             parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="#bbb">${lbl}</text>`);
         }
 
@@ -1369,7 +1402,7 @@ class MeshCoreMonitor {
         parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
 
         // Noise floor area (RSSI chart only) — drawn behind repeater lines/dots
-        if (type === 'rssi') {
+        if (type === 'rssi' && hasData) {
             const sorted = [...pts].sort((a, b) => a.time - b.time);
             const bottom = (pt + ch).toFixed(1);
             const lastP = sorted[sorted.length - 1];
@@ -1410,6 +1443,10 @@ class MeshCoreMonitor {
             parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${r}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${fillOp}"/>`);
         }
 
+        if (!hasData) {
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="#bbb">Waiting for data…</text>`);
+        }
+
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.innerHTML = parts.join('');
 
@@ -1438,7 +1475,7 @@ class MeshCoreMonitor {
                     html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
                 };
             });
-            if (type === 'rssi') {
+            if (type === 'rssi' && hasData) {
                 const lastPt = [...lastByCol.values()].reduce((a, b) => a.time > b.time ? a : b);
                 const nf = lastPt.rssi - lastPt.snr;
                 entries.push({

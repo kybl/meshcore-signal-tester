@@ -37,6 +37,7 @@ header {
 .header-stats-row {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     border-top: 1px solid #f0f0f0;
     padding-top: 6px;
     margin-top: 4px;
@@ -60,7 +61,9 @@ header {
 .header-stats {
     display: flex;
     align-items: center;
-    gap: 14px;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    min-width: 0;
 }
 
 .hstat {
