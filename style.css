@@ -539,6 +539,7 @@ header {
 
 .detail-cell {
     padding: 6px 10px !important;
+    animation: detailOpen 0.16s ease-out;
 }
 
 .detail-content {
@@ -704,10 +705,6 @@ header {
 @keyframes detailClose {
     from { opacity: 1; transform: translateY(0); }
     to   { opacity: 0; transform: translateY(-5px); }
-}
-
-.detail-cell {
-    animation: detailOpen 0.16s ease-out;
 }
 
 .detail-row.detail-closing .detail-cell {
