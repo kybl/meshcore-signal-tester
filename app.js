@@ -996,8 +996,8 @@ class MeshCoreMonitor {
         }
     }
 
-    buildMsgRowHtml(hash, data) {
-        const cells = this.repeaterColumns.map(r => {
+    buildMsgRowHtml(hash, data, cols = this.repeaterColumns) {
+        const cells = cols.map(r => {
             const sig = data.repeaters.get(r);
             return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr, hash, r) : '<td></td><td></td>';
         }).join('');
