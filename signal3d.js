@@ -335,8 +335,11 @@ export class Signal3DMap {
             zoom--;
         }
 
-        const x0 = Math.floor(tl.x), y0 = Math.floor(tl.y);
-        const x1 = Math.floor(br.x), y1 = Math.floor(br.y);
+        const maxTile = Math.pow(2, zoom) - 1;
+        const x0 = Math.max(0, Math.floor(tl.x) - 1);
+        const y0 = Math.max(0, Math.floor(tl.y) - 1);
+        const x1 = Math.min(maxTile, Math.floor(br.x) + 1);
+        const y1 = Math.min(maxTile, Math.floor(br.y) + 1);
         const nx = x1 - x0 + 1;
         const ny = y1 - y0 + 1;
 
