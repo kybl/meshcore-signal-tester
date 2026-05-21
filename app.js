@@ -9,7 +9,7 @@ class MeshCoreMonitor {
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
-        this.HASH_LIFETIME = 300000;
+        this.HASH_LIFETIME = Infinity;
         this.cleanupInterval = null;
         this._connectionMonitor = null;
         this._monitorDelay = null;
@@ -37,6 +37,8 @@ class MeshCoreMonitor {
         this.initUI();
         this.startCleanupTimer();
         this.renderSavedDevices();
+        // Render empty chart axes immediately so the section is visible from page load
+        requestAnimationFrame(() => this.scheduleChartRender());
     }
 
     initUI() {
@@ -49,7 +51,7 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
-        setInterval(() => { if (this.chartPoints.length) this.scheduleChartRender(); }, 2000);
+        setInterval(() => this.scheduleChartRender(), 2000);
 
         // Collapsible sections — clicking anywhere in the header row toggles
         document.querySelectorAll('.section-header').forEach(header => {
@@ -201,11 +203,14 @@ class MeshCoreMonitor {
 
         const msgFilterInput = document.getElementById('msgFilter');
         const msgFilterClear = document.getElementById('msgFilterClear');
+        const msgFilterApplied = document.getElementById('msgFilterApplied');
         if (msgFilterInput) {
             msgFilterInput.addEventListener('input', () => {
                 this._msgFilter = msgFilterInput.value;
-                msgFilterInput.classList.toggle('has-value', !!this._msgFilter);
-                msgFilterClear?.classList.toggle('hidden', !this._msgFilter);
+                const active = !!this._msgFilter;
+                msgFilterInput.classList.toggle('has-value', active);
+                msgFilterClear?.classList.toggle('hidden', !active);
+                msgFilterApplied?.classList.toggle('hidden', !active);
                 this.renderMsgTable();
             });
         }
@@ -214,6 +219,7 @@ class MeshCoreMonitor {
                 this._msgFilter = '';
                 if (msgFilterInput) { msgFilterInput.value = ''; msgFilterInput.classList.remove('has-value'); }
                 msgFilterClear.classList.add('hidden');
+                msgFilterApplied?.classList.add('hidden');
                 this.renderMsgTable();
                 msgFilterInput?.focus();
             });
@@ -222,12 +228,15 @@ class MeshCoreMonitor {
 
         const repFilterInput = document.getElementById('repFilter');
         const repFilterClear = document.getElementById('repFilterClear');
+        const repFilterApplied = document.getElementById('repFilterApplied');
         if (repFilterInput) {
             repFilterInput.addEventListener('input', () => {
                 this._repFilterTerms = repFilterInput.value
                     .split(',').map(s => s.trim().toUpperCase().replace(/^!/, '')).filter(Boolean);
-                repFilterInput.classList.toggle('has-value', this._repFilterTerms.length > 0);
-                repFilterClear?.classList.toggle('hidden', this._repFilterTerms.length === 0);
+                const active = this._repFilterTerms.length > 0;
+                repFilterInput.classList.toggle('has-value', active);
+                repFilterClear?.classList.toggle('hidden', !active);
+                repFilterApplied?.classList.toggle('hidden', !active);
                 this._applyRepFilter();
             });
         }
@@ -236,6 +245,7 @@ class MeshCoreMonitor {
                 this._repFilterTerms = [];
                 if (repFilterInput) { repFilterInput.value = ''; repFilterInput.classList.remove('has-value'); }
                 repFilterClear.classList.add('hidden');
+                repFilterApplied?.classList.add('hidden');
                 this._applyRepFilter();
                 repFilterInput?.focus();
             });
@@ -321,6 +331,7 @@ class MeshCoreMonitor {
         };
         document.getElementById('helpBtn')?.addEventListener('click', e => {
             e.stopPropagation();
+            hideTip();
             openHelp();
         });
         document.getElementById('helpModalClose')?.addEventListener('click', e => {
@@ -329,6 +340,11 @@ class MeshCoreMonitor {
         });
         helpModal?.addEventListener('click', e => {
             if (e.target === helpModal) closeHelp();
+        });
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && helpModal && !helpModal.classList.contains('hidden')) {
+                closeHelp();
+            }
         });
     }
 
@@ -354,11 +370,12 @@ class MeshCoreMonitor {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (this.device && error.name !== 'NotFoundError') {
+            if (error.name !== 'NotFoundError') {
                 console.error('Bluetooth error:', error);
                 alert('Connection error: ' + error.message);
             }
-            if (this.device) this._resetConnectBtn();
+            if (this.device) this.onDisconnected();
+            else this._resetConnectBtn();
         }
     }
 
@@ -376,11 +393,12 @@ class MeshCoreMonitor {
                 try {
                     await this.connectToDevice(device);
                 } catch (error) {
-                    if (this.device && error.name !== 'NotFoundError') {
+                    if (error.name !== 'NotFoundError') {
                         console.error('Quick connect error:', error);
                         alert('Connection error: ' + error.message);
                     }
-                    if (this.device) this._resetConnectBtn();
+                    if (this.device) this.onDisconnected();
+                    else this._resetConnectBtn();
                 }
                 return;
             }
@@ -404,11 +422,12 @@ class MeshCoreMonitor {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (this.device && error.name !== 'NotFoundError') {
+            if (error.name !== 'NotFoundError') {
                 console.error('Quick connect error:', error);
                 alert('Connection error: ' + error.message);
             }
-            if (this.device) this._resetConnectBtn();
+            if (this.device) this.onDisconnected();
+            else this._resetConnectBtn();
         }
     }
 
@@ -569,6 +588,9 @@ class MeshCoreMonitor {
 
     handlePayload(payload) {
         const pushCode = payload[0];
+        // Debug: full BLE notification hex with push code + length (drop after diagnosis)
+        const dbgHex = this.bufferToHex(payload.buffer);
+        console.log(`[BLE-RX] push=0x${pushCode.toString(16).padStart(2, '0').toUpperCase()} len=${payload.length} ${dbgHex}`);
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
@@ -600,7 +622,9 @@ class MeshCoreMonitor {
             const rawHex = this.bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
             if (packet.isValid) {
-                this.processPacket(packet, rawHex, snr, rssi);
+                // For unknown push codes we don't know the byte layout — bytes 1-2 may
+                // not be SNR/RSSI at all, so pass null to avoid bogus values in the UI.
+                this.processPacket(packet, rawHex, knownFormat ? snr : null, knownFormat ? rssi : null);
             } else if (!knownFormat) {
                 this._addRawEntry(payload, pushCode);
             }
@@ -637,7 +661,10 @@ class MeshCoreMonitor {
 
         const path = packet.path || [];
         const pathLen = path.length;
-        const pathItemBytes = packet.pathHashSize ?? (pathLen > 0 ? path[0].length / 2 : 0);
+        const firstItem = pathLen > 0 ? path[0] : null;
+        const firstItemBytes = typeof firstItem === 'string' ? firstItem.length / 2
+            : typeof firstItem === 'number' ? 4 : 0;
+        const pathItemBytes = packet.pathHashSize ?? firstItemBytes;
 
         const p = packet.payload?.decoded;
         const meta = { pathLen, pathItemBytes, totalBytes: packet.totalBytes };
@@ -682,7 +709,11 @@ class MeshCoreMonitor {
 
     formatNodeId(nodeId) {
         if (typeof nodeId === 'number') {
-            return '!' + nodeId.toString(16).padStart(8, '0');
+            // Round up to byte boundary; don't force 4-byte padding (would clobber
+            // precision info — see idPrecision/idsCompatible).
+            let hex = nodeId.toString(16);
+            if (hex.length % 2 !== 0) hex = '0' + hex;
+            return '!' + hex;
         }
         return nodeId?.toString() || 'unknown';
     }
@@ -692,7 +723,7 @@ class MeshCoreMonitor {
     // We always use the longest (most precise) known version as the column key.
 
     idPrecision(id) {
-        if (id === 'direct' || id.includes('/')) return 4;
+        if (id === 'direct' || id === 'unknown' || id.includes('/')) return 4;
         const hex = id.startsWith('!') ? id.slice(1) : id;
         return Math.ceil(hex.length / 2);
     }
@@ -706,6 +737,7 @@ class MeshCoreMonitor {
     idsCompatible(id1, id2) {
         if (id1.includes('/') || id2.includes('/')) return false;
         if (id1 === 'direct' || id2 === 'direct') return id1 === id2;
+        if (id1 === 'unknown' || id2 === 'unknown') return id1 === id2;
         const minPrec = Math.min(this.idPrecision(id1), this.idPrecision(id2));
         return this.idSuffix(id1, minPrec) === this.idSuffix(id2, minPrec);
     }
@@ -781,6 +813,7 @@ class MeshCoreMonitor {
         for (const p of this.chartPoints) {
             if (p.col === oldKey) p.col = newKey;
         }
+        if (this._chartSelected === oldKey) this._chartSelected = newKey;
 
         // Update any open detail rows whose col attribute still references the old key,
         // so that renderMsgTable's sig-active restoration uses the correct (new) col.
@@ -790,7 +823,7 @@ class MeshCoreMonitor {
     }
 
     displayId(id) {
-        if (id === 'direct') return 'direct';
+        if (id === 'direct' || id === 'unknown') return id;
         if (id.includes('/')) return id.split('/').map(p => this.displayId(p)).join('/');
         const hex = id.startsWith('!') ? id.slice(1) : id;
         const num = parseInt(hex, 16);
@@ -849,6 +882,14 @@ class MeshCoreMonitor {
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
+        // Flash the two signal cells that just received new values
+        this.msgTableBody?.querySelectorAll(`[data-hash="${hash}"][data-col="${canonicalKey}"]`)
+            .forEach(el => {
+                el.classList.remove('cell-flash');
+                // Force reflow so the animation restarts even on rapid back-to-back updates
+                void el.offsetWidth;
+                el.classList.add('cell-flash');
+            });
         if (this.repeaterColumns.length !== prevColCount) {
             requestAnimationFrame(() => this._checkTableOverflow(false));
         }
@@ -857,12 +898,14 @@ class MeshCoreMonitor {
         }
         this.scheduleChartRender();
 
-        if (hasSignal) this.playRxSound(rssi);
+        // Sound only when the entry would actually appear under the current filters
+        const data = this.hashData.get(hash);
+        const filterText = this._msgFilter.toLowerCase().trim();
+        const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
+        const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
+        if (hasSignal && matchesMsgFilter && matchesRepFilter) this.playRxSound(rssi);
         this.updateStats();
-        if (this.emptyState) {
-            this.emptyState.remove();
-            this.emptyState = null;
-        }
+        this.emptyState?.classList.add('hidden');
     }
 
     // --- Column management ---
@@ -1196,16 +1239,31 @@ class MeshCoreMonitor {
 
     _chartYBounds(type) {
         const pts = this._visibleChartPoints();
-        const vals = pts.map(p => type === 'rssi' ? p.rssi : p.snr);
-        const nfVals = type === 'rssi' ? pts.map(p => p.rssi - p.snr) : [];
-        const allVals = [...vals, ...nfVals];
-        const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
+        // Avoid spread on potentially large arrays (Math.min(...arr) has an arg-count limit)
+        let vMin = Infinity, vMax = -Infinity;
+        for (const p of pts) {
+            const v = type === 'rssi' ? p.rssi : p.snr;
+            if (v < vMin) vMin = v;
+            if (v > vMax) vMax = v;
+            if (type === 'rssi') {
+                const nf = p.rssi - p.snr;
+                if (nf < vMin) vMin = nf;
+                if (nf > vMax) vMax = nf;
+            }
+        }
+        if (vMin === Infinity) { vMin = 0; vMax = 1; }
         const rawRange = vMax - vMin || 1;
         const yStep = rawRange <= 5 ? 1 : rawRange <= 10 ? 2 : rawRange <= 25 ? 5 : rawRange <= 50 ? 10 : 20;
         const yPad = Math.max(1, yStep / 2);
         const yMin = Math.floor((vMin - yPad) / yStep) * yStep;
         const yMax = Math.ceil((vMax + yPad) / yStep) * yStep;
         return { yMin, yMax, yStep };
+    }
+
+    _earliestTime(pts) {
+        let m = Infinity;
+        for (const p of pts) if (p.time < m) m = p.time;
+        return m;
     }
 
     _onChartClick(e, type) {
@@ -1224,10 +1282,12 @@ class MeshCoreMonitor {
         const now = Date.now();
         const tMin = isFinite(this.HASH_LIFETIME)
             ? now - this.HASH_LIFETIME
-            : Math.min(...pts.map(p => p.time));
+            : this._earliestTime(pts);
+        const tRange = Math.max(1, now - tMin);
         const { yMin, yMax } = this._chartYBounds(type);
-        const xOf = t => pl + (t - tMin) / (now - tMin) * cw;
-        const yOf = v => pt + (1 - (v - yMin) / (yMax - yMin)) * ch;
+        const yRange = Math.max(1e-9, yMax - yMin);
+        const xOf = t => pl + (t - tMin) / tRange * cw;
+        const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
             const dx = xOf(p.time) - mx;
@@ -1243,18 +1303,27 @@ class MeshCoreMonitor {
         this.scheduleChartRender();
     }
 
+    _xLabelStepMs(rangeMs, chartWidthPx) {
+        // ~50 px per label for readability
+        const targetSteps = Math.max(2, Math.floor(chartWidthPx / 50));
+        const targetStep = rangeMs / targetSteps;
+        const steps = [
+            15000, 30000, 60000, 2*60000, 5*60000, 10*60000, 15*60000, 30*60000,
+            3600000, 2*3600000, 3*3600000, 6*3600000, 12*3600000, 24*3600000,
+        ];
+        for (const s of steps) if (s >= targetStep) return s;
+        return steps[steps.length - 1];
+    }
+
     renderChart(type) {
         const wrap   = type === 'rssi' ? this.rssiChartWrap   : this.snrChartWrap;
         const svg    = type === 'rssi' ? this.rssiChartSvg    : this.snrChartSvg;
         const legend = type === 'rssi' ? this.rssiChartLegend : this.snrChartLegend;
         if (!svg) return;
+        wrap?.classList.remove('hidden');
 
         const pts = this._visibleChartPoints();
-        if (!pts.length) {
-            wrap?.classList.add('hidden');
-            return;
-        }
-        wrap?.classList.remove('hidden');
+        const hasData = pts.length > 0;
 
         const W = svg.clientWidth || 600;
         const H = svg.clientHeight || 180;
@@ -1263,14 +1332,24 @@ class MeshCoreMonitor {
         const ch = H - pt - pb;
 
         const now = Date.now();
-        const tMin = isFinite(this.HASH_LIFETIME)
-            ? now - this.HASH_LIFETIME
-            : Math.min(...pts.map(p => p.time));
+        const defaultWindow = 5 * 60000;
+        let tMin;
+        if (!hasData) tMin = now - defaultWindow;
+        else if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
+        else tMin = this._earliestTime(pts);
 
-        const { yMin, yMax, yStep } = this._chartYBounds(type);
+        let yMin, yMax, yStep;
+        if (!hasData) {
+            if (type === 'rssi') { yMin = -130; yMax = -30; yStep = 20; }
+            else                 { yMin = -20;  yMax = 15;  yStep = 5;  }
+        } else {
+            ({ yMin, yMax, yStep } = this._chartYBounds(type));
+        }
+        const tRange = Math.max(1, now - tMin);
+        const yRange = Math.max(1e-9, yMax - yMin);
 
-        const xOf = t => (pl + (t - tMin) / (now - tMin) * cw).toFixed(1);
-        const yOf = v => (pt + (1 - (v - yMin) / (yMax - yMin)) * ch).toFixed(1);
+        const xOf = t => (pl + (t - tMin) / tRange * cw).toFixed(1);
+        const yOf = v => (pt + (1 - (v - yMin) / yRange) * ch).toFixed(1);
         const valOf = p => type === 'rssi' ? p.rssi : p.snr;
 
         const parts = [];
@@ -1292,18 +1371,25 @@ class MeshCoreMonitor {
         const yLabelCy = (pt + ch / 2).toFixed(1);
         parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="#aaa" transform="rotate(-90,10,${yLabelCy})">${yLabel}</text>`);
 
-        // X grid + labels (major every minute, minor every 30 s)
-        const minMs = 60000;
-        const halfMinMs = 30000;
-        for (let t = Math.ceil(tMin / halfMinMs) * halfMinMs; t <= now; t += halfMinMs) {
-            if (t % minMs === 0) continue;
+        // X grid + labels — adaptive step based on chart width and visible range
+        const labelStep = this._xLabelStepMs(tRange, cw);
+        const minorStep = labelStep / 2;
+        // Use date+time when the visible range spans more than ~12 h
+        const useDate = tRange > 12 * 3600000;
+        const fmtOpts = useDate
+            ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+            : (labelStep < 60000
+                ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+                : { hour: '2-digit', minute: '2-digit' });
+        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= now; t += minorStep) {
+            if (t % labelStep === 0) continue;
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#f5f5f5" stroke-width="1"/>`);
         }
-        for (let t = Math.ceil(tMin / minMs) * minMs; t <= now; t += minMs) {
+        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= now; t += labelStep) {
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#e8e8e8" stroke-width="1"/>`);
-            const lbl = new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
             parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="#bbb">${lbl}</text>`);
         }
 
@@ -1312,7 +1398,7 @@ class MeshCoreMonitor {
         parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
 
         // Noise floor area (RSSI chart only) — drawn behind repeater lines/dots
-        if (type === 'rssi') {
+        if (type === 'rssi' && hasData) {
             const sorted = [...pts].sort((a, b) => a.time - b.time);
             const bottom = (pt + ch).toFixed(1);
             const lastP = sorted[sorted.length - 1];
@@ -1353,6 +1439,10 @@ class MeshCoreMonitor {
             parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${r}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${fillOp}"/>`);
         }
 
+        if (!hasData) {
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="#bbb">Waiting for data…</text>`);
+        }
+
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.innerHTML = parts.join('');
 
@@ -1381,7 +1471,7 @@ class MeshCoreMonitor {
                     html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
                 };
             });
-            if (type === 'rssi') {
+            if (type === 'rssi' && hasData) {
                 const lastPt = [...lastByCol.values()].reduce((a, b) => a.time > b.time ? a : b);
                 const nf = lastPt.rssi - lastPt.snr;
                 entries.push({
@@ -1413,12 +1503,14 @@ class MeshCoreMonitor {
         const now = Date.now();
         const tMin = isFinite(this.HASH_LIFETIME)
             ? now - this.HASH_LIFETIME
-            : Math.min(...pts.map(p => p.time));
+            : this._earliestTime(pts);
 
         const { yMin, yMax } = this._chartYBounds(type);
+        const tRange = Math.max(1, now - tMin);
+        const yRange = Math.max(1e-9, yMax - yMin);
 
-        const xOf = t => pl + (t - tMin) / (now - tMin) * cw;
-        const yOf = v => pt + (1 - (v - yMin) / (yMax - yMin)) * ch;
+        const xOf = t => pl + (t - tMin) / tRange * cw;
+        const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
 
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
@@ -1542,6 +1634,7 @@ class MeshCoreMonitor {
         if (!this.soundCheckbox?.checked) return;
         if (!this.audioCtx) this.audioCtx = new AudioContext();
         const ctx = this.audioCtx;
+        if (ctx.state === 'suspended') ctx.resume();
         const now = ctx.currentTime;
         const baseFreq = 880;
 
@@ -1704,7 +1797,7 @@ class MeshCoreMonitor {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `meshcore-rx-${new Date().toISOString().slice(0, 16).replace('T', '_')}.csv`;
+        a.download = `meshcore-rx-${new Date().toISOString().slice(0, 16).replace('T', '_').replace(/:/g, '-')}.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

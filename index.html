@@ -4,18 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
     <div class="container">
         <header>
             <div class="header-row">
                 <span class="app-title">MeshCore RX Monitor</span>
+                <button class="help-btn" id="helpBtn" aria-label="Help / About">?</button>
                 <div class="header-controls">
                     <span id="status" class="status disconnected">Disconnected</span>
                     <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
                     <label class="sound-toggle"><input type="checkbox" id="soundEnabled"> Sound<span class="help-icon" data-help="sound">?</span></label>
-                    <button class="help-btn" id="helpBtn" aria-label="Help / About">?</button>
                 </div>
                 <span id="batteryStatus" class="battery-status hidden"></span>
                 <div id="savedDevices" class="saved-devices hidden"></div>
@@ -36,6 +36,11 @@
             </div>
 
             <div class="section-wrap" id="repeaterWrap">
+                <div class="rep-filter-bar" id="repFilterBar">
+                    <input type="text" id="repFilter" class="rep-filter-input" placeholder="Filter repeaters…" autocomplete="off" spellcheck="false">
+                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
+                    <span id="repFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
+                </div>
                 <div class="section-header">
                     <span class="section-title">Seen repeaters</span>
                     <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
@@ -62,21 +67,17 @@
                         <option value="30">30 seconds</option>
                         <option value="60">1 minute</option>
                         <option value="120">2 minutes</option>
-                        <option value="300" selected>5 minutes</option>
+                        <option value="300">5 minutes</option>
                         <option value="600">10 minutes</option>
                         <option value="900">15 minutes</option>
                         <option value="1800">30 minutes</option>
                         <option value="3600">1 hour</option>
-                        <option value="Infinity">Never</option>
+                        <option value="Infinity" selected>Never</option>
                     </select>
-                    <span class="ttl-sep">·</span>
-                    <span class="ttl-label">Repeaters</span>
-                    <input type="text" id="repFilter" class="rep-filter-input" placeholder="all" autocomplete="off" spellcheck="false">
-                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
                 </label>
             </div>
 
-            <div class="section-wrap hidden" id="rssiChartWrap">
+            <div class="section-wrap" id="rssiChartWrap">
                 <div class="section-header">
                     <span class="section-title">Repeaters RSSI history</span>
                     <button class="collapse-btn" data-target="rssiChartBody" title="Toggle section">▾</button>
@@ -89,7 +90,7 @@
                 </div>
             </div>
 
-            <div class="section-wrap hidden" id="snrChartWrap">
+            <div class="section-wrap" id="snrChartWrap">
                 <div class="section-header">
                     <span class="section-title">Repeaters SNR history</span>
                     <button class="collapse-btn" data-target="snrChartBody" title="Toggle section">▾</button>
@@ -111,6 +112,7 @@
                     <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
                     <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
                     <span id="msgFilterCount" class="msg-filter-count hidden"></span>
+                    <span id="msgFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
                     <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
                 </div>
                 <div class="section-body" id="msgScrollBody">
@@ -173,6 +175,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=2"></script>
+    <script type="module" src="app.js?v=3"></script>
 </body>
 </html>
