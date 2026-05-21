@@ -1000,8 +1000,14 @@ header {
 .rep-filter-bar {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 0 6px;
+    gap: 8px;
+    padding: 14px 0 6px;
+}
+
+.rep-filter-label {
+    color: rgba(255,255,255,0.65);
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .rep-filter-bar .rep-filter-input {

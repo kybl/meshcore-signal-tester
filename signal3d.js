@@ -453,7 +453,7 @@ export class Signal3DMap {
         if (this._cameraFit) return;
         const { w, h } = this.planeDim;
         const r = Math.max(w, h);
-        this.camera.position.set(r * 0.7, r * 0.9, r * 1.0);
+        this.camera.position.set(r * 0.4, r * 0.55, r * 0.6);
         this.controls.target.set(0, MAX_HEIGHT * 0.3, 0);
         this.controls.update();
         this._cameraFit = true;
