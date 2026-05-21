@@ -32,6 +32,7 @@ class MeshCoreMonitor {
         this._chartSelected = null;
         this._rxTimestamps = [];
         this._msgFilter = '';
+        this._repFilterTerms = [];
 
         this.initUI();
         this.startCleanupTimer();
@@ -218,6 +219,27 @@ class MeshCoreMonitor {
             });
         }
         document.getElementById('exportCsvBtn')?.addEventListener('click', () => this._exportCsv());
+
+        const repFilterInput = document.getElementById('repFilter');
+        const repFilterClear = document.getElementById('repFilterClear');
+        if (repFilterInput) {
+            repFilterInput.addEventListener('input', () => {
+                this._repFilterTerms = repFilterInput.value
+                    .split(',').map(s => s.trim().toUpperCase().replace(/^!/, '')).filter(Boolean);
+                repFilterInput.classList.toggle('has-value', this._repFilterTerms.length > 0);
+                repFilterClear?.classList.toggle('hidden', this._repFilterTerms.length === 0);
+                this._applyRepFilter();
+            });
+        }
+        if (repFilterClear) {
+            repFilterClear.addEventListener('click', () => {
+                this._repFilterTerms = [];
+                if (repFilterInput) { repFilterInput.value = ''; repFilterInput.classList.remove('has-value'); }
+                repFilterClear.classList.add('hidden');
+                this._applyRepFilter();
+                repFilterInput?.focus();
+            });
+        }
 
         window.addEventListener('beforeunload', e => {
             if (this.device) {
@@ -895,13 +917,14 @@ class MeshCoreMonitor {
                 .map(tr => [tr.id.slice(7), tr.dataset.col ?? null])
         );
 
-        const colKey = this.repeaterColumns.join(',');
+        const visibleCols = this.repeaterColumns.filter(c => this._colMatchesRepFilter(c));
+        const colKey = visibleCols.join(',');
         if (colKey !== this._lastColKey) {
             this._lastColKey = colKey;
-            const repHeaders = this.repeaterColumns.map(r =>
+            const repHeaders = visibleCols.map(r =>
                 `<th colspan="2" class="msg-col-rep">${this.displayId(r)}</th>`
             ).join('');
-            const subHeaders = this.repeaterColumns.map(() =>
+            const subHeaders = visibleCols.map(() =>
                 `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
             ).join('');
             this.msgTableHead.innerHTML = `
@@ -919,9 +942,13 @@ class MeshCoreMonitor {
         const filter = this._msgFilter.toLowerCase().trim();
         const allRows = Array.from(this.hashData.entries())
             .sort(([, a], [, b]) => b.insertOrder - a.insertOrder);
-        const rows = filter
+        let rows = filter
             ? allRows.filter(([, data]) => this._rowMatchesFilter(data, filter))
             : allRows;
+        // When repeater filter is active, hide rows that have no data from visible columns
+        if (this._repFilterTerms.length) {
+            rows = rows.filter(([, data]) => visibleCols.some(c => data.repeaters.has(c)));
+        }
 
         // Filter count badge
         if (this.msgFilterCountEl) {
@@ -931,11 +958,13 @@ class MeshCoreMonitor {
         }
 
         this.msgTableBody.innerHTML = rows.map(([hash, data]) =>
-            this.buildMsgRowHtml(hash, data)
+            this.buildMsgRowHtml(hash, data, visibleCols)
         ).join('');
 
         for (const [hash, col] of openDetails) {
             if (!this.hashData.has(hash)) continue;
+            // Drop detail for a column that is now filtered out
+            if (col && !this._colMatchesRepFilter(col)) continue;
             const row = document.getElementById(`row-${hash}`);
             if (!row) continue;
             const detail = document.createElement('tr');
@@ -1147,7 +1176,7 @@ class MeshCoreMonitor {
             const cutoff = Date.now() - this.HASH_LIFETIME;
             this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
         }
-        if (this._chartSelected && !this.chartPoints.some(p => p.col === this._chartSelected)) {
+        if (this._chartSelected && !this._visibleChartPoints().some(p => p.col === this._chartSelected)) {
             this._chartSelected = null;
         }
         this.renderChart('rssi');
@@ -1155,8 +1184,9 @@ class MeshCoreMonitor {
     }
 
     _chartYBounds(type) {
-        const vals = this.chartPoints.map(p => type === 'rssi' ? p.rssi : p.snr);
-        const nfVals = type === 'rssi' ? this.chartPoints.map(p => p.rssi - p.snr) : [];
+        const pts = this._visibleChartPoints();
+        const vals = pts.map(p => type === 'rssi' ? p.rssi : p.snr);
+        const nfVals = type === 'rssi' ? pts.map(p => p.rssi - p.snr) : [];
         const allVals = [...vals, ...nfVals];
         const vMin = Math.min(...allVals), vMax = Math.max(...allVals);
         const rawRange = vMax - vMin || 1;
@@ -1168,7 +1198,8 @@ class MeshCoreMonitor {
     }
 
     _onChartClick(e, type) {
-        if (!this.chartPoints.length) return;
+        const pts = this._visibleChartPoints();
+        if (!pts.length) return;
         const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
         if (!svg) return;
         const rect = svg.getBoundingClientRect();
@@ -1182,12 +1213,12 @@ class MeshCoreMonitor {
         const now = Date.now();
         const tMin = isFinite(this.HASH_LIFETIME)
             ? now - this.HASH_LIFETIME
-            : Math.min(...this.chartPoints.map(p => p.time));
+            : Math.min(...pts.map(p => p.time));
         const { yMin, yMax } = this._chartYBounds(type);
         const xOf = t => pl + (t - tMin) / (now - tMin) * cw;
         const yOf = v => pt + (1 - (v - yMin) / (yMax - yMin)) * ch;
         let nearest = null, minDist = Infinity;
-        for (const p of this.chartPoints) {
+        for (const p of pts) {
             const dx = xOf(p.time) - mx;
             const dy = yOf(type === 'rssi' ? p.rssi : p.snr) - my;
             const d = dx * dx + dy * dy;
@@ -1207,7 +1238,8 @@ class MeshCoreMonitor {
         const legend = type === 'rssi' ? this.rssiChartLegend : this.snrChartLegend;
         if (!svg) return;
 
-        if (!this.chartPoints.length) {
+        const pts = this._visibleChartPoints();
+        if (!pts.length) {
             wrap?.classList.add('hidden');
             return;
         }
@@ -1222,7 +1254,7 @@ class MeshCoreMonitor {
         const now = Date.now();
         const tMin = isFinite(this.HASH_LIFETIME)
             ? now - this.HASH_LIFETIME
-            : Math.min(...this.chartPoints.map(p => p.time));
+            : Math.min(...pts.map(p => p.time));
 
         const { yMin, yMax, yStep } = this._chartYBounds(type);
 
@@ -1270,7 +1302,7 @@ class MeshCoreMonitor {
 
         // Noise floor area (RSSI chart only) — drawn behind repeater lines/dots
         if (type === 'rssi') {
-            const sorted = [...this.chartPoints].sort((a, b) => a.time - b.time);
+            const sorted = [...pts].sort((a, b) => a.time - b.time);
             const bottom = (pt + ch).toFixed(1);
             const lastP = sorted[sorted.length - 1];
             const nfPts = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`);
@@ -1288,22 +1320,22 @@ class MeshCoreMonitor {
         const selected = this._chartSelected;
 
         const groups = new Map();
-        for (const p of this.chartPoints) {
+        for (const p of pts) {
             if (!groups.has(p.col)) groups.set(p.col, []);
             groups.get(p.col).push(p);
         }
-        for (const [col, pts] of groups) {
-            if (pts.length < 2) continue;
-            pts.sort((a, b) => a.time - b.time);
+        for (const [col, colPts] of groups) {
+            if (colPts.length < 2) continue;
+            colPts.sort((a, b) => a.time - b.time);
             const color = this.getRepeaterColor(col);
             const isHighlighted = !selected || selected === col;
             const strokeW = (selected && selected === col) ? 2.5 : 1;
             const strokeOp = isHighlighted ? 0.55 : 0.12;
-            const pointsStr = pts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
+            const pointsStr = colPts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
             parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="${strokeW}" stroke-opacity="${strokeOp}"/>`);
         }
 
-        for (const p of this.chartPoints) {
+        for (const p of pts) {
             const isHighlighted = !selected || selected === p.col;
             const r = (selected && selected === p.col) ? 5 : 3.5;
             const fillOp = isHighlighted ? 0.85 : 0.18;
@@ -1315,7 +1347,7 @@ class MeshCoreMonitor {
 
         // Find the most recent point per column, then sort best → worst
         const lastByCol = new Map();
-        for (const p of this.chartPoints) {
+        for (const p of pts) {
             if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
         }
         const visible = [...lastByCol.keys()].sort((a, b) => {
@@ -1352,7 +1384,9 @@ class MeshCoreMonitor {
     }
 
     showChartTooltip(e, type) {
-        if (!this.tooltip || !this.chartPoints.length) return;
+        if (!this.tooltip) return;
+        const pts = this._visibleChartPoints();
+        if (!pts.length) return;
         const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
         if (!svg) return;
 
@@ -1368,7 +1402,7 @@ class MeshCoreMonitor {
         const now = Date.now();
         const tMin = isFinite(this.HASH_LIFETIME)
             ? now - this.HASH_LIFETIME
-            : Math.min(...this.chartPoints.map(p => p.time));
+            : Math.min(...pts.map(p => p.time));
 
         const { yMin, yMax } = this._chartYBounds(type);
 
@@ -1448,7 +1482,8 @@ class MeshCoreMonitor {
         if (!this.repeaterLogBody) return;
         const key = this.repeaterSortKey;
         const dir = this.repeaterSortDir;
-        const entries = Array.from(this.allRepeaters.entries());
+        const entries = Array.from(this.allRepeaters.entries())
+            .filter(([id]) => this._colMatchesRepFilter(id));
         entries.sort(([idA, dA], [idB, dB]) => {
             if (key === 'id') {
                 // 'direct' sorts first ascending, last descending
@@ -1551,7 +1586,9 @@ class MeshCoreMonitor {
     updateStats() {
         this.activeHashesEl.textContent = this.hashData.size;
         this.totalRxEl.textContent = this.totalRxCount;
-        this.totalRepeatersEl.textContent = this.repeaterColumns.length;
+        this.totalRepeatersEl.textContent = this._repFilterTerms.length
+            ? this.repeaterColumns.filter(c => this._colMatchesRepFilter(c)).length
+            : this.repeaterColumns.length;
         if (this.packetRateEl) {
             const now = Date.now();
             this._rxTimestamps = this._rxTimestamps.filter(t => t > now - 120000);
@@ -1580,6 +1617,31 @@ class MeshCoreMonitor {
                 ? '!' + id.toString(16).padStart(8, '0')
                 : String(id ?? 'unknown')
         ).join(' > ');
+    }
+
+    _colMatchesRepFilter(col) {
+        if (!this._repFilterTerms.length) return true;
+        // For collision keys like "1234/5678" check each component separately
+        const ids = col.includes('/') ? col.split('/') : [col];
+        return ids.some(id => {
+            const display = this.displayId(id).toUpperCase();
+            return this._repFilterTerms.some(term =>
+                display.startsWith(term) || term.startsWith(display)
+            );
+        });
+    }
+
+    _visibleChartPoints() {
+        return this._repFilterTerms.length
+            ? this.chartPoints.filter(p => this._colMatchesRepFilter(p.col))
+            : this.chartPoints;
+    }
+
+    _applyRepFilter() {
+        this.updateRepeaterTable();
+        this.renderMsgTable();
+        this.scheduleChartRender();
+        this.updateStats();
     }
 
     _exportCsv() {

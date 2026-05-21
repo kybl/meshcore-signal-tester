@@ -57,7 +57,7 @@
                     </div>
                 </div>
                 <label class="ttl-control">
-                    <span class="ttl-label">Auto-remove data below after</span><span class="help-icon" data-help="ttl">?</span>
+                    <span class="ttl-label">Auto-remove after</span><span class="help-icon" data-help="ttl">?</span>
                     <select id="ttlSelect">
                         <option value="30">30 seconds</option>
                         <option value="60">1 minute</option>
@@ -69,6 +69,10 @@
                         <option value="3600">1 hour</option>
                         <option value="Infinity">Never</option>
                     </select>
+                    <span class="ttl-sep">·</span>
+                    <span class="ttl-label">Repeaters</span>
+                    <input type="text" id="repFilter" class="rep-filter-input" placeholder="all" autocomplete="off" spellcheck="false">
+                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
                 </label>
             </div>
 

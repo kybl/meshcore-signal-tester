@@ -612,12 +612,41 @@ header {
 .ttl-control {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 4px;
     font-size: 12px;
     color: rgba(255,255,255,0.75);
     white-space: nowrap;
     margin-top: 6px;
     padding-left: 2px;
+}
+
+.ttl-sep {
+    color: rgba(255,255,255,0.25);
+    margin: 0 3px;
+}
+
+.rep-filter-input {
+    font-size: 12px;
+    padding: 2px 6px;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    background: rgba(255,255,255,0.92);
+    color: #333;
+    width: 140px;
+    outline: none;
+    font-family: inherit;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.rep-filter-input:focus {
+    border-color: rgba(255,255,255,0.75);
+    background: white;
+}
+
+.rep-filter-input.has-value {
+    background: white;
+    border-color: #a8b8f8;
 }
 
 .chart-tooltip {
