@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=10';
+import { Signal3DMap } from './signal3d.js?v=11';
 
 class MeshCoreMonitor {
     constructor() {
@@ -928,9 +928,29 @@ class MeshCoreMonitor {
     // --- Column management ---
 
     sortColumns() {
-        this.repeaterColumns.sort((a, b) =>
-            (this.allRepeaters.get(b)?.maxRssi ?? -200) - (this.allRepeaters.get(a)?.maxRssi ?? -200)
-        );
+        const FIVE_MIN = 5 * 60 * 1000;
+        const cutoff = Date.now() - FIVE_MIN;
+        const recentCount = new Map();
+        for (const p of this.chartPoints) {
+            if (p.time >= cutoff) recentCount.set(p.col, (recentCount.get(p.col) ?? 0) + 1);
+        }
+        this.repeaterColumns.sort((a, b) => {
+            const ra = recentCount.get(a) ?? 0;
+            const rb = recentCount.get(b) ?? 0;
+            if (rb !== ra) return rb - ra;
+            const da = this.allRepeaters.get(a);
+            const db = this.allRepeaters.get(b);
+            const lrA = da?.lastRssi ?? -Infinity;
+            const lrB = db?.lastRssi ?? -Infinity;
+            if (lrB !== lrA) return lrB - lrA;
+            const lsA = da?.lastSnr ?? -Infinity;
+            const lsB = db?.lastSnr ?? -Infinity;
+            if (lsB !== lsA) return lsB - lsA;
+            const cA = da?.count ?? 0;
+            const cB = db?.count ?? 0;
+            if (cB !== cA) return cB - cA;
+            return a.localeCompare(b);
+        });
     }
 
     abbreviateType(type) {
@@ -1545,7 +1565,15 @@ class MeshCoreMonitor {
         for (const [hash, data] of this.hashData.entries()) {
             if (now - data.lastSeen > this.HASH_LIFETIME) toRemove.push(hash);
         }
-        if (!toRemove.length) return;
+        // Even with nothing to delete, packets may have aged out of the
+        // rolling 5-minute count → re-sort columns and refresh the table
+        // only if their order actually changed.
+        if (!toRemove.length) {
+            const prev = this.repeaterColumns.join('|');
+            this.sortColumns();
+            if (this.repeaterColumns.join('|') !== prev) this.renderMsgTable();
+            return;
+        }
 
         for (const hash of toRemove) {
             document.getElementById(`row-${hash}`)?.classList.add('row-removing');
