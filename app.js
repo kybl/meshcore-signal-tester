@@ -1,5 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
+import { Signal3DMap } from './signal3d.js?v=4';
 
 class MeshCoreMonitor {
     constructor() {
@@ -259,6 +260,20 @@ class MeshCoreMonitor {
         });
 
         this._initHelpSystem();
+        this._initSignalMap();
+    }
+
+    _initSignalMap() {
+        const canvas = document.getElementById('signalMapCanvas');
+        if (!canvas) return;
+        this.signalMap = new Signal3DMap({
+            canvas,
+            statusEl:  document.getElementById('locationStatus'),
+            btnEl:     document.getElementById('enableLocationBtn'),
+            emptyEl:   document.getElementById('signalMapEmpty'),
+            colorFor:  col => this.getRepeaterColor(col),
+            displayId: col => this.displayId(col),
+        });
     }
 
     _initHelpSystem() {
@@ -878,7 +893,11 @@ class MeshCoreMonitor {
             lastSnr:  hasSignal ? snr  : (existing?.lastSnr  ?? null),
             lastRssi: hasSignal ? rssi : (existing?.lastRssi ?? null),
         });
-        if (hasSignal) this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
+        if (hasSignal) {
+            this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
+            const loc = this.signalMap?.currentLocation();
+            if (loc) this.signalMap.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now });
+        }
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);

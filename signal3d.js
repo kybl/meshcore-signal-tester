@@ -1,0 +1,413 @@
+// 3D signal map: stitched OpenStreetMap tiles laid as a floor in Three.js;
+// each captured packet is a colored bead floating above its GPS location at a
+// height proportional to RSSI.
+//
+// Mapy.cz would be the preferred backdrop, but their current tile API requires
+// a registered API key, so we fall back to public OSM tiles.
+
+import * as THREE from 'https://esm.sh/three@0.160.0';
+import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+const PLANE_SIZE       = 100;   // world units, longest plane edge
+const MAX_HEIGHT       = 60;    // world units for strongest signal
+const MIN_HEIGHT       = 2;     // world units for weakest signal
+const RSSI_GOOD        = -50;
+const RSSI_BAD         = -130;
+const MAX_TILES_AXIS   = 4;
+const TILE_PX          = 256;
+const TILE_URL         = z => (x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+
+function lonLatToTile(lon, lat, zoom) {
+    const n = Math.pow(2, zoom);
+    const x = (lon + 180) / 360 * n;
+    const latRad = lat * Math.PI / 180;
+    const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+    return { x, y };
+}
+
+export class Signal3DMap {
+    constructor(opts) {
+        this.canvas    = opts.canvas;
+        this.statusEl  = opts.statusEl;
+        this.btnEl     = opts.btnEl;
+        this.emptyEl   = opts.emptyEl;
+        this.colorFor  = opts.colorFor  || (() => '#667eea');
+        this.displayId = opts.displayId || (col => col);
+
+        this.points       = [];     // { lat, lon, rssi, snr, col, time, mesh, line }
+        this.userLoc      = null;
+        this.watchId      = null;
+        this.tileBounds   = null;   // { x0, y0, nx, ny, zoom }
+        this.planeDim     = null;   // { w, h } in world units
+        this.mapMesh      = null;
+        this.userMarker   = null;
+        this.lastBboxKey  = null;
+        this._cameraFit   = false;
+        this._mapBusy     = false;
+
+        this._initScene();
+        this._bindButton();
+        this._checkInitialPermission();
+    }
+
+    // ---- Scene setup ----
+
+    _initScene() {
+        const canvas = this.canvas;
+        this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+        this.renderer.setClearColor(0xeef2f7);
+
+        const w = Math.max(1, canvas.clientWidth);
+        const h = Math.max(1, canvas.clientHeight);
+        this.renderer.setSize(w, h, false);
+
+        this.scene  = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 5000);
+        this.camera.position.set(70, 90, 110);
+
+        this.controls = new OrbitControls(this.camera, canvas);
+        this.controls.target.set(0, MAX_HEIGHT * 0.25, 0);
+        this.controls.enableDamping  = true;
+        this.controls.dampingFactor  = 0.08;
+        this.controls.maxPolarAngle  = Math.PI / 2 - 0.02;
+        this.controls.minDistance    = 20;
+        this.controls.maxDistance    = 600;
+        this.controls.update();
+
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.55);
+        dl.position.set(100, 200, 100);
+        this.scene.add(dl);
+
+        // Placeholder floor until tiles arrive
+        const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
+        const phMat = new THREE.MeshBasicMaterial({ color: 0xdcdcdc });
+        this.mapMesh = new THREE.Mesh(phGeo, phMat);
+        this.mapMesh.rotation.x = -Math.PI / 2;
+        this.scene.add(this.mapMesh);
+        this.planeDim = { w: PLANE_SIZE, h: PLANE_SIZE };
+
+        this.pointsGroup = new THREE.Group();
+        this.scene.add(this.pointsGroup);
+
+        this._onResize = () => this._resize();
+        window.addEventListener('resize', this._onResize);
+        this._ro = new ResizeObserver(() => this._resize());
+        this._ro.observe(canvas);
+
+        const tick = () => {
+            this.controls.update();
+            this.renderer.render(this.scene, this.camera);
+            this._rafId = requestAnimationFrame(tick);
+        };
+        tick();
+    }
+
+    _resize() {
+        const w = Math.max(1, this.canvas.clientWidth);
+        const h = Math.max(1, this.canvas.clientHeight);
+        if (w === this._lastW && h === this._lastH) return;
+        this._lastW = w; this._lastH = h;
+        this.renderer.setSize(w, h, false);
+        this.camera.aspect = w / h;
+        this.camera.updateProjectionMatrix();
+    }
+
+    // ---- Geolocation ----
+
+    async _checkInitialPermission() {
+        if (!('geolocation' in navigator)) {
+            this._setStatus('Geolocation not supported in this browser.');
+            if (this.btnEl) { this.btnEl.disabled = true; this.btnEl.textContent = 'Not supported'; }
+            return;
+        }
+        if (!navigator.permissions) return;
+        try {
+            const p = await navigator.permissions.query({ name: 'geolocation' });
+            const apply = () => {
+                if (p.state === 'granted') {
+                    if (!this.watchId) this.startWatching();
+                } else if (p.state === 'denied') {
+                    this._setStatus('Location denied — allow it in browser settings to use the 3D map.');
+                    if (this.btnEl) { this.btnEl.disabled = true; this.btnEl.textContent = 'Location denied'; }
+                } else {
+                    this._setStatus('Location not enabled.');
+                }
+            };
+            apply();
+            p.addEventListener?.('change', apply);
+        } catch { /* permissions API may not support 'geolocation' on some platforms */ }
+    }
+
+    _bindButton() {
+        if (!this.btnEl) return;
+        this.btnEl.addEventListener('click', () => this.startWatching());
+    }
+
+    _setStatus(text) {
+        if (this.statusEl) this.statusEl.textContent = text;
+    }
+
+    startWatching() {
+        if (!('geolocation' in navigator) || this.watchId != null) return;
+        this._setStatus('Requesting location…');
+        if (this.btnEl) this.btnEl.disabled = true;
+        this.watchId = navigator.geolocation.watchPosition(
+            pos => {
+                if (this.btnEl) this.btnEl.classList.add('hidden');
+                const { latitude, longitude, accuracy } = pos.coords;
+                this.userLoc = { lat: latitude, lon: longitude, accuracy };
+                this._setStatus(`📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}  (±${Math.round(accuracy)} m)`);
+                this._scheduleMapUpdate();
+                this._updateUserMarker();
+            },
+            err => {
+                this._setStatus(`Location error: ${err.message}`);
+                if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.classList.remove('hidden'); }
+                this.watchId = null;
+            },
+            { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
+        );
+    }
+
+    currentLocation() {
+        return this.userLoc;
+    }
+
+    // ---- Packet ingestion ----
+
+    addPacket(opts) {
+        if (opts.lat == null || opts.lon == null || opts.rssi == null) return;
+        this.points.push({ ...opts });
+        if (this.emptyEl) this.emptyEl.classList.add('hidden');
+        this._scheduleMapUpdate();
+    }
+
+    _scheduleMapUpdate() {
+        clearTimeout(this._mapTimer);
+        this._mapTimer = setTimeout(() => this._updateMap(), 250);
+    }
+
+    _bbox() {
+        const locs = this.points.map(p => ({ lat: p.lat, lon: p.lon }));
+        if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
+        if (!locs.length) return null;
+        let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+        for (const l of locs) {
+            if (l.lat < minLat) minLat = l.lat;
+            if (l.lat > maxLat) maxLat = l.lat;
+            if (l.lon < minLon) minLon = l.lon;
+            if (l.lon > maxLon) maxLon = l.lon;
+        }
+        return { minLat, maxLat, minLon, maxLon };
+    }
+
+    async _updateMap() {
+        if (this._mapBusy) { this._scheduleMapUpdate(); return; }
+        const bb = this._bbox();
+        if (!bb) return;
+
+        // Pad bbox so points are not at the very edge
+        let { minLat, maxLat, minLon, maxLon } = bb;
+        const padLat = (maxLat - minLat) * 0.3 || 0.0008;
+        const padLon = (maxLon - minLon) * 0.3 || 0.0008;
+        minLat -= padLat; maxLat += padLat;
+        minLon -= padLon; maxLon += padLon;
+
+        let zoom = 19;
+        let tl, br;
+        while (zoom > 1) {
+            tl = lonLatToTile(minLon, maxLat, zoom);
+            br = lonLatToTile(maxLon, minLat, zoom);
+            const tx = Math.floor(br.x) - Math.floor(tl.x) + 1;
+            const ty = Math.floor(br.y) - Math.floor(tl.y) + 1;
+            if (tx <= MAX_TILES_AXIS && ty <= MAX_TILES_AXIS) break;
+            zoom--;
+        }
+
+        const x0 = Math.floor(tl.x), y0 = Math.floor(tl.y);
+        const x1 = Math.floor(br.x), y1 = Math.floor(br.y);
+        const nx = x1 - x0 + 1;
+        const ny = y1 - y0 + 1;
+
+        const key = `${zoom}/${x0}/${y0}/${x1}/${y1}`;
+        if (key === this.lastBboxKey) {
+            this._repositionAll();
+            this._updateUserMarker();
+            return;
+        }
+
+        this._mapBusy = true;
+        try {
+            const tileCanvas = document.createElement('canvas');
+            tileCanvas.width  = nx * TILE_PX;
+            tileCanvas.height = ny * TILE_PX;
+            const ctx = tileCanvas.getContext('2d');
+            ctx.fillStyle = '#dfdfdf';
+            ctx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
+
+            const url = TILE_URL(zoom);
+            const tasks = [];
+            for (let dx = 0; dx < nx; dx++) {
+                for (let dy = 0; dy < ny; dy++) {
+                    tasks.push(new Promise(res => {
+                        const img = new Image();
+                        img.crossOrigin = 'anonymous';
+                        img.referrerPolicy = 'no-referrer';
+                        img.onload  = () => { ctx.drawImage(img, dx * TILE_PX, dy * TILE_PX); res(); };
+                        img.onerror = () => res();
+                        img.src = url(x0 + dx, y0 + dy);
+                    }));
+                }
+            }
+            await Promise.all(tasks);
+
+            // Attribution baked into the texture (OSM tile usage policy)
+            ctx.font = '12px system-ui, sans-serif';
+            const attrib = '© OpenStreetMap contributors';
+            const tw = ctx.measureText(attrib).width;
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillRect(tileCanvas.width - tw - 10, tileCanvas.height - 18, tw + 8, 16);
+            ctx.fillStyle = '#222';
+            ctx.fillText(attrib, tileCanvas.width - tw - 6, tileCanvas.height - 6);
+
+            const texture = new THREE.CanvasTexture(tileCanvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.minFilter  = THREE.LinearFilter;
+            texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+            texture.needsUpdate = true;
+
+            const aspect = nx / ny;
+            const planeW = aspect >= 1 ? PLANE_SIZE : PLANE_SIZE * aspect;
+            const planeH = aspect >= 1 ? PLANE_SIZE / aspect : PLANE_SIZE;
+
+            if (this.mapMesh) {
+                this.scene.remove(this.mapMesh);
+                this.mapMesh.geometry.dispose();
+                this.mapMesh.material.map?.dispose?.();
+                this.mapMesh.material.dispose();
+            }
+            const geo = new THREE.PlaneGeometry(planeW, planeH);
+            const mat = new THREE.MeshBasicMaterial({ map: texture });
+            this.mapMesh = new THREE.Mesh(geo, mat);
+            this.mapMesh.rotation.x = -Math.PI / 2;
+            this.scene.add(this.mapMesh);
+
+            this.tileBounds  = { x0, y0, nx, ny, zoom };
+            this.planeDim    = { w: planeW, h: planeH };
+            this.lastBboxKey = key;
+
+            this._repositionAll();
+            this._updateUserMarker();
+            this._fitCameraOnce();
+        } finally {
+            this._mapBusy = false;
+        }
+    }
+
+    _fitCameraOnce() {
+        if (this._cameraFit) return;
+        const { w, h } = this.planeDim;
+        const r = Math.max(w, h);
+        this.camera.position.set(r * 0.7, r * 0.9, r * 1.0);
+        this.controls.target.set(0, MAX_HEIGHT * 0.3, 0);
+        this.controls.update();
+        this._cameraFit = true;
+    }
+
+    _latLonToWorld(lat, lon) {
+        if (!this.tileBounds || !this.planeDim) return null;
+        const { x0, y0, nx, ny, zoom } = this.tileBounds;
+        const t = lonLatToTile(lon, lat, zoom);
+        const fx = (t.x - x0) / nx;  // 0..1 across width  (east →)
+        const fy = (t.y - y0) / ny;  // 0..1 across height (south ↓ in image)
+        const { w, h } = this.planeDim;
+        // Plane rotated -π/2 around X: local +Y → world -Z.
+        // Top of texture (north, smaller fy) sits at local +Y = +h/2,
+        // which maps to world -Z. So:
+        const wx = (fx - 0.5) * w;
+        const wz = (fy - 0.5) * h;   // south in image → +Z in world (in front of camera looking -Z)
+        return new THREE.Vector3(wx, 0, wz);
+    }
+
+    _rssiToHeight(rssi) {
+        const t = (rssi - RSSI_BAD) / (RSSI_GOOD - RSSI_BAD);
+        const clamped = Math.max(0, Math.min(1, t));
+        return MIN_HEIGHT + clamped * (MAX_HEIGHT - MIN_HEIGHT);
+    }
+
+    _repositionAll() {
+        for (const p of this.points) {
+            if (p.mesh) {
+                this.pointsGroup.remove(p.mesh);
+                p.mesh.geometry.dispose();
+                p.mesh.material.dispose();
+                p.mesh = null;
+            }
+            if (p.line) {
+                this.pointsGroup.remove(p.line);
+                p.line.geometry.dispose();
+                p.line.material.dispose();
+                p.line = null;
+            }
+        }
+        for (const p of this.points) {
+            const pos = this._latLonToWorld(p.lat, p.lon);
+            if (!pos) continue;
+            const height = this._rssiToHeight(p.rssi);
+            const color  = new THREE.Color(this.colorFor(p.col));
+
+            const sphereGeo = new THREE.SphereGeometry(1.1, 14, 12);
+            const sphereMat = new THREE.MeshBasicMaterial({ color });
+            const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+            sphere.position.set(pos.x, height, pos.z);
+            this.pointsGroup.add(sphere);
+            p.mesh = sphere;
+
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(pos.x, 0,      pos.z),
+                new THREE.Vector3(pos.x, height, pos.z),
+            ]);
+            const lineMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.45 });
+            const line = new THREE.Line(lineGeo, lineMat);
+            this.pointsGroup.add(line);
+            p.line = line;
+        }
+    }
+
+    _updateUserMarker() {
+        if (!this.userLoc || !this.tileBounds) return;
+        const pos = this._latLonToWorld(this.userLoc.lat, this.userLoc.lon);
+        if (!pos) return;
+        if (!this.userMarker) {
+            const group = new THREE.Group();
+            const cone = new THREE.Mesh(
+                new THREE.ConeGeometry(1.8, 5, 14),
+                new THREE.MeshBasicMaterial({ color: 0xff3355 })
+            );
+            cone.position.y = 2.5;
+            group.add(cone);
+            const base = new THREE.Mesh(
+                new THREE.CircleGeometry(2.6, 24),
+                new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.35 })
+            );
+            base.rotation.x = -Math.PI / 2;
+            base.position.y = 0.05;
+            group.add(base);
+            this.userMarker = group;
+            this.scene.add(this.userMarker);
+        }
+        this.userMarker.position.set(pos.x, 0, pos.z);
+    }
+
+    // ---- Lifecycle ----
+
+    dispose() {
+        if (this.watchId != null) navigator.geolocation.clearWatch(this.watchId);
+        cancelAnimationFrame(this._rafId);
+        window.removeEventListener('resize', this._onResize);
+        this._ro?.disconnect();
+        this.renderer.dispose();
+    }
+}
