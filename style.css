@@ -785,6 +785,27 @@ header {
     color: white;
 }
 
+/* On dark / purple backgrounds the blue-on-blue default disappears —
+   force a contrasting white-on-translucent variant. */
+.hstat .help-icon,
+.sound-toggle .help-icon,
+.ttl-control .help-icon {
+    background: rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.85);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.hstat .help-icon:hover,
+.sound-toggle .help-icon:hover,
+.ttl-control .help-icon:hover,
+.hstat .help-icon.active,
+.sound-toggle .help-icon.active,
+.ttl-control .help-icon.active {
+    background: rgba(255, 255, 255, 0.32);
+    color: white;
+    border-color: rgba(255, 255, 255, 0.45);
+}
+
 /* Shared floating tooltip used by help icons */
 .help-tip-float {
     white-space: normal !important;

@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=13';
+import { Signal3DMap } from './signal3d.js?v=14';
 
 class MeshCoreMonitor {
     constructor() {
@@ -1015,7 +1015,7 @@ class MeshCoreMonitor {
         if (colKey !== this._lastColKey) {
             this._lastColKey = colKey;
             const repHeaders = visibleCols.map(r =>
-                `<th colspan="2" class="msg-col-rep">${this.displayId(r)}</th>`
+                `<th colspan="2" class="msg-col-rep"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}</th>`
             ).join('');
             const subHeaders = visibleCols.map(() =>
                 `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
