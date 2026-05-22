@@ -316,20 +316,32 @@ class MeshCoreMonitor {
         })();
         if (sourceSel && savedSource) sourceSel.value = savedSource;
 
-        this.signalMap = new Signal3DMap({
-            canvas,
-            statusEl:      document.getElementById('locationStatus'),
-            btnEl:         document.getElementById('enableLocationBtn'),
-            emptyEl:       document.getElementById('signalMapEmpty'),
-            infoEl:        document.getElementById('signalMapInfo'),
-            colorFor:      col => this.getRepeaterColor(col),
-            displayId:     col => this.displayId(col),
-            initialSource: sourceSel?.value,
-            onSelect:      col => {
-                this._chartSelected = col;
-                this.scheduleChartRender();
-            },
-        });
+        try {
+            this.signalMap = new Signal3DMap({
+                canvas,
+                statusEl:      document.getElementById('locationStatus'),
+                btnEl:         document.getElementById('enableLocationBtn'),
+                emptyEl:       document.getElementById('signalMapEmpty'),
+                infoEl:        document.getElementById('signalMapInfo'),
+                colorFor:      col => this.getRepeaterColor(col),
+                displayId:     col => this.displayId(col),
+                initialSource: sourceSel?.value,
+                onSelect:      col => {
+                    this._chartSelected = col;
+                    this.scheduleChartRender();
+                },
+            });
+        } catch (err) {
+            console.error('Signal3DMap init failed:', err);
+            this.signalMap = null;
+            canvas.style.display = 'none';
+            const emptyEl = document.getElementById('signalMapEmpty');
+            if (emptyEl) {
+                emptyEl.classList.remove('hidden');
+                emptyEl.textContent = '3D map unavailable — WebGL is not supported or disabled in this browser.';
+            }
+            return;
+        }
 
         sourceSel?.addEventListener('change', () => {
             this.signalMap.setMapSource(sourceSel.value);
