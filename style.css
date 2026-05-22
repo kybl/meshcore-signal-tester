@@ -400,6 +400,28 @@ header {
     overflow: visible;
 }
 
+.chart-legend-wrap {
+    padding: 2px 0;
+}
+
+.legend-toggle-btn {
+    background: none;
+    border: none;
+    font-size: 11px;
+    color: #999;
+    cursor: pointer;
+    padding: 2px 0;
+    user-select: none;
+}
+
+.legend-toggle-btn:hover {
+    color: #555;
+}
+
+.legend-collapsed .chart-legend {
+    display: none;
+}
+
 .chart-legend {
     display: flex;
     flex-wrap: wrap;

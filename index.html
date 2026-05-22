@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=29">
+    <link rel="stylesheet" href="style.css?v=30">
 </head>
 <body>
     <div class="container">
@@ -95,7 +95,10 @@
                         <div class="chart-svg-wrap">
                             <svg id="rssiChart" class="rssi-chart"></svg>
                         </div>
-                        <div id="rssiChartLegend" class="chart-legend"></div>
+                        <div class="chart-legend-wrap" id="rssiLegendWrap">
+                            <button class="legend-toggle-btn" data-wrap="rssiLegendWrap" data-key="legend-rssi">▾ Legend</button>
+                            <div id="rssiChartLegend" class="chart-legend"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -110,7 +113,10 @@
                         <div class="chart-svg-wrap">
                             <svg id="snrChart" class="rssi-chart"></svg>
                         </div>
-                        <div id="snrChartLegend" class="chart-legend"></div>
+                        <div class="chart-legend-wrap" id="snrLegendWrap">
+                            <button class="legend-toggle-btn" data-wrap="snrLegendWrap" data-key="legend-snr">▾ Legend</button>
+                            <div id="snrChartLegend" class="chart-legend"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -234,6 +240,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=29"></script>
+    <script type="module" src="app.js?v=30"></script>
 </body>
 </html>

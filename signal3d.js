@@ -114,9 +114,9 @@ export class Signal3DMap {
         this.controls.maxDistance   = 600;
         this.controls.update();
 
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.55);
-        dl.position.set(100, 200, 100);
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+        const dl = new THREE.DirectionalLight(0xffffff, 1.0);
+        dl.position.set(60, 180, 80);
         this.scene.add(dl);
 
         // Placeholder floor until tiles arrive
@@ -607,14 +607,14 @@ export class Signal3DMap {
         };
 
         if (litPts.length) {
-            this._iMeshLit = new THREE.InstancedMesh(this._sphereGeo, new THREE.MeshBasicMaterial(), litPts.length);
+            this._iMeshLit = new THREE.InstancedMesh(this._sphereGeo, new THREE.MeshPhongMaterial({ shininess: 60 }), litPts.length);
             fillMesh(this._iMeshLit, litPts, !!sel);
             this.pointsGroup.add(this._iMeshLit);
         }
         if (dimPts.length) {
             this._iMeshDim = new THREE.InstancedMesh(
                 this._sphereGeo,
-                new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.15 }),
+                new THREE.MeshPhongMaterial({ transparent: true, opacity: 0.2, shininess: 20 }),
                 dimPts.length
             );
             fillMesh(this._iMeshDim, dimPts, false);

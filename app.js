@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=29';
+import { Signal3DMap } from './signal3d.js?v=30';
 
 class MeshCoreMonitor {
     constructor() {
@@ -245,6 +245,19 @@ class MeshCoreMonitor {
                 this.signalMap?.setSphereSize(this._sphereSize);
             });
         }
+
+        // Collapsible chart legends
+        document.querySelectorAll('.legend-toggle-btn').forEach(btn => {
+            const wrap = document.getElementById(btn.dataset.wrap);
+            const key  = btn.dataset.key;
+            const applyState = collapsed => {
+                wrap?.classList.toggle('legend-collapsed', collapsed);
+                btn.textContent = (collapsed ? '▸' : '▾') + ' Legend';
+                try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch {}
+            };
+            try { applyState(localStorage.getItem(key) === '1'); } catch { applyState(false); }
+            btn.addEventListener('click', () => applyState(!wrap?.classList.contains('legend-collapsed')));
+        });
 
         const repeaterHead = document.querySelector('.repeater-log-table thead');
         if (repeaterHead) {
