@@ -35,6 +35,7 @@ class MeshCoreMonitor {
         this._msgFilter = '';
         this._repFilterTerms = [];
         this._collecting = false;
+        this._chartFrozenAt = Date.now();
 
         this.initUI();
         this.startCleanupTimer();
@@ -51,9 +52,11 @@ class MeshCoreMonitor {
         if (this._collecting) {
             btn.textContent = '⏸ Pause';
             btn.classList.add('collecting');
+            this._chartFrozenAt = null;
         } else {
             btn.textContent = '▶ Resume';
             btn.classList.remove('collecting');
+            if (!this._chartFrozenAt) this._chartFrozenAt = Date.now();
         }
     }
 
@@ -67,7 +70,7 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
-        setInterval(() => this.scheduleChartRender(), 2000);
+        setInterval(() => { if (!this._chartFrozenAt) this.scheduleChartRender(); }, 2000);
 
         // Collapsible sections — clicking anywhere in the header row toggles
         document.querySelectorAll('.section-header').forEach(header => {
@@ -1623,7 +1626,7 @@ class MeshCoreMonitor {
         const pl = 36, pr = 8, pt = 6, pb = 24;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
-        const now = Date.now();
+        const now = this._chartFrozenAt ?? Date.now();
         const tMin = isFinite(this.HASH_LIFETIME)
             ? now - this.HASH_LIFETIME
             : this._earliestTime(pts);
@@ -1675,7 +1678,7 @@ class MeshCoreMonitor {
         const cw = W - pl - pr;
         const ch = H - pt - pb;
 
-        const now = Date.now();
+        const now = this._chartFrozenAt ?? Date.now();
         const defaultWindow = 5 * 60000;
         let tMin;
         if (!hasData) tMin = now - defaultWindow;
@@ -1845,7 +1848,7 @@ class MeshCoreMonitor {
         const cw = W - pl - pr;
         const ch = H - pt - pb;
 
-        const now = Date.now();
+        const now = this._chartFrozenAt ?? Date.now();
         const tMin = isFinite(this.HASH_LIFETIME)
             ? now - this.HASH_LIFETIME
             : this._earliestTime(pts);
@@ -2227,6 +2230,10 @@ class MeshCoreMonitor {
         }
         if (rows.length === 0) return;
 
+        if (this.hashData.size > 0) {
+            if (!confirm(`There are already ${this.hashData.size} packet(s) loaded. The CSV will be merged with existing data. Continue?`)) return;
+        }
+
         // Ascending time order so firstSeen and prefix resolution are correct
         rows.sort((a, b) => a.time - b.time);
 
@@ -2279,6 +2286,8 @@ class MeshCoreMonitor {
         }
 
         this.sortColumns();
+        // Update chart freeze point so imported historical data is visible
+        if (!this._collecting) this._chartFrozenAt = Date.now();
         this.renderMsgTable();
         this.updateRepeaterTable();
         this.scheduleChartRender();
