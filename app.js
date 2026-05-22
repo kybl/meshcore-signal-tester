@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=23';
+import { Signal3DMap } from './signal3d.js?v=24';
 
 class MeshCoreMonitor {
     constructor() {
@@ -843,14 +843,34 @@ class MeshCoreMonitor {
             return rawId;
         }
 
-        if (matches.length === 1) {
-            const existing = matches[0];
-            // Already a collision key — merge into it.
-            if (existing.includes('/')) return existing;
+        // Partition specific cols from collision keys. Treated very differently:
+        //  - specific: subject to promote / split
+        //  - collision: their components may need to be refined when a
+        //    more-precise sibling arrives
+        const specificMatches  = matches.filter(m => !m.includes('/'));
+        const collisionMatches = matches.filter(m =>  m.includes('/'));
 
-            const existingPrec    = this.idPrecision(existing);
-            const existingMinPrec = colMinPrec(existing);
-            const commonPrec      = Math.min(rawPrec, existingPrec);
+        // Multiple distinct specific siblings → this rawId is ambiguous over
+        // all of them. Use (or create) the canonical collision key. If a
+        // subset collision is already there, fold it into the bigger one.
+        if (specificMatches.length >= 2) {
+            const collisionKey = specificMatches.sort().join('/');
+            if (!this.repeaterColumns.includes(collisionKey)) {
+                const subsets = collisionMatches.filter(ck =>
+                    ck.split('/').every(comp => specificMatches.includes(comp))
+                );
+                for (const sub of subsets) this.renameColumnKey(sub, collisionKey);
+                if (!this.repeaterColumns.includes(collisionKey)) this.repeaterColumns.push(collisionKey);
+            }
+            return collisionKey;
+        }
+
+        // Exactly one specific match — the usual promote / split path,
+        // plus refining components inside any matched collision keys.
+        if (specificMatches.length === 1) {
+            const existing = specificMatches[0];
+            const existingPrec = this.idPrecision(existing);
+            const commonPrec   = Math.min(rawPrec, existingPrec);
             const compatibleAtCommon =
                 this.idSuffix(rawId, commonPrec) === this.idSuffix(existing, commonPrec);
 
@@ -860,6 +880,16 @@ class MeshCoreMonitor {
                 // can un-merge.
                 if (rawPrec > existingPrec) {
                     this.renameColumnKey(existing, rawId);
+                    // Mirror the promote into every matched collision key
+                    // that has `existing` as a component — otherwise the
+                    // collision label stays stuck at the old (less-precise)
+                    // identity for what is now a known refined node.
+                    for (const ck of collisionMatches) {
+                        const comps = ck.split('/');
+                        if (!comps.includes(existing)) continue;
+                        const newKey = comps.map(c => c === existing ? rawId : c).sort().join('/');
+                        if (newKey !== ck) this.renameColumnKey(ck, newKey);
+                    }
                     return rawId;
                 }
                 return existing;
@@ -876,11 +906,23 @@ class MeshCoreMonitor {
             return rawId;
         }
 
-        // Multiple compatible columns — ambiguous short ID hitting several
-        // known siblings. Use (or create) the canonical collision key.
-        const collisionKey = matches.sort().join('/');
-        if (!this.repeaterColumns.includes(collisionKey)) this.repeaterColumns.push(collisionKey);
-        return collisionKey;
+        // No specific match, only collision key(s) — rawId belongs in the
+        // collision. If rawId refines a component of a matched key, swap
+        // that component in the key.
+        let dest = collisionMatches[0];
+        for (const ck of collisionMatches) {
+            const comps = ck.split('/');
+            const refined = comps.find(comp => {
+                const cPrec = this.idPrecision(comp);
+                return rawPrec > cPrec && this.idSuffix(rawId, cPrec) === this.idSuffix(comp, cPrec);
+            });
+            if (!refined) continue;
+            const newKey = comps.map(c => c === refined ? rawId : c).sort().join('/');
+            if (newKey === ck) continue;
+            this.renameColumnKey(ck, newKey);
+            if (ck === dest) dest = newKey;
+        }
+        return dest;
     }
 
     // Un-merge: move entries that came in at a shorter precision (= ambiguous
