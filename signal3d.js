@@ -76,10 +76,12 @@ export class Signal3DMap {
         this._iMeshDim    = null;   // transparent spheres (unselected when something is selected)
         this._iMeshHit    = null;   // invisible hit-test spheres
         this._lineSegs    = null;   // all vertical lines as one LineSegments object
+        this._hlPoints    = null;   // additive highlight sprites over lit spheres
         this._iHitClusters = [];    // clusters[instanceId] for click detection
         // Shared geometries created once and reused across all InstancedMesh rebuilds
         this._sphereGeo   = new THREE.SphereGeometry(1, 12, 10);
         this._hitGeo      = new THREE.SphereGeometry(1,  6,  4);
+        this._hlTex       = this._makeHighlightTex();
         this.infoEl       = opts.infoEl   || null;
         this.onSelect     = opts.onSelect || null;
         this.onFilter     = opts.onFilter || null;
@@ -87,6 +89,22 @@ export class Signal3DMap {
         this._initScene();
         this._bindButton();
         this._checkInitialPermission();
+    }
+
+    _makeHighlightTex() {
+        const s = 64;
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = s;
+        const ctx = canvas.getContext('2d');
+        const g = ctx.createRadialGradient(s * 0.32, s * 0.26, 0, s * 0.32, s * 0.26, s * 0.38);
+        g.addColorStop(0,   'rgba(255,255,255,0.75)');
+        g.addColorStop(0.4, 'rgba(255,255,255,0.28)');
+        g.addColorStop(1,   'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, s, s);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.needsUpdate = true;
+        return tex;
     }
 
     // ---- Scene setup ----
@@ -114,8 +132,8 @@ export class Signal3DMap {
         this.controls.maxDistance   = 600;
         this.controls.update();
 
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.72));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.75);
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.45);
         dl.position.set(60, 180, 80);
         this.scene.add(dl);
 
@@ -572,16 +590,17 @@ export class Signal3DMap {
     }
 
     _disposeInstanced() {
-        for (const obj of [this._iMeshLit, this._iMeshDim, this._iMeshHit, this._lineSegs]) {
+        for (const obj of [this._iMeshLit, this._iMeshDim, this._iMeshHit, this._lineSegs, this._hlPoints]) {
             if (!obj) continue;
             this.pointsGroup.remove(obj);
             obj.material?.dispose();
-            if (obj === this._lineSegs) obj.geometry?.dispose();
+            if (obj === this._lineSegs || obj === this._hlPoints) obj.geometry?.dispose();
         }
         this._iMeshLit = null;
         this._iMeshDim = null;
         this._iMeshHit = null;
         this._lineSegs = null;
+        this._hlPoints = null;
         this._iHitClusters = [];
     }
 
@@ -619,14 +638,36 @@ export class Signal3DMap {
         };
 
         if (litPts.length) {
-            this._iMeshLit = new THREE.InstancedMesh(this._sphereGeo, new THREE.MeshPhongMaterial({ shininess: 60 }), litPts.length);
+            this._iMeshLit = new THREE.InstancedMesh(this._sphereGeo, new THREE.MeshBasicMaterial(), litPts.length);
             fillMesh(this._iMeshLit, litPts, !!sel);
             this.pointsGroup.add(this._iMeshLit);
+
+            // Additive highlight sprites — white gradient at top-left of each sphere
+            const hlPos = new Float32Array(litPts.length * 3);
+            for (let i = 0; i < litPts.length; i++) {
+                const p = litPts[i];
+                const pos = this._latLonToWorld(p.lat, p.lon);
+                const h = pos ? this._rssiToHeight(p.rssi) : 0;
+                hlPos[i * 3]     = pos ? pos.x : 0;
+                hlPos[i * 3 + 1] = h;
+                hlPos[i * 3 + 2] = pos ? pos.z : 0;
+            }
+            const hlGeo = new THREE.BufferGeometry();
+            hlGeo.setAttribute('position', new THREE.BufferAttribute(hlPos, 3));
+            this._hlPoints = new THREE.Points(hlGeo, new THREE.PointsMaterial({
+                map:            this._hlTex,
+                size:           this.sphereSize * 2.2,
+                sizeAttenuation: true,
+                transparent:    true,
+                blending:       THREE.AdditiveBlending,
+                depthWrite:     false,
+            }));
+            this.pointsGroup.add(this._hlPoints);
         }
         if (dimPts.length) {
             this._iMeshDim = new THREE.InstancedMesh(
                 this._sphereGeo,
-                new THREE.MeshPhongMaterial({ transparent: true, opacity: 0.2, shininess: 20 }),
+                new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.2 }),
                 dimPts.length
             );
             fillMesh(this._iMeshDim, dimPts, false);
