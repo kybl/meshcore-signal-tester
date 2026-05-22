@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=31';
+import { Signal3DMap } from './signal3d.js?v=32';
 
 class MeshCoreMonitor {
     constructor() {
@@ -211,6 +211,11 @@ class MeshCoreMonitor {
                 try { localStorage.setItem('ttl', v); } catch {}
             });
         }
+
+        document.getElementById('clearDataBtn')?.addEventListener('click', () => {
+            if (!confirm('Delete all captured data? This cannot be undone.')) return;
+            this._clearAllData();
+        });
 
         this.soundSelect?.addEventListener('change', () => {
             try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
@@ -1869,12 +1874,19 @@ class MeshCoreMonitor {
             parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="${strokeW}" stroke-opacity="${strokeOp}"/>`);
         }
 
-        for (const [, dPts] of decimGroups) {
+        // Render dimmed circles first, then highlighted on top (SVG painter order)
+        for (const [col, dPts] of decimGroups) {
+            if (selected && selected === col) continue;
             for (const p of dPts) {
-                const isHighlighted = !selected || selected === p.col;
-                const r = (selected && selected === p.col) ? this._dotSize * 1.43 : this._dotSize;
-                const fillOp = isHighlighted ? 0.85 : 0.18;
-                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${r}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${fillOp}"/>`);
+                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${selected ? 0.18 : 0.85}"/>`);
+            }
+        }
+        if (selected) {
+            const selPts = decimGroups.get(selected);
+            if (selPts) {
+                for (const p of selPts) {
+                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize * 1.43}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.92"/>`);
+                }
             }
         }
 
@@ -2050,6 +2062,22 @@ class MeshCoreMonitor {
             this.updateStats();
             if (this.hashData.size === 0 && this.emptyState) this.emptyState.classList.remove('hidden');
         }, 400);
+    }
+
+    _clearAllData() {
+        this.hashData.clear();
+        this.chartPoints = [];
+        this.repeaterColumns = [];
+        this.allRepeaters.clear();
+        this._chartSelected = null;
+        this.signalMap?.clearPoints?.();
+        if (this.msgTableBody) this.msgTableBody.innerHTML = '';
+        if (this.msgTableHead) this.msgTableHead.innerHTML = '';
+        document.getElementById('msgFilterBar')?.classList.add('hidden');
+        this.scheduleChartRender();
+        this.updateRepeaterTable();
+        this.updateStats();
+        if (this.emptyState) this.emptyState.classList.remove('hidden');
     }
 
     // --- Repeater log table ---

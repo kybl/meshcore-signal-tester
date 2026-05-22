@@ -756,6 +756,24 @@ header {
     padding-left: 2px;
 }
 
+.btn-clear-data {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    color: rgba(255,255,255,0.65);
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+    margin-left: 6px;
+    white-space: nowrap;
+}
+
+.btn-clear-data:hover {
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.55);
+    color: rgba(255,255,255,0.9);
+}
+
 .ttl-sep {
     color: rgba(255,255,255,0.25);
     margin: 0 3px;

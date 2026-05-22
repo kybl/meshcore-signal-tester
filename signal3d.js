@@ -357,6 +357,18 @@ export class Signal3DMap {
 
     // ---- Map source ----
 
+    clearPoints() {
+        this.points = [];
+        this._selectedCol = null;
+        this._disposeInstanced();
+        this._updateInfoPanel();
+        this.onSelect?.(null);
+        if (this.emptyEl) {
+            this.emptyEl.classList.remove('hidden');
+            this.emptyEl.textContent = 'Waiting for packets to populate the 3D map.';
+        }
+    }
+
     setSphereSize(n) {
         if (n === this.sphereSize) return;
         this.sphereSize = n;
