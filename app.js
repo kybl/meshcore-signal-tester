@@ -1387,6 +1387,9 @@ class MeshCoreMonitor {
             detail.className = 'detail-row';
             if (col) detail.dataset.col = col;
             detail.innerHTML = this.buildDetailRowHtml(hash, col);
+            // Suppress the open animation — this is a re-insert, not a user-triggered open
+            const detailCell = detail.querySelector('.detail-cell');
+            if (detailCell) detailCell.style.animation = 'none';
             row.after(detail);
             if (col) {
                 this.msgTableBody.querySelectorAll(`[data-hash="${hash}"][data-col="${col}"]`)
