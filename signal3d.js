@@ -489,10 +489,10 @@ export class Signal3DMap {
         }
 
         const maxTile = Math.pow(2, zoom) - 1;
-        const x0 = Math.max(0, Math.floor(tl.x) - 1);
-        const y0 = Math.max(0, Math.floor(tl.y) - 1);
-        const x1 = Math.min(maxTile, Math.floor(br.x) + 1);
-        const y1 = Math.min(maxTile, Math.floor(br.y) + 1);
+        const x0 = Math.max(0, Math.floor(tl.x) - 2);
+        const y0 = Math.max(0, Math.floor(tl.y) - 2);
+        const x1 = Math.min(maxTile, Math.floor(br.x) + 2);
+        const y1 = Math.min(maxTile, Math.floor(br.y) + 2);
         const nx = x1 - x0 + 1;
         const ny = y1 - y0 + 1;
 
@@ -656,7 +656,7 @@ export class Signal3DMap {
             this.pointsGroup.add(this._ptsMeshLit);
         }
         if (dimPts.length) {
-            this._ptsMeshDim = makePoints(dimPts, 0.25, 2.0);
+            this._ptsMeshDim = makePoints(dimPts, 0.07, 2.0);
             this.pointsGroup.add(this._ptsMeshDim);
         }
 
