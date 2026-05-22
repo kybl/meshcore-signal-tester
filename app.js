@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=30';
+import { Signal3DMap } from './signal3d.js?v=31';
 
 class MeshCoreMonitor {
     constructor() {
@@ -1679,11 +1679,6 @@ class MeshCoreMonitor {
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v < vMin) vMin = v;
             if (v > vMax) vMax = v;
-            if (type === 'rssi') {
-                const nf = p.rssi - p.snr;
-                if (nf < vMin) vMin = nf;
-                if (nf > vMax) vMax = nf;
-            }
         }
         if (vMin === Infinity) { vMin = 0; vMax = 1; }
         const rawRange = vMax - vMin || 1;

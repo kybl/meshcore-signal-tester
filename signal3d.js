@@ -114,8 +114,8 @@ export class Signal3DMap {
         this.controls.maxDistance   = 600;
         this.controls.update();
 
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-        const dl = new THREE.DirectionalLight(0xffffff, 1.0);
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.72));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.75);
         dl.position.set(60, 180, 80);
         this.scene.add(dl);
 
@@ -660,7 +660,12 @@ export class Signal3DMap {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(lPos, 3));
         geo.setAttribute('color',    new THREE.BufferAttribute(lCol, 3));
-        this._lineSegs = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true }));
+        const lineOpacity = Math.min(1, 0.25 + 0.35 * this.sphereSize);
+        this._lineSegs = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: lineOpacity < 1,
+            opacity: lineOpacity,
+        }));
         this.pointsGroup.add(this._lineSegs);
     }
 
