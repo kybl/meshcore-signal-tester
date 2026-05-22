@@ -57,7 +57,7 @@ export class Signal3DMap {
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
 
-        this.points       = [];     // { lat, lon, rssi, snr, col, time, mesh, line, hitMesh }
+        this.points       = [];     // { lat, lon, rssi, snr, col, time }
         this.userLoc      = null;
         this.watchId      = null;
         this.tileBounds   = null;   // { x0, y0, nx, ny, zoom }
@@ -71,8 +71,15 @@ export class Signal3DMap {
         this.mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
             ? opts.initialSource : DEFAULT_SOURCE;
         this._selectedCol = null;
-        this._meshToPoint = new Map();  // hitMesh → point
-        this._clusterMeshes = [];
+        // InstancedMesh handles — replaced per _repositionAll call
+        this._iMeshLit    = null;   // opaque spheres (selected col or all when nothing selected)
+        this._iMeshDim    = null;   // transparent spheres (unselected when something is selected)
+        this._iMeshHit    = null;   // invisible hit-test spheres
+        this._lineSegs    = null;   // all vertical lines as one LineSegments object
+        this._iHitClusters = [];    // clusters[instanceId] for click detection
+        // Shared geometries created once and reused across all InstancedMesh rebuilds
+        this._sphereGeo   = new THREE.SphereGeometry(1, 12, 10);
+        this._hitGeo      = new THREE.SphereGeometry(1,  6,  4);
         this.infoEl       = opts.infoEl   || null;
         this.onSelect     = opts.onSelect || null;
 
@@ -306,11 +313,13 @@ export class Signal3DMap {
             -((e.clientY - rect.top)  / rect.height) * 2 + 1
         );
         this._raycaster.setFromCamera(mouse, this.camera);
-        const hits = this._raycaster.intersectObjects([...this._meshToPoint.keys()]);
         let newCol = null;
-        if (hits.length > 0) {
-            const p = this._meshToPoint.get(hits[0].object);
-            if (p) newCol = (this._selectedCol === p.col) ? null : p.col;
+        if (this._iMeshHit) {
+            const hits = this._raycaster.intersectObject(this._iMeshHit);
+            if (hits.length > 0) {
+                const c = this._iHitClusters[hits[0].instanceId];
+                if (c) newCol = (this._selectedCol === c.col) ? null : c.col;
+            }
         }
         this._selectedCol = newCol;
         this._repositionAll();
@@ -556,65 +565,110 @@ export class Signal3DMap {
         return [...clusters.values()];
     }
 
-    _repositionAll() {
-        // Remove previously rendered cluster objects
-        if (this._clusterMeshes) {
-            for (const obj of this._clusterMeshes) {
-                this.pointsGroup.remove(obj);
-                obj.geometry?.dispose();
-                obj.material?.dispose();
-            }
+    _disposeInstanced() {
+        for (const obj of [this._iMeshLit, this._iMeshDim, this._iMeshHit, this._lineSegs]) {
+            if (!obj) continue;
+            this.pointsGroup.remove(obj);
+            obj.material?.dispose();
+            if (obj === this._lineSegs) obj.geometry?.dispose();
         }
-        this._clusterMeshes = [];
-        this._meshToPoint.clear();
+        this._iMeshLit = null;
+        this._iMeshDim = null;
+        this._iMeshHit = null;
+        this._lineSegs = null;
+        this._iHitClusters = [];
+    }
 
+    _repositionAll() {
+        this._disposeInstanced();
         if (!this.tileBounds) return;
 
-        const sel = this._selectedCol;
-        const visible = this.filterFn ? this.points.filter(p => this.filterFn(p.col)) : this.points;
+        const sel      = this._selectedCol;
+        const visible  = this.filterFn ? this.points.filter(p => this.filterFn(p.col)) : this.points;
         const clusters = this._clusterPoints(visible);
+        if (!clusters.length) return;
 
-        for (const c of clusters) {
+        const litC = sel ? clusters.filter(c => c.col === sel) : clusters;
+        const dimC = sel ? clusters.filter(c => c.col !== sel) : [];
+
+        const _m4  = new THREE.Matrix4();
+        const _v   = new THREE.Vector3();
+        const _s   = new THREE.Vector3();
+        const _q   = new THREE.Quaternion();
+        const _col = new THREE.Color();
+
+        const fillMesh = (mesh, cArr, isSelected) => {
+            for (let i = 0; i < cArr.length; i++) {
+                const c   = cArr[i];
+                const pos = this._latLonToWorld(c.rep.lat, c.rep.lon);
+                if (!pos) { _m4.makeScale(0, 0, 0); mesh.setMatrixAt(i, _m4); continue; }
+                const h = this._rssiToHeight(c.rep.rssi);
+                const r = isSelected ? 1.8 : Math.max(1.0, 1.0 + 0.3 * Math.log2(c.count));
+                _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(r, r, r));
+                mesh.setMatrixAt(i, _m4);
+                _col.set(this.colorFor(c.col));
+                mesh.setColorAt(i, _col);
+            }
+            mesh.instanceMatrix.needsUpdate = true;
+            if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        };
+
+        if (litC.length) {
+            this._iMeshLit = new THREE.InstancedMesh(this._sphereGeo, new THREE.MeshBasicMaterial(), litC.length);
+            fillMesh(this._iMeshLit, litC, !!sel);
+            this.pointsGroup.add(this._iMeshLit);
+        }
+        if (dimC.length) {
+            this._iMeshDim = new THREE.InstancedMesh(
+                this._sphereGeo,
+                new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.15 }),
+                dimC.length
+            );
+            fillMesh(this._iMeshDim, dimC, false);
+            this.pointsGroup.add(this._iMeshDim);
+        }
+
+        // Hit mesh covers all clusters for click detection
+        this._iHitClusters = clusters;
+        this._iMeshHit = new THREE.InstancedMesh(
+            this._hitGeo,
+            new THREE.MeshBasicMaterial({ visible: false }),
+            clusters.length
+        );
+        for (let i = 0; i < clusters.length; i++) {
+            const c   = clusters[i];
+            const pos = this._latLonToWorld(c.rep.lat, c.rep.lon);
+            if (!pos) { _m4.makeScale(0, 0, 0); this._iMeshHit.setMatrixAt(i, _m4); continue; }
+            const h = this._rssiToHeight(c.rep.rssi);
+            const r = Math.max(2.8, 1.0 + 0.3 * Math.log2(c.count) + 1.2);
+            _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(r, r, r));
+            this._iMeshHit.setMatrixAt(i, _m4);
+        }
+        this._iMeshHit.instanceMatrix.needsUpdate = true;
+        this.pointsGroup.add(this._iMeshHit);
+
+        // All vertical lines as one LineSegments draw call
+        const n    = clusters.length;
+        const lPos = new Float32Array(n * 6);
+        const lCol = new Float32Array(n * 6);
+        for (let i = 0; i < n; i++) {
+            const c   = clusters[i];
             const pos = this._latLonToWorld(c.rep.lat, c.rep.lon);
             if (!pos) continue;
-            const height     = this._rssiToHeight(c.rep.rssi);
-            const color      = new THREE.Color(this.colorFor(c.col));
-            const isSelected = sel === c.col;
-            const isLit      = !sel || isSelected;
-            const sphereR    = isSelected ? 1.8 : Math.max(1.0, 1.0 + 0.3 * Math.log2(c.count));
-
-            const sphere = new THREE.Mesh(
-                new THREE.SphereGeometry(sphereR, 14, 12),
-                new THREE.MeshBasicMaterial({
-                    color,
-                    transparent: !isLit,
-                    opacity:     isLit ? 1 : 0.15,
-                })
-            );
-            sphere.position.set(pos.x, height, pos.z);
-            this.pointsGroup.add(sphere);
-            this._clusterMeshes.push(sphere);
-
-            const lineGeo = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(pos.x, 0,      pos.z),
-                new THREE.Vector3(pos.x, height, pos.z),
-            ]);
-            const line = new THREE.Line(
-                lineGeo,
-                new THREE.LineBasicMaterial({ color, transparent: true, opacity: isLit ? 0.45 : 0.08 })
-            );
-            this.pointsGroup.add(line);
-            this._clusterMeshes.push(line);
-
-            const hitMesh = new THREE.Mesh(
-                new THREE.SphereGeometry(Math.max(2.8, sphereR + 1.2), 6, 4),
-                new THREE.MeshBasicMaterial({ visible: false })
-            );
-            hitMesh.position.set(pos.x, height, pos.z);
-            this.pointsGroup.add(hitMesh);
-            this._clusterMeshes.push(hitMesh);
-            this._meshToPoint.set(hitMesh, c.rep);
+            const h = this._rssiToHeight(c.rep.rssi);
+            _col.set(this.colorFor(c.col));
+            const f = (!sel || sel === c.col) ? 1 : 0.15;
+            const j = i * 6;
+            lPos[j]   = pos.x; lPos[j+1] = 0; lPos[j+2] = pos.z;
+            lPos[j+3] = pos.x; lPos[j+4] = h; lPos[j+5] = pos.z;
+            lCol[j]   = _col.r * f; lCol[j+1] = _col.g * f; lCol[j+2] = _col.b * f;
+            lCol[j+3] = _col.r * f; lCol[j+4] = _col.g * f; lCol[j+5] = _col.b * f;
         }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(lPos, 3));
+        geo.setAttribute('color',    new THREE.BufferAttribute(lCol, 3));
+        this._lineSegs = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true }));
+        this.pointsGroup.add(this._lineSegs);
     }
 
     _updateUserMarker() {
