@@ -11,7 +11,7 @@
         <header>
             <div class="header-row">
                 <span class="app-title">MeshCore RX Monitor</span>
-                <button class="help-btn" id="helpBtn" aria-label="Help / About">?</button>
+                <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
                 <div class="header-controls">
                     <span id="status" class="status disconnected">Disconnected</span>
                     <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
@@ -108,7 +108,7 @@
 
             <div class="section-wrap" id="signalMapWrap">
                 <div class="section-header">
-                    <span class="section-title">Signal 3D map</span>
+                    <span class="section-title">Signal 3D map<span class="help-icon" data-help="signal3d">?</span></span>
                     <button class="collapse-btn" data-target="signalMapBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="signalMapBody">
@@ -144,7 +144,7 @@
 
             <div class="section-wrap" id="msgTableWrap">
                 <div class="section-header">
-                    <span class="section-title">Received packets</span>
+                    <span class="section-title">Received packets<span class="help-icon" data-help="messages">?</span></span>
                     <button class="collapse-btn" data-target="msgScrollBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="msgScrollBody">
@@ -195,7 +195,7 @@
             <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality.</p>
 
             <div class="help-section-title">Getting started</div>
-            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons.</p>
+            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section.</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -224,15 +224,13 @@
                 <div class="help-dd">Repeater columns are sorted by: packets in the last 5 min (desc), then last RSSI (best first), then last SNR, then total RX count, then alphabetically.</div>
             </div>
 
-            <div class="help-section-title">Interactions</div>
+            <div class="help-section-title">Repeater ID prefix resolution</div>
+            <p>Path IDs can arrive as 1–3 byte prefixes of the full 4-byte node ID. The app resolves them progressively:</p>
             <ul class="help-list">
-                <li>Click an <b>RSSI or SNR cell</b> in Messages → see full packet detail and raw hex</li>
-                <li>Click a <b>chart dot or legend label</b> → highlight that repeater across both charts; click again or elsewhere to deselect</li>
-                <li>Click <b>column headers</b> in Seen Repeaters → sort the table (click again to reverse)</li>
-                <li>Click <b>section titles</b> → collapse / expand that section</li>
-                <li>Click the <b>hex string</b> in a packet detail → copies it to clipboard</li>
-                <li>The <b>Sound</b> checkbox plays a beep on each new packet; pitch reflects signal strength</li>
-                <li>In <b>Signal 3D map</b>, allow location, then drag to rotate / scroll to zoom. Each bead sits at your browser's GPS position with height proportional to RSSI. Click a bead to highlight that repeater (also synced to the RSSI / SNR charts). Choose between Mapy.com (basic, outdoor, winter, aerial / ortofoto) and OpenStreetMap (standard, OpenTopoMap) as the floor tiles.</li>
+                <li>When a longer ID arrives for a node already seen as a shorter prefix, the column is <b>promoted</b> to the longer label (e.g. <code>12</code> → <code>1234</code>).</li>
+                <li>If a short prefix turns out to be ambiguous — it matches two or more known distinct nodes — those ambiguous packets are grouped under a <b>combined label</b> (e.g. <code>1234/1289</code>) while each specific node keeps its own column.</li>
+                <li>Each additional sibling is added to the combined label (e.g. <code>1111/1122/1133</code>). The combined column always represents packets whose exact origin is uncertain among those nodes.</li>
+                <li>If a more-precise ID later arrives for one of the siblings, its part of the label is updated too (e.g. <code>1234/1289</code> → <code>123456/1289</code>).</li>
             </ul>
         </div>
     </div>

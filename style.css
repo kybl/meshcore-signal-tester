@@ -742,15 +742,14 @@ header {
     background: #f0f0ff;
     color: #667eea;
     border: 1.5px solid #c8c8f0;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
+    border-radius: 6px;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
-    padding: 0;
+    padding: 3px 10px;
     line-height: 1;
     flex-shrink: 0;
+    white-space: nowrap;
     transition: all 0.15s;
 }
 

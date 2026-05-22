@@ -360,17 +360,21 @@ class MeshCoreMonitor {
             'sound':
                 'Plays a short beep on each new incoming packet. Pitch varies with RSSI — stronger signal → higher pitch.',
             'ttl':
-                'Packets not heard within this window are removed from the Messages table, charts, and the 3D map. "Never" keeps everything for the whole session.',
+                'Packets not seen within this window are removed from the Messages table, charts, and 3D map. Does not affect the Seen Repeaters table — that keeps all encountered repeaters for the whole session. "Never" keeps data in all sections for the whole session.',
             'repeater':
-                '"direct" = flood-routed packet received at first hop (no intermediate repeater). Otherwise shows the ID of the last repeater that forwarded the packet. Columns are sorted by recent activity (last 5 min), then last RSSI, last SNR, total RX, and finally alphabetically.',
+                '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Columns are sorted by recent activity (last 5 min), then last RSSI, last SNR, total RX, alphabetically. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'rssi':
-                'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
+                'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak. Click a dot or legend label to highlight that repeater across both charts; click again or elsewhere to deselect.',
             'snr':
-                'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
+                'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB). Click a dot or legend label to highlight that repeater across both charts; click again or elsewhere to deselect.',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':
                 'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "5E9F1234" and vice versa. Affects the table, charts, Received packets, and 3D map.',
+            'messages':
+                'Click any RSSI or SNR cell to expand full packet detail and raw hex. Click the hex string in an expanded row to copy it to the clipboard.',
+            'signal3d':
+                'Allow location access, then drag to rotate and scroll/pinch to zoom. Each bead sits at your GPS position when the packet was received; height reflects RSSI. Click a bead to highlight that repeater in the RSSI/SNR charts. Map tiles: Mapy.com (basic, outdoor, winter, aerial) or OpenStreetMap (standard, OpenTopoMap).',
         };
 
         const tipEl = document.getElementById('helpTip');
