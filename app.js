@@ -880,11 +880,14 @@ class MeshCoreMonitor {
                 // can un-merge.
                 if (rawPrec > existingPrec) {
                     this.renameColumnKey(existing, rawId);
-                    // Mirror the promote into every matched collision key
-                    // that has `existing` as a component — otherwise the
-                    // collision label stays stuck at the old (less-precise)
-                    // identity for what is now a known refined node.
-                    for (const ck of collisionMatches) {
+                    // Mirror the promote into every collision key that has
+                    // `existing` as a component. We scan all columns rather
+                    // than relying on collisionMatches, because colSuffix only
+                    // checks the first component — collision keys where
+                    // `existing` is the second (or later) component would be
+                    // missed and left with a stale label.
+                    for (const ck of [...this.repeaterColumns]) {
+                        if (!ck.includes('/')) continue;
                         const comps = ck.split('/');
                         if (!comps.includes(existing)) continue;
                         const newKey = comps.map(c => c === existing ? rawId : c).sort().join('/');
