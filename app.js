@@ -1878,7 +1878,7 @@ class MeshCoreMonitor {
         for (const [col, dPts] of decimGroups) {
             if (selected && selected === col) continue;
             for (const p of dPts) {
-                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${selected ? 0.18 : 0.85}"/>`);
+                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${selected ? 0.07 : 0.85}"/>`);
             }
         }
         if (selected) {
