@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=25';
+import { Signal3DMap } from './signal3d.js?v=26';
 
 class MeshCoreMonitor {
     constructor() {
@@ -1798,22 +1798,31 @@ class MeshCoreMonitor {
             if (!groups.has(p.col)) groups.set(p.col, []);
             groups.get(p.col).push(p);
         }
+
+        // Build per-column decimated point sets (at most 2 pts per pixel column)
+        const decimGroups = new Map();
         for (const [col, colPts] of groups) {
-            if (colPts.length < 2) continue;
             colPts.sort((a, b) => a.time - b.time);
+            decimGroups.set(col, this._decimateChartPts(colPts, tMin, now, cw, type));
+        }
+
+        for (const [col, dPts] of decimGroups) {
+            if (dPts.length < 2) continue;
             const color = this.getRepeaterColor(col);
             const isHighlighted = !selected || selected === col;
             const strokeW = (selected && selected === col) ? 2.5 : 1;
             const strokeOp = isHighlighted ? 0.55 : 0.12;
-            const pointsStr = colPts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
+            const pointsStr = dPts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
             parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="${strokeW}" stroke-opacity="${strokeOp}"/>`);
         }
 
-        for (const p of pts) {
-            const isHighlighted = !selected || selected === p.col;
-            const r = (selected && selected === p.col) ? 5 : 3.5;
-            const fillOp = isHighlighted ? 0.85 : 0.18;
-            parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${r}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${fillOp}"/>`);
+        for (const [, dPts] of decimGroups) {
+            for (const p of dPts) {
+                const isHighlighted = !selected || selected === p.col;
+                const r = (selected && selected === p.col) ? 5 : 3.5;
+                const fillOp = isHighlighted ? 0.85 : 0.18;
+                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${r}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${fillOp}"/>`);
+            }
         }
 
         if (!hasData) {
@@ -1860,6 +1869,30 @@ class MeshCoreMonitor {
             }
             legend.innerHTML = entries.map(e => e.html).join('');
         }
+    }
+
+    _decimateChartPts(colPts, tMin, tMax, pixelWidth, type) {
+        const buckets = Math.max(1, Math.floor(pixelWidth));
+        if (colPts.length <= buckets * 2) return colPts;
+        const span = Math.max(1, tMax - tMin);
+        const bucketMs = span / buckets;
+        const valOf = p => type === 'rssi' ? p.rssi : p.snr;
+        const bkts = new Array(buckets);
+        for (const p of colPts) {
+            const i = Math.min(buckets - 1, Math.floor((p.time - tMin) / bucketMs));
+            if (!bkts[i]) { bkts[i] = { min: p, max: p }; }
+            else {
+                if (valOf(p) < valOf(bkts[i].min)) bkts[i].min = p;
+                if (valOf(p) > valOf(bkts[i].max)) bkts[i].max = p;
+            }
+        }
+        const result = [];
+        for (const b of bkts) {
+            if (!b) continue;
+            result.push(b.min);
+            if (b.max !== b.min) result.push(b.max);
+        }
+        return result.sort((a, b) => a.time - b.time);
     }
 
     showChartTooltip(e, type) {

@@ -38,6 +38,8 @@ const TILE_SOURCES = {
 };
 const DEFAULT_SOURCE = 'mapycom-basic';
 
+const CLUSTER_CELL_DEG = 0.00008; // ≈ 8 m; nearby beads at the same col merge into one
+
 function lonLatToTile(lon, lat, zoom) {
     const n = Math.pow(2, zoom);
     const x = (lon + 180) / 360 * n;
@@ -70,6 +72,7 @@ export class Signal3DMap {
             ? opts.initialSource : DEFAULT_SOURCE;
         this._selectedCol = null;
         this._meshToPoint = new Map();  // hitMesh → point
+        this._clusterMeshes = [];
         this.infoEl       = opts.infoEl   || null;
         this.onSelect     = opts.onSelect || null;
 
@@ -376,25 +379,14 @@ export class Signal3DMap {
     purgeOlderThan(cutoff) {
         if (!Number.isFinite(cutoff)) return;
         const before = this.points.length;
-        this.points = this.points.filter(p => {
-            if (p.time >= cutoff) return true;
-            for (const k of ['mesh', 'line', 'hitMesh']) {
-                if (p[k]) {
-                    this.pointsGroup.remove(p[k]);
-                    p[k].geometry?.dispose();
-                    p[k].material?.dispose();
-                    if (k === 'hitMesh') this._meshToPoint.delete(p[k]);
-                }
-            }
-            return false;
-        });
+        this.points = this.points.filter(p => p.time >= cutoff);
         if (this.points.length === before) return;
         if (this._selectedCol && !this.points.some(p => p.col === this._selectedCol)) {
             this._selectedCol = null;
             this._updateInfoPanel();
             this.onSelect?.(null);
-            this._repositionAll();
         }
+        this._repositionAll();
     }
 
     _scheduleMapUpdate() {
@@ -548,30 +540,48 @@ export class Signal3DMap {
         return MIN_HEIGHT + Math.max(0, Math.min(1, t)) * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
-    _repositionAll() {
-        // Remove all existing meshes and hit targets
-        this._meshToPoint.clear();
-        for (const p of this.points) {
-            for (const k of ['mesh', 'line', 'hitMesh']) {
-                if (p[k]) {
-                    this.pointsGroup.remove(p[k]);
-                    p[k].geometry?.dispose();
-                    p[k].material?.dispose();
-                    p[k] = null;
-                }
+    _clusterPoints(points) {
+        const clusters = new Map();
+        for (const p of points) {
+            const latG = Math.round(p.lat / CLUSTER_CELL_DEG);
+            const lonG = Math.round(p.lon / CLUSTER_CELL_DEG);
+            const key = `${p.col}\x00${latG}\x00${lonG}`;
+            if (!clusters.has(key)) clusters.set(key, { rep: p, count: 1, col: p.col });
+            else {
+                const c = clusters.get(key);
+                c.count++;
+                if (p.rssi > c.rep.rssi) c.rep = p; // keep best-signal representative
             }
         }
+        return [...clusters.values()];
+    }
+
+    _repositionAll() {
+        // Remove previously rendered cluster objects
+        if (this._clusterMeshes) {
+            for (const obj of this._clusterMeshes) {
+                this.pointsGroup.remove(obj);
+                obj.geometry?.dispose();
+                obj.material?.dispose();
+            }
+        }
+        this._clusterMeshes = [];
+        this._meshToPoint.clear();
+
+        if (!this.tileBounds) return;
+
         const sel = this._selectedCol;
-        // Rebuild — respecting current filter and selection
-        for (const p of this.points) {
-            if (this.filterFn && !this.filterFn(p.col)) continue;
-            const pos = this._latLonToWorld(p.lat, p.lon);
+        const visible = this.filterFn ? this.points.filter(p => this.filterFn(p.col)) : this.points;
+        const clusters = this._clusterPoints(visible);
+
+        for (const c of clusters) {
+            const pos = this._latLonToWorld(c.rep.lat, c.rep.lon);
             if (!pos) continue;
-            const height      = this._rssiToHeight(p.rssi);
-            const color       = new THREE.Color(this.colorFor(p.col));
-            const isSelected  = sel === p.col;
-            const isLit       = !sel || isSelected;
-            const sphereR     = isSelected ? 1.6 : 1.1;
+            const height     = this._rssiToHeight(c.rep.rssi);
+            const color      = new THREE.Color(this.colorFor(c.col));
+            const isSelected = sel === c.col;
+            const isLit      = !sel || isSelected;
+            const sphereR    = isSelected ? 1.8 : Math.max(1.0, 1.0 + 0.3 * Math.log2(c.count));
 
             const sphere = new THREE.Mesh(
                 new THREE.SphereGeometry(sphereR, 14, 12),
@@ -583,7 +593,7 @@ export class Signal3DMap {
             );
             sphere.position.set(pos.x, height, pos.z);
             this.pointsGroup.add(sphere);
-            p.mesh = sphere;
+            this._clusterMeshes.push(sphere);
 
             const lineGeo = new THREE.BufferGeometry().setFromPoints([
                 new THREE.Vector3(pos.x, 0,      pos.z),
@@ -594,17 +604,16 @@ export class Signal3DMap {
                 new THREE.LineBasicMaterial({ color, transparent: true, opacity: isLit ? 0.45 : 0.08 })
             );
             this.pointsGroup.add(line);
-            p.line = line;
+            this._clusterMeshes.push(line);
 
-            // Invisible larger hit-target sphere for easier clicking
             const hitMesh = new THREE.Mesh(
-                new THREE.SphereGeometry(2.8, 6, 4),
+                new THREE.SphereGeometry(Math.max(2.8, sphereR + 1.2), 6, 4),
                 new THREE.MeshBasicMaterial({ visible: false })
             );
             hitMesh.position.set(pos.x, height, pos.z);
             this.pointsGroup.add(hitMesh);
-            p.hitMesh = hitMesh;
-            this._meshToPoint.set(hitMesh, p);
+            this._clusterMeshes.push(hitMesh);
+            this._meshToPoint.set(hitMesh, c.rep);
         }
     }
 
