@@ -402,7 +402,9 @@ class MeshCoreMonitor {
             'rep-filter':
                 'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "5E9F1234" and vice versa. Affects the table, charts, Received packets, and 3D map.',
             'messages':
-                'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard.',
+                'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Repeater columns are ordered by: packets received in the last 5 min (desc), then last RSSI, last SNR, total RX count, then alphabetically.',
+            'msg-type':
+                'Type abbreviations — AD: Advert · GT: GroupText · TR: Traceroute · RS: Response · RQ: Request · PN: Ping · TX: TextMessage · PT: Path · CT: Control · PV: Private. Full type is shown in the expanded row.',
             'signal3d':
                 'Allow location access, then drag to rotate and scroll/pinch to zoom. Each bead sits at your GPS position when the packet was received; height reflects RSSI. Click a bead to highlight that repeater in the RSSI/SNR charts. Map tiles: Mapy.com (basic, outdoor, winter, aerial) or OpenStreetMap (standard, OpenTopoMap).',
         };
@@ -1328,7 +1330,7 @@ class MeshCoreMonitor {
             ).join('');
             this.msgTableHead.innerHTML = `
                 <tr>
-                    <th class="msg-col-rx-head" rowspan="2">RX log</th>
+                    <th class="msg-col-rx-head" rowspan="2">RX log<span class="help-icon" data-help="msg-type">?</span></th>
                     ${repHeaders}
                 </tr>
                 <tr>${subHeaders}</tr>
