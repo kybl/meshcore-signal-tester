@@ -11,7 +11,7 @@ const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 60;    // world units for strongest signal
 const MIN_HEIGHT     = 2;     // world units for weakest signal
 const RSSI_GOOD      = -50;
-const RSSI_BAD       = -130;
+const RSSI_BAD       = -125;
 const MAX_TILES_AXIS = 4;
 const TILE_PX        = 256;
 
@@ -137,6 +137,17 @@ export class Signal3DMap {
         window.addEventListener('resize', this._onResize);
         this._ro = new ResizeObserver(() => this._resize());
         this._ro.observe(canvas);
+
+        if (this.infoEl) {
+            this.infoEl.addEventListener('click', e => {
+                if (e.target.closest('.smi-close')) {
+                    this._selectedCol = null;
+                    this._repositionAll();
+                    this._updateInfoPanel();
+                    this.onSelect?.(null);
+                }
+            });
+        }
 
         const tick = () => {
             this.controls.update();
@@ -310,16 +321,17 @@ export class Signal3DMap {
         if (!col) { this.infoEl.classList.add('hidden'); return; }
         const pts = this.points.filter(p => p.col === col);
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
-        const maxRssi  = Math.max(...pts.map(p => p.rssi));
-        const last     = pts[pts.length - 1];
-        const color    = this.colorFor(col);
-        const dot      = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle;flex-shrink:0"></span>`;
-        const snrStr   = last.snr != null ? `${last.snr >= 0 ? '+' : ''}${last.snr.toFixed(1)} dB` : '—';
+        const maxRssi = Math.max(...pts.map(p => p.rssi));
+        const maxSnr  = Math.max(...pts.map(p => p.snr ?? -Infinity));
+        const last    = pts[pts.length - 1];
+        const color   = this.colorFor(col);
+        const dot     = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;flex-shrink:0"></span>`;
+        const fSnr    = v => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}` : '—';
         this.infoEl.innerHTML =
-            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b></div>` +
-            `<div class="smi-stat">${pts.length} packet${pts.length !== 1 ? 's' : ''}</div>` +
-            `<div class="smi-stat">Best RSSI <span style="color:${color};font-weight:600">${maxRssi} dBm</span></div>` +
-            `<div class="smi-stat">Last RSSI <span style="color:${color};font-weight:600">${last.rssi} dBm</span> · SNR ${snrStr}</div>`;
+            `<button class="smi-close" title="Deselect">✕</button>` +
+            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b><span class="smi-count">${pts.length} pkt${pts.length !== 1 ? 's' : ''}</span></div>` +
+            `<div class="smi-stat">RSSI: best <b>${maxRssi}</b>, last <b>${last.rssi}</b> dBm</div>` +
+            `<div class="smi-stat">SNR: best <b>${fSnr(maxSnr)}</b>, last <b>${fSnr(last.snr)}</b> dB</div>`;
         this.infoEl.classList.remove('hidden');
     }
 
@@ -347,7 +359,16 @@ export class Signal3DMap {
         if (opts.lat == null || opts.lon == null || opts.rssi == null) return;
         this.points.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
+        if (opts.col === this._selectedCol) this._updateInfoPanel();
         this._scheduleMapUpdate();
+    }
+
+    // Called by the host app when chart/legend selection changes.
+    selectColumn(col) {
+        if (this._selectedCol === col) return;
+        this._selectedCol = col ?? null;
+        this._repositionAll();
+        this._updateInfoPanel();
     }
 
     // Drop packets older than the given timestamp. Disposes their meshes and

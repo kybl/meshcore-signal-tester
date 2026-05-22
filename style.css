@@ -770,6 +770,10 @@ header {
     white-space: nowrap;
 }
 
+.battery-status.hidden {
+    display: none;
+}
+
 .battery-status.battery-low {
     color: #c33;
 }
@@ -1299,30 +1303,58 @@ header {
     position: absolute;
     top: 10px;
     right: 10px;
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.92);
     border-radius: 8px;
-    padding: 9px 13px;
+    padding: 7px 11px 8px;
     font-size: 12px;
-    line-height: 1.65;
+    line-height: 1.6;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.13);
     backdrop-filter: blur(4px);
-    min-width: 160px;
-    pointer-events: none;
+    min-width: 0;
+    pointer-events: auto;
 }
 
 .signal-map-info.hidden {
     display: none;
 }
 
+.smi-close {
+    position: absolute;
+    top: 5px;
+    right: 7px;
+    background: none;
+    border: none;
+    font-size: 11px;
+    color: #999;
+    cursor: pointer;
+    padding: 2px 3px;
+    line-height: 1;
+}
+
+.smi-close:hover {
+    color: #333;
+}
+
 .smi-name {
-    font-size: 13px;
-    margin-bottom: 3px;
+    font-size: 12px;
+    margin-bottom: 2px;
     display: flex;
     align-items: center;
+    gap: 0;
+    padding-right: 16px;
+}
+
+.smi-count {
+    margin-left: auto;
+    padding-left: 8px;
+    color: #999;
+    font-size: 11px;
+    white-space: nowrap;
 }
 
 .smi-stat {
     color: #555;
+    white-space: nowrap;
 }
 
 @media (max-width: 600px) {

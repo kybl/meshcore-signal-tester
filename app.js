@@ -77,7 +77,8 @@ class MeshCoreMonitor {
         document.querySelectorAll('.section-header').forEach(header => {
             const btn = header.querySelector('.collapse-btn');
             if (!btn) return;
-            header.addEventListener('click', () => {
+            header.addEventListener('click', e => {
+                if (e.target.closest('.help-icon')) return; // help icon has its own handler
                 const body = document.getElementById(btn.dataset.target);
                 if (!body) return;
                 const collapsed = body.classList.toggle('collapsed');
@@ -150,6 +151,7 @@ class MeshCoreMonitor {
                 if (!item) return;
                 const col = item.dataset.col;
                 this._chartSelected = this._chartSelected === col ? null : col;
+                this.signalMap?.selectColumn(this._chartSelected);
                 this.scheduleChartRender();
             });
         };
@@ -1379,7 +1381,7 @@ class MeshCoreMonitor {
 
         const filter = this._msgFilter.toLowerCase().trim();
         const allRows = Array.from(this.hashData.entries())
-            .sort(([, a], [, b]) => b.insertOrder - a.insertOrder);
+            .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
         let rows = filter
             ? allRows.filter(([, data]) => this._rowMatchesFilter(data, filter))
             : allRows;
@@ -1670,10 +1672,11 @@ class MeshCoreMonitor {
             if (d < minDist) { minDist = d; nearest = p; }
         }
         if (!nearest || minDist > 2500) {
-            if (this._chartSelected) { this._chartSelected = null; this.scheduleChartRender(); }
+            if (this._chartSelected) { this._chartSelected = null; this.signalMap?.selectColumn(null); this.scheduleChartRender(); }
             return;
         }
         this._chartSelected = this._chartSelected === nearest.col ? null : nearest.col;
+        this.signalMap?.selectColumn(this._chartSelected);
         this.scheduleChartRender();
     }
 
