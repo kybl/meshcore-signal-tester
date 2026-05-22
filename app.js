@@ -21,12 +21,6 @@ class MeshCoreMonitor {
         this.hashCounter = 0;
         this.chartPoints = [];
         this.chartColors = new Map();
-        this.chartColorIdx = 0;
-        this.chartColorPalette = [
-            '#667eea','#e74c3c','#2ecc71','#f39c12',
-            '#9b59b6','#1abc9c','#e67e22','#3498db',
-            '#e91e63','#00bcd4',
-        ];
         this._batteryCharacteristic = null;
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
@@ -261,7 +255,8 @@ class MeshCoreMonitor {
                 msgFilterInput?.focus();
             });
         }
-        document.getElementById('exportCsvBtn')?.addEventListener('click', () => this._exportCsv());
+        this.exportCsvBtn = document.getElementById('exportCsvBtn');
+        this.exportCsvBtn?.addEventListener('click', () => this._exportCsv());
 
         const importCsvInput = document.getElementById('importCsvInput');
         document.getElementById('importCsvBtn')?.addEventListener('click', () => importCsvInput?.click());
@@ -1146,9 +1141,6 @@ class MeshCoreMonitor {
             }
         }
 
-        if (this.chartColors.has(oldKey) && !this.chartColors.has(newKey)) {
-            this.chartColors.set(newKey, this.chartColors.get(oldKey));
-        }
         this.chartColors.delete(oldKey);
         for (const p of this.chartPoints) {
             if (p.col === oldKey) p.col = newKey;
@@ -1572,7 +1564,14 @@ class MeshCoreMonitor {
 
     getRepeaterColor(col) {
         if (!this.chartColors.has(col)) {
-            this.chartColors.set(col, this.chartColorPalette[this.chartColorIdx++ % this.chartColorPalette.length]);
+            const id = this.displayId(col);
+            let h = 0x811c9dc5;
+            for (let i = 0; i < id.length; i++) {
+                h ^= id.charCodeAt(i);
+                h = Math.imul(h, 0x01000193);
+            }
+            const hue = (h >>> 0) % 360;
+            this.chartColors.set(col, `hsl(${hue}, 72%, 44%)`);
         }
         return this.chartColors.get(col);
     }
@@ -2054,6 +2053,7 @@ class MeshCoreMonitor {
     // --- Stats & status ---
 
     updateStats() {
+        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0;
         this.activeHashesEl.textContent = this.hashData.size;
         this.totalRxEl.textContent = this.totalRxCount;
         this.totalRepeatersEl.textContent = this._repFilterTerms.length
