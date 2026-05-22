@@ -388,7 +388,7 @@ class MeshCoreMonitor {
             'repeaters-count':
                 'Number of distinct mesh nodes that have forwarded at least one packet to your device this session.',
             'sound':
-                'off = silent. short / medium / long play a beep of increasing duration (long is 4× short) on each new packet. Pitch varies with RSSI — stronger signal → higher pitch.',
+                'off = silent. short / medium / long play a beep of increasing duration (long is 4× short) on each new packet. Pitch varies with RSSI — stronger signal → higher pitch. Setting is remembered across sessions.',
             'ttl':
                 'Packets not seen within this window are removed from the Messages table, charts, and 3D map. Does not affect the Seen Repeaters table — that keeps all encountered repeaters for the whole session. "Never" keeps data in all sections for the whole session.',
             'repeater':
