@@ -72,7 +72,8 @@ class MeshCoreMonitor {
         this.totalRxEl = document.getElementById('totalRx');
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
         this.repeaterLogBody = document.getElementById('repeaterLogBody');
-        this.soundCheckbox = document.getElementById('soundEnabled');
+        this.soundSelect = document.getElementById('soundSelect');
+        try { const s = localStorage.getItem('sound'); if (s) this.soundSelect.value = s; } catch {}
         this.tooltip = document.getElementById('chartTooltip');
 
         this.connectBtn.onclick = () => this.connectBluetooth();
@@ -174,11 +175,19 @@ class MeshCoreMonitor {
 
         const ttlSelect = document.getElementById('ttlSelect');
         if (ttlSelect) {
+            try { const s = localStorage.getItem('ttl'); if (s) ttlSelect.value = s; } catch {}
+            const v = ttlSelect.value;
+            this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
             ttlSelect.addEventListener('change', () => {
                 const v = ttlSelect.value;
                 this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
+                try { localStorage.setItem('ttl', v); } catch {}
             });
         }
+
+        this.soundSelect?.addEventListener('change', () => {
+            try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
+        });
 
         const repeaterHead = document.querySelector('.repeater-log-table thead');
         if (repeaterHead) {
@@ -1144,7 +1153,7 @@ class MeshCoreMonitor {
 
         if (isNewHash) {
             this.hashData.set(hash, {
-                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater }]]),
+                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater, time: now }]]),
                 firstSeen: now,
                 lastSeen: now,
                 insertOrder: ++this.hashCounter,
@@ -1156,7 +1165,7 @@ class MeshCoreMonitor {
         } else {
             const data = this.hashData.get(hash);
             data.lastSeen = now;
-            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater });
+            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater, time: now });
         }
 
         const rawPrec  = this.idPrecision(repeater);
@@ -1472,8 +1481,10 @@ class MeshCoreMonitor {
             const rc = this.signalColor(repEntry.rssi, -70, -130);
             const sc = this.signalColor(repEntry.snr,  13, -10, 0);
             const hexShort = hex.slice(0, 12);
+            const timeStr = repEntry.time ? this.formatTimeMs(repEntry.time) : '';
             header = `<div class="detail-sig">` +
                 `<b>${this.escHtml(this.displayId(col))}</b>` +
+                (timeStr ? ` &nbsp; <span class="detail-time">${timeStr}</span>` : '') +
                 ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi}</span>` +
                 ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr.toFixed(1)}</span>` +
                 ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
@@ -1754,8 +1765,9 @@ class MeshCoreMonitor {
                 const valStr = type === 'rssi'
                     ? `${val} dBm`
                     : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
-                const isSelected = selected === col;
-                const selClass = isSelected ? ' legend-item-selected' : '';
+                const isSelected = !selected || selected === col;
+                const isDimmed   = selected && selected !== col;
+                const selClass   = !selected ? '' : (selected === col ? ' legend-item-selected' : ' legend-item-dimmed');
                 return {
                     val,
                     html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
@@ -1930,12 +1942,14 @@ class MeshCoreMonitor {
     // --- Sound ---
 
     playRxSound(rssi) {
-        if (!this.soundCheckbox?.checked) return;
+        const mode = this.soundSelect?.value ?? 'off';
+        if (mode === 'off') return;
         if (!this.audioCtx) this.audioCtx = new AudioContext();
         const ctx = this.audioCtx;
         if (ctx.state === 'suspended') ctx.resume();
         const now = ctx.currentTime;
         const baseFreq = 880;
+        const scale = mode === 'long' ? 4 : mode === 'medium' ? 2 : 1;
 
         const beep = (freq, start, dur) => {
             const osc = ctx.createOscillator();
@@ -1949,8 +1963,10 @@ class MeshCoreMonitor {
             osc.stop(now + start + dur);
         };
 
-        beep(baseFreq, 0, 0.05);
-        beep(baseFreq * Math.pow(2, (rssi + 100) / 30), 0.08, 0.05);
+        const dur = 0.05 * scale;
+        const gap = 0.08 * scale;
+        beep(baseFreq, 0, dur);
+        beep(baseFreq * Math.pow(2, (rssi + 100) / 30), gap, dur);
     }
 
     // --- BLE Device Battery ---
@@ -2115,6 +2131,15 @@ class MeshCoreMonitor {
 
     formatTime(timestamp) {
         return new Date(timestamp).toLocaleTimeString('en-GB');
+    }
+
+    formatTimeMs(timestamp) {
+        const d = new Date(timestamp);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        const ms = String(d.getMilliseconds()).padStart(3, '0');
+        return `${hh}:${mm}:${ss}.${ms}`;
     }
 
     async disconnect() {

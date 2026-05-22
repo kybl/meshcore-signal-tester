@@ -140,6 +140,17 @@ header {
     white-space: nowrap;
 }
 
+.sound-select {
+    font-size: 12px;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    background: white;
+    color: #333;
+    cursor: pointer;
+    padding: 1px 3px;
+    accent-color: #667eea;
+}
+
 .section-title {
     font-size: 10px;
     font-weight: 600;
@@ -602,6 +613,11 @@ header {
     border-bottom: 1px solid #e8e8f0;
 }
 
+.detail-time {
+    color: #888;
+    font-size: 11px;
+}
+
 /* JSON syntax highlighting inside .detail-json */
 .detail-json .jh-key  { color: #7c3aed; font-weight: 600; }
 .detail-json .jh-str  { color: #059669; }
@@ -734,6 +750,10 @@ header {
 
 .legend-item-selected {
     font-weight: 700;
+}
+
+.legend-item-dimmed {
+    opacity: 0.3;
 }
 
 /* ── Help system ─────────────────────────────────────── */
