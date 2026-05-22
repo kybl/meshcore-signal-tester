@@ -38,7 +38,6 @@ const TILE_SOURCES = {
 };
 const DEFAULT_SOURCE = 'mapycom-basic';
 
-const CLUSTER_CELL_DEG = 0.00008; // ≈ 8 m; nearby beads at the same col merge into one
 
 function lonLatToTile(lon, lat, zoom) {
     const n = Math.pow(2, zoom);
@@ -376,7 +375,7 @@ export class Signal3DMap {
         this.points.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
         if (opts.col === this._selectedCol) this._updateInfoPanel();
-        this._scheduleReposition();  // rebuild 3D objects (fast, debounced)
+        this._repositionAll();
         this._scheduleMapUpdate();   // reload tiles if point moved out of bounds (slow, debounced)
     }
 
@@ -401,11 +400,6 @@ export class Signal3DMap {
             this.onSelect?.(null);
         }
         this._repositionAll();
-    }
-
-    _scheduleReposition() {
-        clearTimeout(this._reposTimer);
-        this._reposTimer = setTimeout(() => this._repositionAll(), 150);
     }
 
     _scheduleMapUpdate() {
@@ -558,22 +552,6 @@ export class Signal3DMap {
         return MIN_HEIGHT + Math.max(0, Math.min(1, t)) * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
-    _clusterPoints(points) {
-        const clusters = new Map();
-        for (const p of points) {
-            const latG = Math.round(p.lat / CLUSTER_CELL_DEG);
-            const lonG = Math.round(p.lon / CLUSTER_CELL_DEG);
-            const key = `${p.col}\x00${latG}\x00${lonG}`;
-            if (!clusters.has(key)) clusters.set(key, { rep: p, count: 1, col: p.col });
-            else {
-                const c = clusters.get(key);
-                c.count++;
-                if (p.rssi > c.rep.rssi) c.rep = p; // keep best-signal representative
-            }
-        }
-        return [...clusters.values()];
-    }
-
     _disposeInstanced() {
         for (const obj of [this._iMeshLit, this._iMeshDim, this._iMeshHit, this._lineSegs]) {
             if (!obj) continue;
@@ -592,13 +570,12 @@ export class Signal3DMap {
         this._disposeInstanced();
         if (!this.tileBounds) return;
 
-        const sel      = this._selectedCol;
-        const visible  = this.filterFn ? this.points.filter(p => this.filterFn(p.col)) : this.points;
-        const clusters = this._clusterPoints(visible);
-        if (!clusters.length) return;
+        const sel     = this._selectedCol;
+        const visible = this.filterFn ? this.points.filter(p => this.filterFn(p.col)) : this.points;
+        if (!visible.length) return;
 
-        const litC = sel ? clusters.filter(c => c.col === sel) : clusters;
-        const dimC = sel ? clusters.filter(c => c.col !== sel) : [];
+        const litPts = sel ? visible.filter(p => p.col === sel) : visible;
+        const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
 
         const _m4  = new THREE.Matrix4();
         const _v   = new THREE.Vector3();
@@ -606,67 +583,66 @@ export class Signal3DMap {
         const _q   = new THREE.Quaternion();
         const _col = new THREE.Color();
 
-        const fillMesh = (mesh, cArr, isSelected) => {
-            for (let i = 0; i < cArr.length; i++) {
-                const c   = cArr[i];
-                const pos = this._latLonToWorld(c.rep.lat, c.rep.lon);
+        const fillMesh = (mesh, pts, isSelected) => {
+            for (let i = 0; i < pts.length; i++) {
+                const p   = pts[i];
+                const pos = this._latLonToWorld(p.lat, p.lon);
                 if (!pos) { _m4.makeScale(0, 0, 0); mesh.setMatrixAt(i, _m4); continue; }
-                const h = this._rssiToHeight(c.rep.rssi);
-                const r = isSelected ? 1.8 : Math.max(1.0, 1.0 + 0.3 * Math.log2(c.count));
+                const h = this._rssiToHeight(p.rssi);
+                const r = isSelected ? 1.8 : 1.0;
                 _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(r, r, r));
                 mesh.setMatrixAt(i, _m4);
-                _col.set(this.colorFor(c.col));
+                _col.set(this.colorFor(p.col));
                 mesh.setColorAt(i, _col);
             }
             mesh.instanceMatrix.needsUpdate = true;
             if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         };
 
-        if (litC.length) {
-            this._iMeshLit = new THREE.InstancedMesh(this._sphereGeo, new THREE.MeshBasicMaterial(), litC.length);
-            fillMesh(this._iMeshLit, litC, !!sel);
+        if (litPts.length) {
+            this._iMeshLit = new THREE.InstancedMesh(this._sphereGeo, new THREE.MeshBasicMaterial(), litPts.length);
+            fillMesh(this._iMeshLit, litPts, !!sel);
             this.pointsGroup.add(this._iMeshLit);
         }
-        if (dimC.length) {
+        if (dimPts.length) {
             this._iMeshDim = new THREE.InstancedMesh(
                 this._sphereGeo,
                 new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.15 }),
-                dimC.length
+                dimPts.length
             );
-            fillMesh(this._iMeshDim, dimC, false);
+            fillMesh(this._iMeshDim, dimPts, false);
             this.pointsGroup.add(this._iMeshDim);
         }
 
-        // Hit mesh covers all clusters for click detection
-        this._iHitClusters = clusters;
+        // Hit mesh covers all visible points for click detection
+        this._iHitClusters = visible;
         this._iMeshHit = new THREE.InstancedMesh(
             this._hitGeo,
             new THREE.MeshBasicMaterial({ visible: false }),
-            clusters.length
+            visible.length
         );
-        for (let i = 0; i < clusters.length; i++) {
-            const c   = clusters[i];
-            const pos = this._latLonToWorld(c.rep.lat, c.rep.lon);
+        for (let i = 0; i < visible.length; i++) {
+            const p   = visible[i];
+            const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) { _m4.makeScale(0, 0, 0); this._iMeshHit.setMatrixAt(i, _m4); continue; }
-            const h = this._rssiToHeight(c.rep.rssi);
-            const r = Math.max(2.8, 1.0 + 0.3 * Math.log2(c.count) + 1.2);
-            _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(r, r, r));
+            const h = this._rssiToHeight(p.rssi);
+            _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(2.8, 2.8, 2.8));
             this._iMeshHit.setMatrixAt(i, _m4);
         }
         this._iMeshHit.instanceMatrix.needsUpdate = true;
         this.pointsGroup.add(this._iMeshHit);
 
         // All vertical lines as one LineSegments draw call
-        const n    = clusters.length;
+        const n    = visible.length;
         const lPos = new Float32Array(n * 6);
         const lCol = new Float32Array(n * 6);
         for (let i = 0; i < n; i++) {
-            const c   = clusters[i];
-            const pos = this._latLonToWorld(c.rep.lat, c.rep.lon);
+            const p   = visible[i];
+            const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) continue;
-            const h = this._rssiToHeight(c.rep.rssi);
-            _col.set(this.colorFor(c.col));
-            const f = (!sel || sel === c.col) ? 1 : 0.15;
+            const h = this._rssiToHeight(p.rssi);
+            _col.set(this.colorFor(p.col));
+            const f = (!sel || sel === p.col) ? 1 : 0.15;
             const j = i * 6;
             lPos[j]   = pos.x; lPos[j+1] = 0; lPos[j+2] = pos.z;
             lPos[j+3] = pos.x; lPos[j+4] = h; lPos[j+5] = pos.z;
