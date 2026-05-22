@@ -69,6 +69,7 @@ export class Signal3DMap {
         this.filterFn     = null;   // col => boolean, or null (show all)
         this.mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
             ? opts.initialSource : DEFAULT_SOURCE;
+        this.sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
         this._selectedCol = null;
         // InstancedMesh handles — replaced per _repositionAll call
         this._iMeshLit    = null;   // opaque spheres (selected col or all when nothing selected)
@@ -356,6 +357,12 @@ export class Signal3DMap {
 
     // ---- Map source ----
 
+    setSphereSize(n) {
+        if (n === this.sphereSize) return;
+        this.sphereSize = n;
+        this._repositionAll();
+    }
+
     setMapSource(source) {
         if (!TILE_SOURCES[source] || source === this.mapSource) return;
         this.mapSource = source;
@@ -589,7 +596,7 @@ export class Signal3DMap {
                 const pos = this._latLonToWorld(p.lat, p.lon);
                 if (!pos) { _m4.makeScale(0, 0, 0); mesh.setMatrixAt(i, _m4); continue; }
                 const h = this._rssiToHeight(p.rssi);
-                const r = isSelected ? 1.8 : 1.0;
+                const r = isSelected ? this.sphereSize * 1.8 : this.sphereSize;
                 _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(r, r, r));
                 mesh.setMatrixAt(i, _m4);
                 _col.set(this.colorFor(p.col));
@@ -626,7 +633,8 @@ export class Signal3DMap {
             const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) { _m4.makeScale(0, 0, 0); this._iMeshHit.setMatrixAt(i, _m4); continue; }
             const h = this._rssiToHeight(p.rssi);
-            _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(2.8, 2.8, 2.8));
+            const hr = this.sphereSize + 1.8;
+            _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(hr, hr, hr));
             this._iMeshHit.setMatrixAt(i, _m4);
         }
         this._iMeshHit.instanceMatrix.needsUpdate = true;

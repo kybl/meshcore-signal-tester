@@ -176,6 +176,29 @@ header {
     white-space: nowrap;
 }
 
+.size-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #666;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.size-range {
+    width: 72px;
+    accent-color: #667eea;
+    cursor: pointer;
+}
+
+.size-val {
+    min-width: 2.2ch;
+    text-align: right;
+    color: #444;
+    font-size: 11px;
+}
+
 .sound-select {
     font-size: 12px;
     border: 1px solid #d0d0d0;

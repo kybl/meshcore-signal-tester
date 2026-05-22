@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=28">
+    <link rel="stylesheet" href="style.css?v=29">
 </head>
 <body>
     <div class="container">
@@ -23,6 +23,7 @@
                 <input type="file" id="importCsvInput" accept=".csv" style="display:none">
                 <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <label class="sound-toggle">🔊 Sound<select id="soundSelect" class="sound-select"><option value="off" selected>off</option><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select><span class="help-icon" data-help="sound">?</span></label>
+                <label class="size-label">Dots <input type="range" id="dotSizeInput" class="size-range" min="1" max="8" step="0.5" value="3.5"><span id="dotSizeVal" class="size-val">3.5</span></label>
             </div>
             <div class="header-stats-row">
                 <div class="header-stats">
@@ -139,6 +140,7 @@
                                     </optgroup>
                                 </select>
                             </label>
+                            <label class="size-label">Spheres <input type="range" id="sphereSizeInput" class="size-range" min="0.2" max="3" step="0.1" value="1"><span id="sphereSizeVal" class="size-val">1</span></label>
                             <span class="signal-map-hint">Drag to rotate · scroll / pinch to zoom</span>
                         </div>
                         <div class="signal-map-container">
@@ -232,6 +234,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=28"></script>
+    <script type="module" src="app.js?v=29"></script>
 </body>
 </html>

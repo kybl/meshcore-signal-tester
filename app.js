@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=28';
+import { Signal3DMap } from './signal3d.js?v=29';
 
 class MeshCoreMonitor {
     constructor() {
@@ -216,6 +216,36 @@ class MeshCoreMonitor {
             try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
         });
 
+        // Point size controls
+        try { this._dotSize = parseFloat(localStorage.getItem('dotSize') || '3.5'); } catch { this._dotSize = 3.5; }
+        try { this._sphereSize = parseFloat(localStorage.getItem('sphereSize') || '1'); } catch { this._sphereSize = 1; }
+
+        const dotSizeInput = document.getElementById('dotSizeInput');
+        const dotSizeVal   = document.getElementById('dotSizeVal');
+        if (dotSizeInput) {
+            dotSizeInput.value = this._dotSize;
+            if (dotSizeVal) dotSizeVal.textContent = this._dotSize;
+            dotSizeInput.addEventListener('input', () => {
+                this._dotSize = parseFloat(dotSizeInput.value);
+                if (dotSizeVal) dotSizeVal.textContent = this._dotSize;
+                try { localStorage.setItem('dotSize', this._dotSize); } catch {}
+                this.scheduleChartRender();
+            });
+        }
+
+        const sphereSizeInput = document.getElementById('sphereSizeInput');
+        const sphereSizeVal   = document.getElementById('sphereSizeVal');
+        if (sphereSizeInput) {
+            sphereSizeInput.value = this._sphereSize;
+            if (sphereSizeVal) sphereSizeVal.textContent = this._sphereSize;
+            sphereSizeInput.addEventListener('input', () => {
+                this._sphereSize = parseFloat(sphereSizeInput.value);
+                if (sphereSizeVal) sphereSizeVal.textContent = this._sphereSize;
+                try { localStorage.setItem('sphereSize', this._sphereSize); } catch {}
+                this.signalMap?.setSphereSize(this._sphereSize);
+            });
+        }
+
         const repeaterHead = document.querySelector('.repeater-log-table thead');
         if (repeaterHead) {
             repeaterHead.addEventListener('click', e => {
@@ -386,7 +416,8 @@ class MeshCoreMonitor {
                 infoEl:        document.getElementById('signalMapInfo'),
                 colorFor:      col => this.getRepeaterColor(col),
                 displayId:     col => this.displayId(col),
-                initialSource: sourceSel?.value,
+                initialSource:  sourceSel?.value,
+                initialSphereSize: this._sphereSize,
                 onSelect:      col => {
                     this._chartSelected = col;
                     this.scheduleChartRender();
@@ -1833,7 +1864,7 @@ class MeshCoreMonitor {
         for (const [, dPts] of decimGroups) {
             for (const p of dPts) {
                 const isHighlighted = !selected || selected === p.col;
-                const r = (selected && selected === p.col) ? 5 : 3.5;
+                const r = (selected && selected === p.col) ? this._dotSize * 1.43 : this._dotSize;
                 const fillOp = isHighlighted ? 0.85 : 0.18;
                 parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${r}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${fillOp}"/>`);
             }
