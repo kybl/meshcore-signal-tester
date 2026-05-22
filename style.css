@@ -1357,6 +1357,23 @@ header {
     white-space: nowrap;
 }
 
+.smi-filter {
+    margin-top: 6px;
+    display: block;
+    width: 100%;
+    padding: 3px 0;
+    font-size: 11px;
+    background: #4a6cf7;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.smi-filter:hover {
+    background: #3558e8;
+}
+
 @media (max-width: 600px) {
     .signal-map-container { height: 340px; }
     .signal-map-hint { display: none; }

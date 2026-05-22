@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=27';
+import { Signal3DMap } from './signal3d.js?v=28';
 
 class MeshCoreMonitor {
     constructor() {
@@ -390,6 +390,20 @@ class MeshCoreMonitor {
                 onSelect:      col => {
                     this._chartSelected = col;
                     this.scheduleChartRender();
+                },
+                onFilter:      col => {
+                    if (!col) return;
+                    const term = this.displayId(col).toUpperCase();
+                    const input = document.getElementById('repFilter');
+                    const clear = document.getElementById('repFilterClear');
+                    const applied = document.getElementById('repFilterApplied');
+                    if (input) { input.value = term; input.classList.add('has-value'); }
+                    clear?.classList.remove('hidden');
+                    applied?.classList.remove('hidden');
+                    this._repFilterTerms = [term];
+                    this._applyRepFilter();
+                    document.getElementById('repeaterWrap')
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 },
             });
         } catch (err) {

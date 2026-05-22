@@ -82,6 +82,7 @@ export class Signal3DMap {
         this._hitGeo      = new THREE.SphereGeometry(1,  6,  4);
         this.infoEl       = opts.infoEl   || null;
         this.onSelect     = opts.onSelect || null;
+        this.onFilter     = opts.onFilter || null;
 
         this._initScene();
         this._bindButton();
@@ -155,6 +156,8 @@ export class Signal3DMap {
                     this._repositionAll();
                     this._updateInfoPanel();
                     this.onSelect?.(null);
+                } else if (e.target.closest('.smi-filter')) {
+                    this.onFilter?.(this._selectedCol);
                 }
             });
         }
@@ -343,7 +346,8 @@ export class Signal3DMap {
             `<button class="smi-close" title="Deselect">✕</button>` +
             `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b><span class="smi-count">${pts.length} pkt${pts.length !== 1 ? 's' : ''}</span></div>` +
             `<div class="smi-stat">RSSI: best <b>${maxRssi}</b>, last <b>${last.rssi}</b> dBm</div>` +
-            `<div class="smi-stat">SNR: best <b>${fSnr(maxSnr)}</b>, last <b>${fSnr(last.snr)}</b> dB</div>`;
+            `<div class="smi-stat">SNR: best <b>${fSnr(maxSnr)}</b>, last <b>${fSnr(last.snr)}</b> dB</div>` +
+            (this.onFilter ? `<button class="smi-filter">Filter</button>` : '');
         this.infoEl.classList.remove('hidden');
     }
 
