@@ -407,9 +407,11 @@ class MeshCoreMonitor {
             'repeater':
                 '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Columns are sorted by recent activity (last 5 min), then last RSSI, last SNR, total RX, alphabetically. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'rssi':
-                'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak. Click a dot or legend label to highlight that repeater across both charts; click again or elsewhere to deselect.',
+                'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
             'snr':
-                'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB). Click a dot or legend label to highlight that repeater across both charts; click again or elsewhere to deselect.',
+                'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
+            'chart-interact':
+                'Click a dot or legend label to highlight that repeater across both charts; click again or elsewhere to deselect. The shaded area on the RSSI chart shows the estimated noise floor (RSSI − SNR).',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':
