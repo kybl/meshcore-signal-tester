@@ -70,7 +70,10 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
-        setInterval(() => { if (!this._chartFrozenAt) this.scheduleChartRender(); }, 2000);
+        setInterval(() => {
+            if (!this._chartFrozenAt) this.scheduleChartRender();
+            this.updateStats();
+        }, 2000);
 
         // Collapsible sections — clicking anywhere in the header row toggles
         document.querySelectorAll('.section-header').forEach(header => {
@@ -2286,8 +2289,8 @@ class MeshCoreMonitor {
         }
 
         this.sortColumns();
-        // Update chart freeze point so imported historical data is visible
-        if (!this._collecting) this._chartFrozenAt = Date.now();
+        // Freeze chart at last packet time + 1 min so all imported data is in view
+        if (!this._collecting) this._chartFrozenAt = rows[rows.length - 1].time + 60_000;
         this.renderMsgTable();
         this.updateRepeaterTable();
         this.scheduleChartRender();
