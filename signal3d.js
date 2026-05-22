@@ -372,7 +372,8 @@ export class Signal3DMap {
         this.points.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
         if (opts.col === this._selectedCol) this._updateInfoPanel();
-        this._scheduleMapUpdate();
+        this._scheduleReposition();  // rebuild 3D objects (fast, debounced)
+        this._scheduleMapUpdate();   // reload tiles if point moved out of bounds (slow, debounced)
     }
 
     // Called by the host app when chart/legend selection changes.
@@ -398,9 +399,14 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
+    _scheduleReposition() {
+        clearTimeout(this._reposTimer);
+        this._reposTimer = setTimeout(() => this._repositionAll(), 150);
+    }
+
     _scheduleMapUpdate() {
         clearTimeout(this._mapTimer);
-        this._mapTimer = setTimeout(() => this._updateMap(), 250);
+        this._mapTimer = setTimeout(() => this._updateMap(), 500);
     }
 
     _bbox() {
@@ -453,8 +459,7 @@ export class Signal3DMap {
         const sourceId = this.mapSource;
         const key = `${sourceId}/${zoom}/${x0}/${y0}/${x1}/${y1}`;
         if (key === this.lastBboxKey) {
-            this._repositionAll();
-            this._updateUserMarker();
+            this._updateUserMarker();  // tiles unchanged — just move the user pin
             return;
         }
 
