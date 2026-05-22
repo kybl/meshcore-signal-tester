@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=24';
+import { Signal3DMap } from './signal3d.js?v=25';
 
 class MeshCoreMonitor {
     constructor() {
@@ -264,6 +264,23 @@ class MeshCoreMonitor {
             const file = importCsvInput.files?.[0];
             if (file) { this._importCsv(file); importCsvInput.value = ''; }
         });
+
+        const fsBtn = document.getElementById('signalMapFullscreenBtn');
+        if (fsBtn) {
+            const mapContainer = document.querySelector('.signal-map-container');
+            fsBtn.addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    mapContainer?.requestFullscreen().catch(() => {});
+                } else {
+                    document.exitFullscreen();
+                }
+            });
+            document.addEventListener('fullscreenchange', () => {
+                const isFs = !!document.fullscreenElement;
+                fsBtn.textContent = isFs ? '✕' : '⛶';
+                fsBtn.title = isFs ? 'Exit fullscreen' : 'Fullscreen';
+            });
+        }
 
         const repFilterInput = document.getElementById('repFilter');
         const repFilterClear = document.getElementById('repFilterClear');
@@ -2022,14 +2039,14 @@ class MeshCoreMonitor {
     // --- BLE Device Battery ---
 
     _updateBleBattery(pct) {
-        if (!this.batteryEl) return;
+        if (!this.batteryEl || !this.device) return;
         this.batteryEl.innerHTML = `<span class="hstat-label">Device </span>🔋${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (pct <= 20) this.batteryEl.classList.add('battery-low');
     }
 
     _updateBleBatteryVoltage(milliVolts) {
-        if (!this.batteryEl) return;
+        if (!this.batteryEl || !this.device) return;
         const volts = (milliVolts / 1000).toFixed(2);
         this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span>🔋${volts}V`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
@@ -2371,10 +2388,10 @@ class MeshCoreMonitor {
             this._onBatteryChanged = null;
         }
         this._batteryCharacteristic = null;
-        if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.txCharacteristic = null;
         this.bleRxCharacteristic = null;
-        this.device = null;
+        this.device = null; // null before hiding so queued battery events are ignored by guards below
+        if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;

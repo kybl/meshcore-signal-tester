@@ -31,7 +31,13 @@ header {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
+}
+
+.header-row-tools {
+    border-top: 1px solid #f0f0f0;
+    padding-top: 6px;
+    margin-top: 2px;
 }
 
 .header-stats-row {
@@ -50,13 +56,7 @@ header {
     white-space: nowrap;
 }
 
-.header-controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    min-width: 0;
-}
+/* .header-controls removed — items now live directly in header rows */
 
 .header-stats {
     display: flex;
@@ -362,9 +362,17 @@ header {
     padding: 8px 8px 4px;
 }
 
+.chart-svg-wrap {
+    resize: vertical;
+    overflow: hidden;
+    height: 180px;
+    min-height: 80px;
+    max-height: calc(100vh - 80px);
+}
+
 .rssi-chart {
     width: 100%;
-    height: 180px;
+    height: 100%;
     display: block;
     overflow: visible;
 }
@@ -1188,10 +1196,45 @@ header {
     position: relative;
     width: 100%;
     height: 460px;
+    min-height: 200px;
+    max-height: calc(100vh - 80px);
     border-radius: 8px;
     overflow: hidden;
     background: #eef2f7;
     box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+    resize: vertical;
+}
+
+.signal-map-fullscreen-btn {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(255, 255, 255, 0.85);
+    border: none;
+    border-radius: 6px;
+    width: 30px;
+    height: 30px;
+    font-size: 15px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    z-index: 10;
+    backdrop-filter: blur(4px);
+    transition: background 0.15s;
+    line-height: 1;
+}
+
+.signal-map-fullscreen-btn:hover {
+    background: rgba(255, 255, 255, 0.97);
+}
+
+.signal-map-container:fullscreen {
+    border-radius: 0;
+    max-height: 100vh;
+    height: 100vh;
+    resize: none;
 }
 
 .signal-map-canvas {
