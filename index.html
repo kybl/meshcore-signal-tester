@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=24">
 </head>
 <body>
     <div class="container">
@@ -37,7 +37,9 @@
 
             <div class="section-wrap" id="repeaterWrap">
                 <div class="rep-filter-bar" id="repFilterBar">
-                    <input type="text" id="repFilter" class="rep-filter-input" placeholder="Filter repeaters…" autocomplete="off" spellcheck="false">
+                    <label class="rep-filter-label" for="repFilter">Filter repeaters</label>
+                    <input type="text" id="repFilter" class="rep-filter-input" autocomplete="off" spellcheck="false">
+                    <span class="help-icon" data-help="rep-filter">?</span>
                     <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
                     <span id="repFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
                 </div>
@@ -62,18 +64,19 @@
                     </div>
                 </div>
                 <label class="ttl-control">
-                    <span class="ttl-label">Auto-remove after</span><span class="help-icon" data-help="ttl">?</span>
+                    <span class="ttl-label">Auto-remove after</span>
                     <select id="ttlSelect">
                         <option value="30">30 seconds</option>
                         <option value="60">1 minute</option>
                         <option value="120">2 minutes</option>
                         <option value="300">5 minutes</option>
                         <option value="600">10 minutes</option>
-                        <option value="900">15 minutes</option>
+                        <option value="900" selected>15 minutes</option>
                         <option value="1800">30 minutes</option>
                         <option value="3600">1 hour</option>
-                        <option value="Infinity" selected>Never</option>
+                        <option value="Infinity">Never</option>
                     </select>
+                    <span class="help-icon" data-help="ttl">?</span>
                 </label>
             </div>
 
@@ -103,24 +106,79 @@
                 </div>
             </div>
 
+            <div class="section-wrap" id="signalMapWrap">
+                <div class="section-header">
+                    <span class="section-title">Signal 3D map</span>
+                    <button class="collapse-btn" data-target="signalMapBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="signalMapBody">
+                    <div class="signal-map-inner">
+                        <div class="signal-map-controls">
+                            <button id="enableLocationBtn" class="btn-primary">Enable location</button>
+                            <span id="locationStatus" class="location-status">Location not enabled — packets won't appear on the 3D map until you allow it.</span>
+                            <label class="map-source-label">
+                                Map:
+                                <select id="mapSourceSelect" class="map-source-select">
+                                    <optgroup label="Mapy.com">
+                                        <option value="mapycom-basic">Basic</option>
+                                        <option value="mapycom-outdoor">Outdoor (hiking)</option>
+                                        <option value="mapycom-aerial">Aerial (ortofoto)</option>
+                                        <option value="mapycom-winter">Winter</option>
+                                    </optgroup>
+                                    <optgroup label="OpenStreetMap">
+                                        <option value="osm">Standard</option>
+                                        <option value="opentopo">OpenTopoMap</option>
+                                    </optgroup>
+                                </select>
+                            </label>
+                            <span class="signal-map-hint">Drag to rotate · scroll / pinch to zoom</span>
+                        </div>
+                        <div class="signal-map-container">
+                            <canvas id="signalMapCanvas" class="signal-map-canvas"></canvas>
+                            <div id="signalMapEmpty" class="signal-map-empty">Allow location and capture some packets to populate the 3D map.</div>
+                            <div id="signalMapInfo" class="signal-map-info hidden"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="section-wrap" id="msgTableWrap">
                 <div class="section-header">
-                    <span class="section-title">Messages</span>
+                    <span class="section-title">Received packets</span>
                     <button class="collapse-btn" data-target="msgScrollBody" title="Toggle section">▾</button>
                 </div>
-                <div class="msg-filter-bar hidden" id="msgFilterBar">
-                    <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
-                    <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
-                    <span id="msgFilterCount" class="msg-filter-count hidden"></span>
-                    <span id="msgFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
-                    <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
-                </div>
                 <div class="section-body" id="msgScrollBody">
-                    <div class="msg-table-scroll">
-                        <table class="msg-table">
-                            <thead id="msgTableHead"></thead>
-                            <tbody id="msgTableBody"></tbody>
-                        </table>
+                    <div class="msg-section-inner">
+                        <div class="msg-filter-bar hidden" id="msgFilterBar">
+                            <input type="text" id="msgFilter" class="msg-filter-input" placeholder="Filter by type, repeater, or text…" autocomplete="off" spellcheck="false">
+                            <button id="msgFilterClear" class="msg-filter-clear hidden" title="Clear filter">✕</button>
+                            <span id="msgFilterCount" class="msg-filter-count hidden"></span>
+                            <span id="msgFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
+                            <button id="exportCsvBtn" class="btn-export" title="Export visible rows as CSV">Export CSV</button>
+                        </div>
+                        <div class="msg-table-scroll">
+                            <table class="msg-table">
+                                <thead id="msgTableHead"></thead>
+                                <tbody id="msgTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-wrap" id="debugWrap">
+                <div class="section-header">
+                    <span class="section-title">Debug</span>
+                    <button class="collapse-btn collapsed" data-target="debugBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body collapsed" id="debugBody">
+                    <div class="debug-inner">
+                        <p class="debug-hint">Inject a fake RX entry to test prefix-collision handling. Hex is interpreted high-byte first, the same way path IDs arrive from the decoder. Examples: <code>5E</code> (1-byte), <code>5E9F</code>, <code>5E9F1234</code>, or <code>direct</code>.</p>
+                        <div class="debug-row">
+                            <input id="debugRepeater" type="text" class="debug-input" placeholder="Repeater hex prefix or 'direct'" autocomplete="off" spellcheck="false">
+                            <button id="debugInject" class="btn-primary">Inject RX</button>
+                            <span id="debugFeedback" class="debug-feedback"></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -142,7 +200,7 @@
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
                 <div class="help-dt">Repeater</div>
-                <div class="help-dd"><b>direct</b> means the packet arrived with no intermediate node. Otherwise the ID shown is the last mesh node that forwarded the packet toward your device.</div>
+                <div class="help-dd"><b>direct</b> means a flood-routed packet was received at the first hop — no intermediate repeater. Otherwise the ID shown is the last mesh node that forwarded the packet toward your device.</div>
 
                 <div class="help-dt">RSSI</div>
                 <div class="help-dd">Received Signal Strength Indicator — radio power in dBm. Less negative = stronger. −70 dBm: excellent &nbsp;·&nbsp; −120 dBm: very weak.</div>
@@ -154,13 +212,16 @@
                 <div class="help-dd">Background RF noise level, estimated as RSSI − SNR. Shown as the shaded area on the RSSI chart.</div>
 
                 <div class="help-dt">Active</div>
-                <div class="help-dd">Number of unique packets in the current time window (within the auto-remove TTL).</div>
+                <div class="help-dd">Number of unique packets in the current time window (within the auto-remove TTL — applies to the Messages table, charts, and 3D map).</div>
 
                 <div class="help-dt">Total RX</div>
                 <div class="help-dd">All packet arrivals this session — the same packet heard via two repeaters counts as two.</div>
 
                 <div class="help-dt">Message type</div>
-                <div class="help-dd">Packet type abbreviations: <b>AD</b> = Advert, <b>GT</b> = GroupText, <b>TR</b> = Traceroute, <b>RS</b> = Response, <b>RQ</b> = Request, <b>PN</b> = Ping. Red type codes (e.g. <span style="color:#c33">8F</span>) are unknown push codes — raw data is shown.</div>
+                <div class="help-dd">Packet type abbreviations: <b>AD</b> = Advert, <b>GT</b> = GroupText, <b>TR</b> = Traceroute, <b>RS</b> = Response, <b>RQ</b> = Request, <b>PN</b> = Ping.</div>
+
+                <div class="help-dt">Column order in Messages</div>
+                <div class="help-dd">Repeater columns are sorted by: packets in the last 5 min (desc), then last RSSI (best first), then last SNR, then total RX count, then alphabetically.</div>
             </div>
 
             <div class="help-section-title">Interactions</div>
@@ -171,10 +232,11 @@
                 <li>Click <b>section titles</b> → collapse / expand that section</li>
                 <li>Click the <b>hex string</b> in a packet detail → copies it to clipboard</li>
                 <li>The <b>Sound</b> checkbox plays a beep on each new packet; pitch reflects signal strength</li>
+                <li>In <b>Signal 3D map</b>, allow location, then drag to rotate / scroll to zoom. Each bead sits at your browser's GPS position with height proportional to RSSI. Click a bead to highlight that repeater (also synced to the RSSI / SNR charts). Choose between Mapy.com (basic, outdoor, winter, aerial / ortofoto) and OpenStreetMap (standard, OpenTopoMap) as the floor tiles.</li>
             </ul>
         </div>
     </div>
 
-    <script type="module" src="app.js?v=3"></script>
+    <script type="module" src="app.js?v=24"></script>
 </body>
 </html>

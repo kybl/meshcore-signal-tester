@@ -1,5 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
+import { Signal3DMap } from './signal3d.js?v=24';
 
 class MeshCoreMonitor {
     constructor() {
@@ -9,7 +10,7 @@ class MeshCoreMonitor {
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
-        this.HASH_LIFETIME = Infinity;
+        this.HASH_LIFETIME = 15 * 60 * 1000;
         this.cleanupInterval = null;
         this._connectionMonitor = null;
         this._monitorDelay = null;
@@ -259,12 +260,87 @@ class MeshCoreMonitor {
         });
 
         this._initHelpSystem();
+        this._initSignalMap();
+        this._initDebug();
+    }
+
+    _initDebug() {
+        const btn  = document.getElementById('debugInject');
+        const inp  = document.getElementById('debugRepeater');
+        const fbk  = document.getElementById('debugFeedback');
+        if (!btn || !inp) return;
+
+        const inject = () => {
+            const raw = inp.value.trim();
+            if (!raw) return;
+            let repeater;
+            if (raw.toLowerCase() === 'direct') {
+                repeater = 'direct';
+            } else {
+                let hex = raw.replace(/^!/, '').toUpperCase();
+                if (!/^[0-9A-F]+$/.test(hex)) {
+                    if (fbk) { fbk.textContent = 'hex digits only'; setTimeout(() => fbk.textContent = '', 1500); }
+                    return;
+                }
+                if (hex.length % 2) hex = '0' + hex;
+                repeater = '!' + hex;
+            }
+            // Unique payload so each inject creates a fresh row, not a merge
+            const fakeHex = 'debug-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
+            const hash    = this.hashPayload(fakeHex);
+            const rssi    = -60 - Math.floor(Math.random() * 50);
+            const snr     = Math.round((Math.random() * 25 - 10) * 10) / 10;
+            this.addRxEntry(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null);
+            if (fbk) {
+                const col = this.findOrCreateColumn(repeater);
+                fbk.textContent = `→ column ${this.displayId(col)}`;
+                setTimeout(() => fbk.textContent = '', 2500);
+            }
+        };
+
+        btn.addEventListener('click', inject);
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inject(); } });
+    }
+
+    _initSignalMap() {
+        const canvas = document.getElementById('signalMapCanvas');
+        if (!canvas) return;
+
+        const sourceSel = document.getElementById('mapSourceSelect');
+        const savedSource = (() => {
+            try {
+                const v = localStorage.getItem('mapSource') || '';
+                // Migrate the original single-key 'mapycom' value
+                return v === 'mapycom' ? 'mapycom-basic' : v;
+            } catch { return ''; }
+        })();
+        if (sourceSel && savedSource) sourceSel.value = savedSource;
+
+        this.signalMap = new Signal3DMap({
+            canvas,
+            statusEl:      document.getElementById('locationStatus'),
+            btnEl:         document.getElementById('enableLocationBtn'),
+            emptyEl:       document.getElementById('signalMapEmpty'),
+            infoEl:        document.getElementById('signalMapInfo'),
+            colorFor:      col => this.getRepeaterColor(col),
+            displayId:     col => this.displayId(col),
+            initialSource: sourceSel?.value,
+            onSelect:      col => {
+                this._chartSelected = col;
+                this.scheduleChartRender();
+            },
+        });
+
+        sourceSel?.addEventListener('change', () => {
+            this.signalMap.setMapSource(sourceSel.value);
+            try { localStorage.setItem('mapSource', sourceSel.value); } catch {}
+        });
     }
 
     _initHelpSystem() {
         const HELP = {
             'active':
-                'Unique packets currently shown — within the auto-remove time window. Older packets are removed automatically.',
+                'Unique packets currently visible — within the auto-remove time window. Older packets disappear automatically.',
             'totalrx':
                 'All packet arrivals this session. The same packet heard via two different repeaters counts as two.',
             'repeaters-count':
@@ -272,15 +348,17 @@ class MeshCoreMonitor {
             'sound':
                 'Plays a short beep on each new incoming packet. Pitch varies with RSSI — stronger signal → higher pitch.',
             'ttl':
-                'Packets not heard within this window are removed from the table and charts. "Never" keeps all data for the whole session.',
+                'Packets not heard within this window are removed from the Messages table, charts, and the 3D map. "Never" keeps everything for the whole session.',
             'repeater':
-                '"direct" = packet arrived with no intermediate node. Otherwise shows the ID of the last repeater that forwarded the packet.',
+                '"direct" = flood-routed packet received at first hop (no intermediate repeater). Otherwise shows the ID of the last repeater that forwarded the packet. Columns are sorted by recent activity (last 5 min), then last RSSI, last SNR, total RX, and finally alphabetically.',
             'rssi':
                 'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
             'snr':
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
+            'rep-filter':
+                'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "5E9F1234" and vice versa. Affects the table, charts, Received packets, and 3D map.',
         };
 
         const tipEl = document.getElementById('helpTip');
@@ -291,14 +369,21 @@ class MeshCoreMonitor {
             if (!text || !tipEl) return;
             tipEl.textContent = text;
             tipEl.style.display = 'block';
-            const r = icon.getBoundingClientRect();
             const tipW = Math.min(260, window.innerWidth - 16);
+            tipEl.style.maxWidth = `${tipW}px`;
+            const r = icon.getBoundingClientRect();
+            const tipH = tipEl.offsetHeight;
             let left = r.left + r.width / 2 - tipW / 2;
             left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
             tipEl.style.left = `${left}px`;
-            tipEl.style.top = `${r.top - 8}px`;
-            tipEl.style.transform = 'translateY(-100%)';
-            tipEl.style.maxWidth = `${tipW}px`;
+            // Default: float above the icon. If there's no room, flip below.
+            if (r.top < tipH + 12) {
+                tipEl.style.top = `${r.bottom + 8}px`;
+                tipEl.style.transform = 'none';
+            } else {
+                tipEl.style.top = `${r.top - 8}px`;
+                tipEl.style.transform = 'translateY(-100%)';
+            }
             icon.classList.add('active');
         };
 
@@ -311,6 +396,9 @@ class MeshCoreMonitor {
         document.addEventListener('click', e => {
             const icon = e.target.closest('.help-icon');
             if (icon) {
+                // Prevent the enclosing <label> from focusing its input
+                e.preventDefault();
+                e.stopPropagation();
                 if (_tipTarget === icon) { hideTip(); return; }
                 hideTip();
                 _tipTarget = icon;
@@ -588,9 +676,6 @@ class MeshCoreMonitor {
 
     handlePayload(payload) {
         const pushCode = payload[0];
-        // Debug: full BLE notification hex with push code + length (drop after diagnosis)
-        const dbgHex = this.bufferToHex(payload.buffer);
-        console.log(`[BLE-RX] push=0x${pushCode.toString(16).padStart(2, '0').toUpperCase()} len=${payload.length} ${dbgHex}`);
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
@@ -599,19 +684,16 @@ class MeshCoreMonitor {
             }
             return;
         }
-        // Known non-LoRa push codes — silently ignore
-        if (pushCode === 0x05 || pushCode === 0x80 || pushCode === 0x82 || pushCode === 0x83) return;
 
+        // Only the three known LoRa RX push codes carry the SNR/RSSI/path
+        // layout we trust. Everything else is silently ignored.
         let loraPacket;
-        let knownFormat = true;
         if (pushCode === 0x88) {
             loraPacket = payload.slice(3);
         } else if (pushCode === 0x84 || pushCode === 0x8e) {
             loraPacket = payload.slice(4);
         } else {
-            // Unknown code — try 3-byte header (same as 0x88); fall back to raw row if decode fails
-            loraPacket = payload.slice(3);
-            knownFormat = false;
+            return;
         }
         if (loraPacket.length === 0) return;
 
@@ -621,27 +703,10 @@ class MeshCoreMonitor {
         try {
             const rawHex = this.bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
-            if (packet.isValid) {
-                // For unknown push codes we don't know the byte layout — bytes 1-2 may
-                // not be SNR/RSSI at all, so pass null to avoid bogus values in the UI.
-                this.processPacket(packet, rawHex, knownFormat ? snr : null, knownFormat ? rssi : null);
-            } else if (!knownFormat) {
-                this._addRawEntry(payload, pushCode);
-            }
+            if (packet.isValid) this.processPacket(packet, rawHex, snr, rssi);
         } catch (e) {
-            if (!knownFormat) {
-                this._addRawEntry(payload, pushCode);
-            } else {
-                console.error('Decode error:', e);
-            }
+            console.error('Decode error:', e);
         }
-    }
-
-    _addRawEntry(payload, pushCode) {
-        const fullHex = this.bufferToHex(payload.buffer);
-        const hash = this.hashPayload(fullHex);
-        const label = '0x' + pushCode.toString(16).toUpperCase().padStart(2, '0');
-        this.addRxEntry(hash, 'direct', label, fullHex, null, null, {}, null);
     }
 
     bufferToHex(buffer) {
@@ -704,7 +769,13 @@ class MeshCoreMonitor {
         if (packet.path && packet.path.length > 0) {
             return this.formatNodeId(packet.path[packet.path.length - 1]);
         }
-        return 'direct';
+        // Empty path is only meaningful when the route accumulates hops.
+        // Flood-routed packets append the forwarder ID at every hop, so an
+        // empty path proves the packet was heard at first hop = direct RF.
+        // Other routing modes (unicast Direct, etc.) leave path empty by
+        // design and tell us nothing about coverage — drop them.
+        const routeName = Utils.getRouteTypeName(packet.routeType) || '';
+        return /Flood/i.test(routeName) ? 'direct' : null;
     }
 
     formatNodeId(nodeId) {
@@ -720,7 +791,8 @@ class MeshCoreMonitor {
 
     // --- Node ID prefix resolution ---
     // Path IDs can be 1/2/3-byte truncations of full 4-byte node IDs.
-    // We always use the longest (most precise) known version as the column key.
+    // The first ID seen wins as the column key; all compatible refinements
+    // (longer or shorter prefixes that share its bytes) merge into it.
 
     idPrecision(id) {
         if (id === 'direct' || id === 'unknown' || id.includes('/')) return 4;
@@ -749,35 +821,196 @@ class MeshCoreMonitor {
         }
         if (this.repeaterColumns.includes(rawId)) return rawId;
 
-        const matches = this.repeaterColumns.filter(col =>
-            col !== 'direct' && this.idsCompatible(rawId, col)
-        );
+        const rawPrec = this.idPrecision(rawId);
+
+        const colMinPrec = (col) => {
+            if (col === 'direct' || col.includes('/')) return this.idPrecision(col.split('/')[0]);
+            return this.allRepeaters.get(col)?.minPrecision ?? this.idPrecision(col);
+        };
+        const colSuffix = (col, p) => this.idSuffix(col.split('/')[0], p);
+
+        // Match at min(rawPrec, colMinPrec) — promoted columns still catch
+        // siblings that share their original shorter prefix.
+        const matches = this.repeaterColumns.filter(col => {
+            if (col === 'direct') return false;
+            const cmp = colMinPrec(col);
+            const minP = Math.min(rawPrec, cmp);
+            return colSuffix(col, minP) === this.idSuffix(rawId, minP);
+        });
 
         if (matches.length === 0) {
             this.repeaterColumns.push(rawId);
             return rawId;
         }
 
-        if (matches.length === 1) {
-            const existing = matches[0];
-            if (this.idPrecision(rawId) > this.idPrecision(existing)) {
-                this.renameColumnKey(existing, rawId);
-                return rawId;
+        // Partition specific cols from collision keys. Treated very differently:
+        //  - specific: subject to promote / split
+        //  - collision: their components may need to be refined when a
+        //    more-precise sibling arrives
+        const specificMatches  = matches.filter(m => !m.includes('/'));
+        const collisionMatches = matches.filter(m =>  m.includes('/'));
+
+        // Multiple distinct specific siblings → this rawId is ambiguous over
+        // all of them. Use (or create) the canonical collision key. If a
+        // subset collision is already there, fold it into the bigger one.
+        if (specificMatches.length >= 2) {
+            const collisionKey = specificMatches.sort().join('/');
+            if (!this.repeaterColumns.includes(collisionKey)) {
+                const subsets = collisionMatches.filter(ck =>
+                    ck.split('/').every(comp => specificMatches.includes(comp))
+                );
+                for (const sub of subsets) this.renameColumnKey(sub, collisionKey);
+                if (!this.repeaterColumns.includes(collisionKey)) this.repeaterColumns.push(collisionKey);
             }
-            return existing;
+            return collisionKey;
         }
 
-        // Multiple compatible columns → ambiguous short ID
-        const collisionKey = matches.sort().join('/');
+        // Exactly one specific match — the usual promote / split path,
+        // plus refining components inside any matched collision keys.
+        if (specificMatches.length === 1) {
+            const existing = specificMatches[0];
+            const existingPrec = this.idPrecision(existing);
+            const commonPrec   = Math.min(rawPrec, existingPrec);
+            const compatibleAtCommon =
+                this.idSuffix(rawId, commonPrec) === this.idSuffix(existing, commonPrec);
+
+            if (compatibleAtCommon) {
+                // Optimistically promote — the column adopts the more-precise
+                // label. Per-packet rawId is preserved so a later collision
+                // can un-merge.
+                if (rawPrec > existingPrec) {
+                    this.renameColumnKey(existing, rawId);
+                    // Mirror the promote into every matched collision key
+                    // that has `existing` as a component — otherwise the
+                    // collision label stays stuck at the old (less-precise)
+                    // identity for what is now a known refined node.
+                    for (const ck of collisionMatches) {
+                        const comps = ck.split('/');
+                        if (!comps.includes(existing)) continue;
+                        const newKey = comps.map(c => c === existing ? rawId : c).sort().join('/');
+                        if (newKey !== ck) this.renameColumnKey(ck, newKey);
+                    }
+                    return rawId;
+                }
+                return existing;
+            }
+
+            // Match at minPrec but conflict at the column's full precision —
+            // the column was optimistically promoted and we now have a real
+            // sibling. Split: ambiguous (shorter-rawId) packets move to the
+            // collision key; specific packets stay in `existing`. The new
+            // rawId becomes its own specific column.
+            const collisionKey = [existing, rawId].sort().join('/');
+            this._splitColumn(existing, collisionKey);
+            if (!this.repeaterColumns.includes(rawId)) this.repeaterColumns.push(rawId);
+            return rawId;
+        }
+
+        // No specific match, only collision key(s) — rawId belongs in the
+        // collision. If rawId refines a component of a matched key, swap
+        // that component in the key.
+        let dest = collisionMatches[0];
+        for (const ck of collisionMatches) {
+            const comps = ck.split('/');
+            const refined = comps.find(comp => {
+                const cPrec = this.idPrecision(comp);
+                return rawPrec > cPrec && this.idSuffix(rawId, cPrec) === this.idSuffix(comp, cPrec);
+            });
+            if (!refined) continue;
+            const newKey = comps.map(c => c === refined ? rawId : c).sort().join('/');
+            if (newKey === ck) continue;
+            this.renameColumnKey(ck, newKey);
+            if (ck === dest) dest = newKey;
+        }
+        return dest;
+    }
+
+    // Un-merge: move entries that came in at a shorter precision (= ambiguous
+    // at the column's current label) into the collision key, leaving the
+    // specifically-matched entries in place.
+    _splitColumn(existingCol, collisionKey) {
+        const existingPrec = this.idPrecision(existingCol);
+
         if (!this.repeaterColumns.includes(collisionKey)) {
             this.repeaterColumns.push(collisionKey);
         }
-        return collisionKey;
+
+        // hashData: per (hash, repeater) entry
+        for (const [, data] of this.hashData) {
+            const entry = data.repeaters.get(existingCol);
+            if (!entry) continue;
+            const ePrec = entry.rawId ? this.idPrecision(entry.rawId) : existingPrec;
+            if (ePrec < existingPrec) {
+                data.repeaters.delete(existingCol);
+                // If the collision already has an entry for this hash, keep
+                // the newer one (Map.set overwrites — fine for our purposes).
+                data.repeaters.set(collisionKey, entry);
+            }
+        }
+
+        // chartPoints: per packet
+        for (const p of this.chartPoints) {
+            if (p.col !== existingCol) continue;
+            const ePrec = p.rawId ? this.idPrecision(p.rawId) : existingPrec;
+            if (ePrec < existingPrec) p.col = collisionKey;
+        }
+
+        // 3D map
+        this.signalMap?.splitPoints?.(existingCol, (rawId) => {
+            const ePrec = rawId ? this.idPrecision(rawId) : existingPrec;
+            return ePrec < existingPrec ? collisionKey : null;
+        });
+
+        // Open detail rows in the message table — flip those that should follow
+        this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => {
+            if (tr.dataset.col !== existingCol) return;
+            // Detail row doesn't know its rawId — safest is to drop the detail
+            tr.dataset.col = '';
+        });
+
+        // Recompute aggregate stats for both columns
+        this._recomputeRepeaterStats(existingCol);
+        this._recomputeRepeaterStats(collisionKey);
+    }
+
+    _recomputeRepeaterStats(col) {
+        let count = 0, lastSeen = -1, maxSnr = -Infinity, maxRssi = -Infinity;
+        let lastSnr = null, lastRssi = null, minPrec = Infinity;
+        for (const p of this.chartPoints) {
+            if (p.col !== col) continue;
+            count++;
+            if (p.time > lastSeen) {
+                lastSeen = p.time;
+                lastSnr  = p.snr;
+                lastRssi = p.rssi;
+            }
+            if (p.snr  > maxSnr)  maxSnr  = p.snr;
+            if (p.rssi > maxRssi) maxRssi = p.rssi;
+            if (p.rawId) {
+                const r = this.idPrecision(p.rawId);
+                if (r < minPrec) minPrec = r;
+            }
+        }
+        if (count === 0) {
+            this.allRepeaters.delete(col);
+            const idx = this.repeaterColumns.indexOf(col);
+            if (idx >= 0) this.repeaterColumns.splice(idx, 1);
+            return;
+        }
+        if (!Number.isFinite(minPrec)) minPrec = this.idPrecision(col.split('/')[0]);
+        this.allRepeaters.set(col, {
+            lastSeen, count, maxSnr, maxRssi, lastSnr, lastRssi,
+            minPrecision: minPrec,
+        });
     }
 
     renameColumnKey(oldKey, newKey) {
-        const idx = this.repeaterColumns.indexOf(oldKey);
-        if (idx >= 0) this.repeaterColumns[idx] = newKey;
+        if (oldKey === newKey) return;
+        const oldIdx = this.repeaterColumns.indexOf(oldKey);
+        if (oldIdx < 0) return;
+        const newIdx = this.repeaterColumns.indexOf(newKey);
+        if (newIdx >= 0) this.repeaterColumns.splice(oldIdx, 1);
+        else             this.repeaterColumns[oldIdx] = newKey;
 
         const oldData = this.allRepeaters.get(oldKey);
         if (oldData) {
@@ -785,12 +1018,16 @@ class MeshCoreMonitor {
             if (newData) {
                 const newer = oldData.lastSeen >= newData.lastSeen ? oldData : newData;
                 this.allRepeaters.set(newKey, {
-                    lastSeen: Math.max(oldData.lastSeen, newData.lastSeen),
-                    count:    oldData.count + newData.count,
-                    maxSnr:   Math.max(oldData.maxSnr  ?? -999, newData.maxSnr  ?? -999),
-                    maxRssi:  Math.max(oldData.maxRssi ?? -999, newData.maxRssi ?? -999),
-                    lastSnr:  newer.lastSnr,
-                    lastRssi: newer.lastRssi,
+                    lastSeen:     Math.max(oldData.lastSeen, newData.lastSeen),
+                    count:        oldData.count + newData.count,
+                    maxSnr:       Math.max(oldData.maxSnr,  newData.maxSnr),
+                    maxRssi:      Math.max(oldData.maxRssi, newData.maxRssi),
+                    lastSnr:      newer.lastSnr,
+                    lastRssi:     newer.lastRssi,
+                    minPrecision: Math.min(
+                        oldData.minPrecision ?? this.idPrecision(oldKey.split('/')[0]),
+                        newData.minPrecision ?? this.idPrecision(newKey.split('/')[0]),
+                    ),
                 });
             } else {
                 this.allRepeaters.set(newKey, oldData);
@@ -805,7 +1042,6 @@ class MeshCoreMonitor {
             }
         }
 
-        // Keep chart color and history consistent after rename
         if (this.chartColors.has(oldKey) && !this.chartColors.has(newKey)) {
             this.chartColors.set(newKey, this.chartColors.get(oldKey));
         }
@@ -815,11 +1051,11 @@ class MeshCoreMonitor {
         }
         if (this._chartSelected === oldKey) this._chartSelected = newKey;
 
-        // Update any open detail rows whose col attribute still references the old key,
-        // so that renderMsgTable's sig-active restoration uses the correct (new) col.
         this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => {
             if (tr.dataset.col === oldKey) tr.dataset.col = newKey;
         });
+
+        this.signalMap?.renameCol?.(oldKey, newKey);
     }
 
     displayId(id) {
@@ -853,7 +1089,7 @@ class MeshCoreMonitor {
 
         if (isNewHash) {
             this.hashData.set(hash, {
-                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex }]]),
+                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater }]]),
                 firstSeen: now,
                 lastSeen: now,
                 insertOrder: ++this.hashCounter,
@@ -865,20 +1101,23 @@ class MeshCoreMonitor {
         } else {
             const data = this.hashData.get(hash);
             data.lastSeen = now;
-            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex });
+            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater });
         }
 
-        const hasSignal = snr !== null && rssi !== null;
+        const rawPrec  = this.idPrecision(repeater);
         const existing = this.allRepeaters.get(canonicalKey);
         this.allRepeaters.set(canonicalKey, {
-            lastSeen: now,
-            count:    (existing?.count ?? 0) + 1,
-            maxSnr:   hasSignal ? Math.max(existing?.maxSnr  ?? -999, snr)  : (existing?.maxSnr  ?? null),
-            maxRssi:  hasSignal ? Math.max(existing?.maxRssi ?? -999, rssi) : (existing?.maxRssi ?? null),
-            lastSnr:  hasSignal ? snr  : (existing?.lastSnr  ?? null),
-            lastRssi: hasSignal ? rssi : (existing?.lastRssi ?? null),
+            lastSeen:     now,
+            count:        (existing?.count ?? 0) + 1,
+            maxSnr:       Math.max(existing?.maxSnr  ?? -Infinity, snr),
+            maxRssi:      Math.max(existing?.maxRssi ?? -Infinity, rssi),
+            lastSnr:      snr,
+            lastRssi:     rssi,
+            minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
         });
-        if (hasSignal) this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
+        this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
+        const loc = this.signalMap?.currentLocation();
+        if (loc) this.signalMap.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
@@ -903,7 +1142,7 @@ class MeshCoreMonitor {
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
         const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
-        if (hasSignal && matchesMsgFilter && matchesRepFilter) this.playRxSound(rssi);
+        if (matchesMsgFilter && matchesRepFilter) this.playRxSound(rssi);
         this.updateStats();
         this.emptyState?.classList.add('hidden');
     }
@@ -911,15 +1150,33 @@ class MeshCoreMonitor {
     // --- Column management ---
 
     sortColumns() {
-        this.repeaterColumns.sort((a, b) =>
-            (this.allRepeaters.get(b)?.maxRssi ?? -200) - (this.allRepeaters.get(a)?.maxRssi ?? -200)
-        );
+        const FIVE_MIN = 5 * 60 * 1000;
+        const cutoff = Date.now() - FIVE_MIN;
+        const recentCount = new Map();
+        for (const p of this.chartPoints) {
+            if (p.time >= cutoff) recentCount.set(p.col, (recentCount.get(p.col) ?? 0) + 1);
+        }
+        this.repeaterColumns.sort((a, b) => {
+            const ra = recentCount.get(a) ?? 0;
+            const rb = recentCount.get(b) ?? 0;
+            if (rb !== ra) return rb - ra;
+            const da = this.allRepeaters.get(a);
+            const db = this.allRepeaters.get(b);
+            const lrA = da?.lastRssi ?? -Infinity;
+            const lrB = db?.lastRssi ?? -Infinity;
+            if (lrB !== lrA) return lrB - lrA;
+            const lsA = da?.lastSnr ?? -Infinity;
+            const lsB = db?.lastSnr ?? -Infinity;
+            if (lsB !== lsA) return lsB - lsA;
+            const cA = da?.count ?? 0;
+            const cB = db?.count ?? 0;
+            if (cB !== cA) return cB - cA;
+            return a.localeCompare(b);
+        });
     }
 
     abbreviateType(type) {
         if (!type) return '?';
-        // Hex push codes like "0x8F" → show just the hex digits "8F"
-        if (/^0x[0-9A-Fa-f]+$/i.test(type)) return type.slice(2).toUpperCase();
         // Show only payload type (2 chars); route type is visible from repeater columns
         const payload = [
             [/GroupText|GROUP_TEXT/,     'GT'],
@@ -976,7 +1233,7 @@ class MeshCoreMonitor {
         if (colKey !== this._lastColKey) {
             this._lastColKey = colKey;
             const repHeaders = visibleCols.map(r =>
-                `<th colspan="2" class="msg-col-rep">${this.displayId(r)}</th>`
+                `<th colspan="2" class="msg-col-rep"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}</th>`
             ).join('');
             const subHeaders = visibleCols.map(() =>
                 `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
@@ -1044,14 +1301,12 @@ class MeshCoreMonitor {
             const sig = data.repeaters.get(r);
             return sig ? this.buildSigCellsHtml(sig.rssi, sig.snr, hash, r) : '<td></td><td></td>';
         }).join('');
-        const isRawType = /^0x[0-9A-Fa-f]+$/i.test(data.type);
         const typeDisplay = this._useAbbreviatedTypes
             ? this.escHtml(this.abbreviateType(data.type))
             : this.escHtml(data.type || '?');
-        const typeClass = isRawType ? 'rx-type rx-type-raw' : 'rx-type';
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="${typeClass}" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
+                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
             </td>
             ${cells}
         </tr>`;
@@ -1158,49 +1413,29 @@ class MeshCoreMonitor {
         const hex = repEntry?.rawHex ?? data.rawHex;
 
         let header = '';
-        if (col) {
-            const sig = repEntry;
-            if (sig) {
-                const hasSignal = sig.rssi !== null && sig.snr !== null;
-                let sigLine = '';
-                if (hasSignal) {
-                    const rc = this.signalColor(sig.rssi, -70, -130);
-                    const sc = this.signalColor(sig.snr, 13, -10, 0);
-                    sigLine = ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${sig.rssi}</span>` +
-                        ` &nbsp; SNR <span style="color:${sc};font-weight:700">${sig.snr.toFixed(1)}</span>`;
-                }
-                const hexShort = hex.slice(0, 12);
-                header = `<div class="detail-sig">` +
-                    `<b>${this.escHtml(this.displayId(col))}</b>` +
-                    sigLine +
-                    ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
-                    `</div>`;
-            }
+        if (repEntry) {
+            const rc = this.signalColor(repEntry.rssi, -70, -130);
+            const sc = this.signalColor(repEntry.snr,  13, -10, 0);
+            const hexShort = hex.slice(0, 12);
+            header = `<div class="detail-sig">` +
+                `<b>${this.escHtml(this.displayId(col))}</b>` +
+                ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi}</span>` +
+                ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr.toFixed(1)}</span>` +
+                ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
+                `</div>`;
         }
 
-        const isRawCode = /^0x[0-9A-Fa-f]+$/i.test(data.type);
         const typeHtml = data.type
             ? `<div class="detail-type">${this.escHtml(data.type)}</div>`
             : '';
-        const unknownNote = isRawCode
-            ? `<div class="detail-raw" style="color:#c33;margin-bottom:6px">Unknown packet type — raw data</div>`
+        const jsonHtml = pkt
+            ? `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`
             : '';
 
-        let jsonHtml = '';
-        if (pkt) {
-            jsonHtml = `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`;
-        } else if (isRawCode) {
-            jsonHtml = `<code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex" style="display:block;margin-top:2px">${this.escHtml(hex)}</code>`;
-        }
-
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${unknownNote}${header}${jsonHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr, hash, col) {
-        if (rssi === null || snr === null) {
-            return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:#bbb;text-align:right">—</td>` +
-                   `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:#bbb;text-align:right">—</td>`;
-        }
         const rc = this.signalColor(rssi, -70, -130);
         const sc = this.signalColor(snr,  13, -10, 0);
         return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssi}</td>` +
@@ -1552,7 +1787,15 @@ class MeshCoreMonitor {
         for (const [hash, data] of this.hashData.entries()) {
             if (now - data.lastSeen > this.HASH_LIFETIME) toRemove.push(hash);
         }
-        if (!toRemove.length) return;
+        // Even with nothing to delete, packets may have aged out of the
+        // rolling 5-minute count → re-sort columns and refresh the table
+        // only if their order actually changed.
+        if (!toRemove.length) {
+            const prev = this.repeaterColumns.join('|');
+            this.sortColumns();
+            if (this.repeaterColumns.join('|') !== prev) this.renderMsgTable();
+            return;
+        }
 
         for (const hash of toRemove) {
             document.getElementById(`row-${hash}`)?.classList.add('row-removing');
@@ -1566,6 +1809,7 @@ class MeshCoreMonitor {
                 // Re-check TTL: a fresh packet may have arrived during the animation delay
                 if (data && data.lastSeen <= cutoff) this.hashData.delete(hash);
             }
+            this.signalMap?.purgeOlderThan(cutoff);
             this.repeaterColumns = this.repeaterColumns.filter(r =>
                 Array.from(this.hashData.values()).some(d => d.repeaters.has(r))
             );
@@ -1599,17 +1843,17 @@ class MeshCoreMonitor {
             return dir * (va - vb);
         });
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
-            const mrc = d.maxRssi  !== null ? this.signalColor(d.maxRssi,  -70, -130) : '#bbb';
-            const lrc = d.lastRssi !== null ? this.signalColor(d.lastRssi, -70, -130) : '#bbb';
-            const msc = d.maxSnr   !== null ? this.signalColor(d.maxSnr,   13, -10, 0) : '#bbb';
-            const lsc = d.lastSnr  !== null ? this.signalColor(d.lastSnr,  13, -10, 0) : '#bbb';
+            const mrc = this.signalColor(d.maxRssi,  -70, -130);
+            const lrc = this.signalColor(d.lastRssi, -70, -130);
+            const msc = this.signalColor(d.maxSnr,   13, -10, 0);
+            const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
             return `<tr>
-                <td class="rl-id">${this.displayId(repeater)}</td>
+                <td class="rl-id"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}</td>
                 <td class="rl-num">${d.count}</td>
-                <td class="rl-num" style="color:${mrc}">${d.maxRssi  !== null ? d.maxRssi          : '—'}</td>
-                <td class="rl-num" style="color:${lrc}">${d.lastRssi !== null ? d.lastRssi         : '—'}</td>
-                <td class="rl-num" style="color:${msc}">${d.maxSnr   !== null ? d.maxSnr.toFixed(1)  : '—'}</td>
-                <td class="rl-num" style="color:${lsc}">${d.lastSnr  !== null ? d.lastSnr.toFixed(1) : '—'}</td>
+                <td class="rl-num" style="color:${mrc}">${d.maxRssi}</td>
+                <td class="rl-num" style="color:${lrc}">${d.lastRssi}</td>
+                <td class="rl-num" style="color:${msc}">${d.maxSnr.toFixed(1)}</td>
+                <td class="rl-num" style="color:${lsc}">${d.lastSnr.toFixed(1)}</td>
                 <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
@@ -1746,6 +1990,9 @@ class MeshCoreMonitor {
         this.renderMsgTable();
         this.scheduleChartRender();
         this.updateStats();
+        this.signalMap?.setFilterFn(
+            this._repFilterTerms.length ? col => this._colMatchesRepFilter(col) : null
+        );
     }
 
     _exportCsv() {
@@ -1779,7 +2026,7 @@ class MeshCoreMonitor {
             }
             const sigCols = cols.flatMap(c => {
                 const sig = data.repeaters.get(c);
-                return sig ? [sig.rssi != null ? String(sig.rssi) : '', sig.snr != null ? sig.snr.toFixed(1) : ''] : ['', ''];
+                return sig ? [String(sig.rssi), sig.snr.toFixed(1)] : ['', ''];
             });
             lines.push([
                 new Date(data.firstSeen).toISOString(),

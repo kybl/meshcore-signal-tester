@@ -189,6 +189,13 @@ header {
 
 .section-body > * {
     min-height: 0;
+    /* Grid items default to min-width: auto (= content size). Without this
+       the inner wrapper grows to fit a wide table, breaking horizontal
+       scrolling and stretching the filter bar past the export button. */
+    min-width: 0;
+    /* Without border-box, an inner wrapper's padding survives the grid
+       collapse and leaves a residual band of background. */
+    box-sizing: border-box;
 }
 
 .section-body.collapsed {
@@ -267,6 +274,17 @@ header {
 
 .rl-id {
     font-weight: 700;
+    white-space: nowrap;
+}
+
+.rl-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+    flex-shrink: 0;
 }
 
 .rl-num {
@@ -576,11 +594,6 @@ header {
     line-height: 1.3;
 }
 
-.detail-raw {
-    font-size: 11px;
-    color: #444;
-}
-
 .detail-sig {
     font-size: 12px;
     color: #444;
@@ -696,10 +709,6 @@ header {
     color: #c33;
 }
 
-.rx-type-raw {
-    color: #c33;
-}
-
 @keyframes detailOpen {
     from { opacity: 0; transform: translateY(-5px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -781,6 +790,26 @@ header {
 .help-icon.active {
     background: #667eea;
     color: white;
+}
+
+/* The default blue-on-translucent-blue help icon disappears on the
+   purple section backgrounds (.ttl-control, .rep-filter-bar). Force a
+   white-on-translucent variant in those contexts. The header has a
+   white background, so .hstat / .sound-toggle keep the default style. */
+.ttl-control .help-icon,
+.rep-filter-bar .help-icon {
+    background: rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.85);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.ttl-control .help-icon:hover,
+.rep-filter-bar .help-icon:hover,
+.ttl-control .help-icon.active,
+.rep-filter-bar .help-icon.active {
+    background: rgba(255, 255, 255, 0.32);
+    color: white;
+    border-color: rgba(255, 255, 255, 0.45);
 }
 
 /* Shared floating tooltip used by help icons */
@@ -998,8 +1027,14 @@ header {
 .rep-filter-bar {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 0 6px;
+    gap: 8px;
+    padding: 14px 0 6px;
+}
+
+.rep-filter-label {
+    color: rgba(255,255,255,0.65);
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 .rep-filter-bar .rep-filter-input {
@@ -1038,5 +1073,179 @@ header {
 .sig-rssi.cell-flash,
 .sig-snr.cell-flash {
     animation: cellFlash 0.8s ease-out forwards;
+}
+
+/* ---- Signal 3D map ---- */
+
+.signal-map-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 8px 4px;
+    font-size: 12px;
+    color: #555;
+}
+
+.signal-map-controls .btn-primary.hidden {
+    display: none;
+}
+
+.location-status {
+    color: #c0c0c0;
+    font-weight: 400;
+}
+
+.signal-map-hint {
+    margin-left: auto;
+    color: #c0c0c0;
+    font-size: 11px;
+}
+
+.map-source-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #c0c0c0;
+}
+
+.map-source-select {
+    border: 1px solid #ddd;
+    background: #fff;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    color: #444;
+    cursor: pointer;
+}
+
+.map-source-select:hover {
+    border-color: #bbb;
+}
+
+.signal-map-container {
+    position: relative;
+    width: 100%;
+    height: 460px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #eef2f7;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+}
+
+.signal-map-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    cursor: grab;
+}
+
+.signal-map-canvas:active {
+    cursor: grabbing;
+}
+
+.signal-map-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    color: #777;
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+}
+
+.signal-map-empty.hidden {
+    display: none;
+}
+
+.signal-map-info {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
+    padding: 9px 13px;
+    font-size: 12px;
+    line-height: 1.65;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.13);
+    backdrop-filter: blur(4px);
+    min-width: 160px;
+    pointer-events: none;
+}
+
+.signal-map-info.hidden {
+    display: none;
+}
+
+.smi-name {
+    font-size: 13px;
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+}
+
+.smi-stat {
+    color: #555;
+}
+
+@media (max-width: 600px) {
+    .signal-map-container { height: 340px; }
+    .signal-map-hint { display: none; }
+}
+
+/* ---- Debug section ---- */
+
+.debug-inner {
+    padding: 6px 4px 4px;
+}
+
+.debug-hint {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 11px;
+    margin: 0 0 8px;
+    line-height: 1.5;
+}
+
+.debug-hint code {
+    background: rgba(255, 255, 255, 0.16);
+    color: white;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 10px;
+}
+
+.debug-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.debug-input {
+    flex: 0 1 220px;
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.9);
+    color: #333;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.debug-input:focus {
+    outline: none;
+    background: white;
+    border-color: white;
+}
+
+.debug-feedback {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
