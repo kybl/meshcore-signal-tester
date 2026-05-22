@@ -129,6 +129,42 @@ header {
     cursor: not-allowed;
 }
 
+.btn-pause {
+    background: #f0f4ff;
+    color: #667eea;
+    border: 1.5px solid #c8c8f0;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-pause:hover:not(:disabled) {
+    background: #667eea;
+    color: white;
+    border-color: #667eea;
+}
+
+.btn-pause:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-pause.collecting {
+    background: #fff7ed;
+    color: #c2410c;
+    border-color: #fbd38d;
+}
+
+.btn-pause.collecting:hover {
+    background: #c2410c;
+    color: white;
+    border-color: #c2410c;
+}
+
 .sound-toggle {
     display: flex;
     align-items: center;

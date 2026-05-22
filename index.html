@@ -11,11 +11,12 @@
         <header>
             <div class="header-row">
                 <span class="app-title">MeshCore RX Monitor</span>
-                <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
                 <div class="header-controls">
                     <span id="status" class="status disconnected">Disconnected</span>
                     <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
+                    <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                     <label class="sound-toggle">Sound<select id="soundSelect" class="sound-select"><option value="off">off</option><option value="short" selected>short</option><option value="medium">medium</option><option value="long">long</option></select><span class="help-icon" data-help="sound">?</span></label>
+                    <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
                 </div>
                 <span id="batteryStatus" class="battery-status hidden"></span>
                 <div id="savedDevices" class="saved-devices hidden"></div>

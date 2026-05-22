@@ -34,12 +34,27 @@ class MeshCoreMonitor {
         this._rxTimestamps = [];
         this._msgFilter = '';
         this._repFilterTerms = [];
+        this._collecting = false;
 
         this.initUI();
         this.startCleanupTimer();
         this.renderSavedDevices();
         // Render empty chart axes immediately so the section is visible from page load
         requestAnimationFrame(() => this.scheduleChartRender());
+    }
+
+    _updatePauseBtn() {
+        const btn = document.getElementById('pauseBtn');
+        if (!btn) return;
+        const connected = !!this.device;
+        btn.disabled = !connected;
+        if (this._collecting) {
+            btn.textContent = '⏸ Pause';
+            btn.classList.add('collecting');
+        } else {
+            btn.textContent = '▶ Resume';
+            btn.classList.remove('collecting');
+        }
     }
 
     initUI() {
@@ -75,6 +90,12 @@ class MeshCoreMonitor {
         this.soundSelect = document.getElementById('soundSelect');
         try { const s = localStorage.getItem('sound'); if (s) this.soundSelect.value = s; } catch {}
         this.tooltip = document.getElementById('chartTooltip');
+
+        document.getElementById('pauseBtn')?.addEventListener('click', () => {
+            if (!this.device) return;
+            this._collecting = !this._collecting;
+            this._updatePauseBtn();
+        });
 
         this.connectBtn.onclick = () => this.connectBluetooth();
 
@@ -623,6 +644,8 @@ class MeshCoreMonitor {
         this.connectBtn.textContent = 'Disconnect';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.disconnect();
+        this._collecting = true;
+        this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connected. Waiting for first RX log…';
@@ -1143,6 +1166,7 @@ class MeshCoreMonitor {
     }
 
     addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null) {
+        if (!this._collecting) return;
         const wasAtBottom = this._isAtPageBottom();
         this.totalRxCount++;
         const now = Date.now();
@@ -2201,6 +2225,8 @@ class MeshCoreMonitor {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
+        this._collecting = false;
+        this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.';
