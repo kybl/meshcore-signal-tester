@@ -249,6 +249,11 @@ header {
     grid-template-rows: 0fr;
 }
 
+.section-body.collapsed > * {
+    padding: 0;
+    margin: 0;
+}
+
 .collapse-btn {
     background: none;
     border: none;
