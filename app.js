@@ -824,8 +824,13 @@ class MeshCoreMonitor {
         const rawPrec = this.idPrecision(rawId);
 
         const colMinPrec = (col) => {
-            if (col === 'direct' || col.includes('/')) return this.idPrecision(col.split('/')[0]);
-            return this.allRepeaters.get(col)?.minPrecision ?? this.idPrecision(col);
+            if (col === 'direct') return 4;
+            // For collision keys, use the stored minPrecision (reflects the
+            // shortest rawId ever seen for this column, e.g. a 1-byte prefix
+            // that triggered the initial split).  Fall back to the precision
+            // of the first component only when no stats exist yet.
+            const fallback = this.idPrecision(col.split('/')[0]);
+            return this.allRepeaters.get(col)?.minPrecision ?? fallback;
         };
         const colSuffix = (col, p) => this.idSuffix(col.split('/')[0], p);
 
@@ -909,23 +914,54 @@ class MeshCoreMonitor {
             return rawId;
         }
 
-        // No specific match, only collision key(s) — rawId belongs in the
-        // collision. If rawId refines a component of a matched key, swap
-        // that component in the key.
+        // No specific match, only collision key(s).  Three sub-cases:
+        //
+        //  (a) rawId refines a component (rawPrec > component precision,
+        //      same prefix at that precision) → swap the component label.
+        //
+        //  (b) rawId is a new sibling at the same precision as the existing
+        //      components (compatible at the collision's stored minPrecision
+        //      but distinct at full precision) → add rawId as a new specific
+        //      column and expand the collision key to include it.
+        //
+        //  (c) rawId is a short ambiguous ID (rawPrec < min component
+        //      precision) → belongs in the existing collision key as-is.
         let dest = collisionMatches[0];
+        let isNewSibling = false;
         for (const ck of collisionMatches) {
             const comps = ck.split('/');
+            const minCompPrec = Math.min(...comps.map(c => this.idPrecision(c)));
+
             const refined = comps.find(comp => {
                 const cPrec = this.idPrecision(comp);
                 return rawPrec > cPrec && this.idSuffix(rawId, cPrec) === this.idSuffix(comp, cPrec);
             });
-            if (!refined) continue;
-            const newKey = comps.map(c => c === refined ? rawId : c).sort().join('/');
-            if (newKey === ck) continue;
-            this.renameColumnKey(ck, newKey);
-            if (ck === dest) dest = newKey;
+
+            if (refined) {
+                // (a) Refinement: update that component in the collision key.
+                const newKey = comps.map(c => c === refined ? rawId : c).sort().join('/');
+                if (newKey !== ck) {
+                    this.renameColumnKey(ck, newKey);
+                    if (ck === dest) dest = newKey;
+                }
+            } else if (rawPrec >= minCompPrec) {
+                // (b) New sibling: add it as a specific column and widen the
+                // collision key so ambiguous short-ID packets are attributed
+                // to all three (or more) possible repeaters.
+                if (!this.repeaterColumns.includes(rawId)) this.repeaterColumns.push(rawId);
+                const newKey = [...comps, rawId].sort().join('/');
+                if (newKey !== ck) {
+                    this.renameColumnKey(ck, newKey);
+                    if (ck === dest) dest = newKey;
+                }
+                isNewSibling = true;
+            }
+            // (c) rawPrec < minCompPrec: short ambiguous ID — dest unchanged.
         }
-        return dest;
+        // For new siblings the specific rawId column is the canonical
+        // destination for this packet; ambiguous packets stay in the
+        // collision key.
+        return isNewSibling ? rawId : dest;
     }
 
     // Un-merge: move entries that came in at a shorter precision (= ambiguous
