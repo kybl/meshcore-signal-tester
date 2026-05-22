@@ -257,6 +257,13 @@ class MeshCoreMonitor {
         }
         document.getElementById('exportCsvBtn')?.addEventListener('click', () => this._exportCsv());
 
+        const importCsvInput = document.getElementById('importCsvInput');
+        document.getElementById('importCsvBtn')?.addEventListener('click', () => importCsvInput?.click());
+        importCsvInput?.addEventListener('change', () => {
+            const file = importCsvInput.files?.[0];
+            if (file) { this._importCsv(file); importCsvInput.value = ''; }
+        });
+
         const repFilterInput = document.getElementById('repFilter');
         const repFilterClear = document.getElementById('repFilterClear');
         const repFilterApplied = document.getElementById('repFilterApplied');
@@ -1167,19 +1174,24 @@ class MeshCoreMonitor {
         return window.scrollY + window.innerHeight >= document.body.scrollHeight - margin;
     }
 
-    addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null) {
-        if (!this._collecting) return;
-        const wasAtBottom = this._isAtPageBottom();
+    addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null, opts = {}) {
+        if (!this._collecting && !opts.importing) return;
+        const wasAtBottom = !opts.importing && this._isAtPageBottom();
         this.totalRxCount++;
-        const now = Date.now();
-        this._rxTimestamps.push(now);
+        const now = opts.timestamp ?? Date.now();
+        if (!opts.importing) this._rxTimestamps.push(now);
         const isNewHash = !this.hashData.has(hash);
         const prevColCount = this.repeaterColumns.length;
         const canonicalKey = this.findOrCreateColumn(repeater);
 
+        const loc = opts.lat != null ? { lat: opts.lat, lon: opts.lon }
+            : (this.signalMap?.currentLocation() ?? null);
+        const repEntry = { snr, rssi, packet, rawHex, rawId: repeater, time: now };
+        if (loc) { repEntry.lat = loc.lat; repEntry.lon = loc.lon; }
+
         if (isNewHash) {
             this.hashData.set(hash, {
-                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater, time: now }]]),
+                repeaters: new Map([[canonicalKey, repEntry]]),
                 firstSeen: now,
                 lastSeen: now,
                 insertOrder: ++this.hashCounter,
@@ -1191,7 +1203,7 @@ class MeshCoreMonitor {
         } else {
             const data = this.hashData.get(hash);
             data.lastSeen = now;
-            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater, time: now });
+            data.repeaters.set(canonicalKey, repEntry);
         }
 
         const rawPrec  = this.idPrecision(repeater);
@@ -1206,8 +1218,10 @@ class MeshCoreMonitor {
             minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
         });
         this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
-        const loc = this.signalMap?.currentLocation();
-        if (loc) this.signalMap.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
+        if (loc) this.signalMap?.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
+
+        if (opts.importing) return;
+
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);
@@ -2095,17 +2109,7 @@ class MeshCoreMonitor {
     _exportCsv() {
         if (this.hashData.size === 0) return;
 
-        const filter = this._msgFilter.toLowerCase().trim();
-        const rows = Array.from(this.hashData.entries())
-            .sort(([, a], [, b]) => a.insertOrder - b.insertOrder)
-            .filter(([, data]) => !filter || this._rowMatchesFilter(data, filter));
-
-        const cols = this.repeaterColumns;
-        const header = [
-            'time', 'type', 'path', 'hash',
-            ...cols.flatMap(c => [`rssi_${this.displayId(c)}`, `snr_${this.displayId(c)}`]),
-            'text', 'sender', 'raw_hex',
-        ];
+        const msgFilter = this._msgFilter.toLowerCase().trim();
 
         const esc = v => {
             if (v == null || v === '') return '';
@@ -2114,26 +2118,33 @@ class MeshCoreMonitor {
                 ? '"' + s.replace(/"/g, '""') + '"' : s;
         };
 
+        const header = ['time', 'type', 'hash', 'repeater', 'rssi', 'snr', 'raw_hex', 'lat', 'lon', 'text', 'sender'];
         const lines = [header.join(',')];
-        for (const [hash, data] of rows) {
-            // Pick the packet with the longest path for the path column
-            let bestPkt = data.packet;
-            for (const [, rep] of data.repeaters) {
-                if ((rep.packet?.path?.length ?? 0) > (bestPkt?.path?.length ?? 0)) bestPkt = rep.packet;
+
+        // One row per (hash, repeater) pair, sorted chronologically
+        const allRows = [];
+        for (const [hash, data] of this.hashData) {
+            if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
+            for (const [col, rep] of data.repeaters) {
+                if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
+                allRows.push({ hash, data, col, rep });
             }
-            const sigCols = cols.flatMap(c => {
-                const sig = data.repeaters.get(c);
-                return sig ? [String(sig.rssi), sig.snr.toFixed(1)] : ['', ''];
-            });
+        }
+        allRows.sort((a, b) => (a.rep.time ?? 0) - (b.rep.time ?? 0));
+
+        for (const { hash, data, rep } of allRows) {
             lines.push([
-                new Date(data.firstSeen).toISOString(),
-                data.type || '',
-                this._formatPath(bestPkt),
+                new Date(rep.time ?? data.firstSeen).toISOString(),
+                data.type  || '',
                 hash,
-                ...sigCols,
+                rep.rawId  || '',
+                rep.rssi,
+                rep.snr.toFixed(2),
+                rep.rawHex || data.rawHex || '',
+                rep.lat    ?? '',
+                rep.lon    ?? '',
                 data.meta?.text   || '',
                 data.meta?.sender || '',
-                data.rawHex       || '',
             ].map(esc).join(','));
         }
 
@@ -2146,6 +2157,130 @@ class MeshCoreMonitor {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+
+    _parseCsvLine(line) {
+        const cols = [];
+        let cur = '';
+        let inQ = false;
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (inQ) {
+                if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+                else if (ch === '"') inQ = false;
+                else cur += ch;
+            } else {
+                if (ch === '"') inQ = true;
+                else if (ch === ',') { cols.push(cur); cur = ''; }
+                else cur += ch;
+            }
+        }
+        cols.push(cur);
+        return cols;
+    }
+
+    async _importCsv(file) {
+        let text;
+        try { text = await file.text(); } catch { alert('Could not read file.'); return; }
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+        const lines = text.split(/\r?\n/);
+        if (lines.length < 2) return;
+
+        const header = this._parseCsvLine(lines[0]);
+        const idx = name => header.indexOf(name);
+        const iTime = idx('time'), iType = idx('type'), iHash = idx('hash');
+        const iRep  = idx('repeater'), iRssi = idx('rssi'), iSnr = idx('snr');
+        const iHex  = idx('raw_hex'), iLat = idx('lat'), iLon = idx('lon');
+        const iTxt  = idx('text'), iSnd = idx('sender');
+
+        if (iTime < 0 || iHash < 0 || iRep < 0) {
+            alert('Unrecognised CSV format — expected columns: time, hash, repeater.');
+            return;
+        }
+
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const c = this._parseCsvLine(line);
+            const time = new Date(c[iTime]).getTime();
+            if (isNaN(time)) continue;
+            const lat = iLat >= 0 && c[iLat] !== '' ? parseFloat(c[iLat]) : null;
+            const lon = iLon >= 0 && c[iLon] !== '' ? parseFloat(c[iLon]) : null;
+            rows.push({
+                time,
+                type:      iType >= 0 ? c[iType] : '',
+                hash:      c[iHash],
+                repeater:  c[iRep],
+                rssi:      parseInt(c[iRssi]) || -100,
+                snr:       parseFloat(c[iSnr]) || 0,
+                rawHex:    iHex  >= 0 ? c[iHex]  : '',
+                lat:       lat != null && !isNaN(lat) ? lat : null,
+                lon:       lon != null && !isNaN(lon) ? lon : null,
+                csvText:   iTxt >= 0 ? c[iTxt]  : '',
+                csvSender: iSnd >= 0 ? c[iSnd]  : '',
+            });
+        }
+        if (rows.length === 0) return;
+
+        // Ascending time order so firstSeen and prefix resolution are correct
+        rows.sort((a, b) => a.time - b.time);
+
+        // Ensure imported historical data isn't immediately cleaned up by TTL
+        const ttlSelect = document.getElementById('ttlSelect');
+        if (ttlSelect && isFinite(this.HASH_LIFETIME)) {
+            ttlSelect.value = 'Infinity';
+            this.HASH_LIFETIME = Infinity;
+            try { localStorage.setItem('ttl', 'Infinity'); } catch {}
+        }
+
+        for (const row of rows) {
+            let packet = null;
+            let meta = {};
+            if (row.rawHex) {
+                try {
+                    const decoded = MeshCoreDecoder.decode(row.rawHex);
+                    if (decoded.isValid) {
+                        packet = decoded;
+                        const p = decoded.payload?.decoded;
+                        if (p) {
+                            const dec = p.decrypted;
+                            if (dec?.message != null) meta.text   = String(dec.message);
+                            if (dec?.sender  != null) meta.sender = String(dec.sender);
+                            if (p.appData?.name != null) meta.name = String(p.appData.name);
+                            const lk = p.publicKey ?? p.pubKey ?? p.linkKey ?? p.key ?? null;
+                            if (lk != null) meta.linkKey = String(lk);
+                        }
+                        const path = decoded.path || [];
+                        const fi = path[0];
+                        meta.pathLen       = path.length;
+                        meta.pathItemBytes = decoded.pathHashSize ?? (typeof fi === 'string' ? fi.length / 2 : typeof fi === 'number' ? 4 : 0);
+                        meta.totalBytes    = decoded.totalBytes;
+                    }
+                } catch { /* ignore */ }
+            }
+            if (!meta.text   && row.csvText)   meta.text   = row.csvText;
+            if (!meta.sender && row.csvSender)  meta.sender = row.csvSender;
+
+            const type = packet
+                ? ([Utils.getRouteTypeName(packet.routeType), Utils.getPayloadTypeName(packet.payloadType)].filter(Boolean).join(' ') || row.type)
+                : row.type;
+
+            this.addRxEntry(row.hash, row.repeater, type, row.rawHex, row.snr, row.rssi, meta, packet, {
+                importing: true,
+                timestamp: row.time,
+                lat:       row.lat,
+                lon:       row.lon,
+            });
+        }
+
+        this.sortColumns();
+        this.renderMsgTable();
+        this.updateRepeaterTable();
+        this.scheduleChartRender();
+        this.updateStats();
+        this.emptyState?.classList.add('hidden');
     }
 
     updateStatus(text, className) {
