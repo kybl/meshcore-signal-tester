@@ -2375,6 +2375,15 @@ class MeshCoreMonitor {
         }
         if (rows.length === 0) return;
 
+        const importBtn = document.getElementById('importCsvBtn');
+        const prevBtnText = importBtn?.textContent;
+        if (importBtn) { importBtn.textContent = 'Importing…'; importBtn.disabled = true; }
+        const prevStatus = this.statusEl?.textContent;
+        const prevClass  = this.statusEl?.className;
+        this.updateStatus('Importing CSV…', 'importing');
+
+        await new Promise(r => setTimeout(r, 0)); // yield to let the browser repaint
+
         if (this.hashData.size > 0) {
             if (!confirm(`There are already ${this.hashData.size} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) return;
         }
@@ -2438,6 +2447,9 @@ class MeshCoreMonitor {
         this.scheduleChartRender();
         this.updateStats();
         this.emptyState?.classList.add('hidden');
+
+        if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
+        if (this.statusEl && prevStatus != null) { this.statusEl.textContent = prevStatus; this.statusEl.className = prevClass; }
     }
 
     updateStatus(text, className) {

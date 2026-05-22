@@ -218,7 +218,7 @@ export class Signal3DMap {
                 if (p.state === 'granted') {
                     if (!this.watchId) this.startWatching();
                 } else if (p.state === 'denied') {
-                    this._setStatus('Location denied — allow it in browser settings to use the 3D map.');
+                    this._setStatus('Location denied — new packets won\'t be placed on the map. You can still view and rotate existing data.');
                     if (this.btnEl) { this.btnEl.disabled = true; this.btnEl.textContent = 'Location denied'; }
                 } else {
                     this._setStatus('Location not enabled.');

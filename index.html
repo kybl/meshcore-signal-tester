@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=36">
+    <link rel="stylesheet" href="style.css?v=37">
 </head>
 <body>
     <div class="container">
@@ -133,7 +133,7 @@
                     <div class="signal-map-inner">
                         <div class="signal-map-controls">
                             <button id="enableLocationBtn" class="btn-primary">Enable location</button>
-                            <span id="locationStatus" class="location-status">Location not enabled — packets won't appear on the 3D map until you allow it.</span>
+                            <span id="locationStatus" class="location-status">Location not enabled — new packets won't have coordinates. You can still view existing data on the map.</span>
                             <label class="map-source-label">
                                 Map:
                                 <select id="mapSourceSelect" class="map-source-select">
@@ -243,6 +243,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=36"></script>
+    <script type="module" src="app.js?v=37"></script>
 </body>
 </html>
