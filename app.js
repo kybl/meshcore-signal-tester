@@ -1223,6 +1223,8 @@ class MeshCoreMonitor {
             });
         } else {
             const data = this.hashData.get(hash);
+            // When importing, skip (hash, repeater) pairs that already exist — existing data wins
+            if (opts.importing && data.repeaters.has(canonicalKey)) return;
             data.lastSeen = now;
             data.repeaters.set(canonicalKey, repEntry);
         }
@@ -2184,7 +2186,7 @@ class MeshCoreMonitor {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `meshcore-rx-${new Date().toISOString().slice(0, 16).replace('T', '_').replace(/:/g, '-')}.csv`;
+        a.download = `meshcore-rx-${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.csv`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -2257,7 +2259,7 @@ class MeshCoreMonitor {
         if (rows.length === 0) return;
 
         if (this.hashData.size > 0) {
-            if (!confirm(`There are already ${this.hashData.size} packet(s) loaded. The CSV will be merged with existing data. Continue?`)) return;
+            if (!confirm(`There are already ${this.hashData.size} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) return;
         }
 
         // Ascending time order so firstSeen and prefix resolution are correct
@@ -2346,11 +2348,22 @@ class MeshCoreMonitor {
         const device = this.device;
         const txChar = this.txCharacteristic;
 
-        // Remove the surprise-disconnect handler so onDisconnected isn't called twice
+        // Remove ALL event listeners synchronously before any async BLE operation so that
+        // notifications arriving during stopNotifications / gatt.disconnect can't update the UI.
         if (this._onGattDisconnected && device) {
             device.removeEventListener('gattserverdisconnected', this._onGattDisconnected);
             this._onGattDisconnected = null;
         }
+        if (this._onDataReceived) {
+            txChar?.removeEventListener('characteristicvaluechanged', this._onDataReceived);
+            this._onDataReceived = null;
+        }
+        if (this._onBatteryChanged && this._batteryCharacteristic) {
+            try { this._batteryCharacteristic.removeEventListener('characteristicvaluechanged', this._onBatteryChanged); } catch {}
+            this._onBatteryChanged = null;
+        }
+        // Hide battery immediately — no BLE events can re-show it after this point
+        if (this.batteryEl) this.batteryEl.classList.add('hidden');
 
         // stopNotifications BEFORE gatt.disconnect() so Chrome fully releases the notify pipe
         if (txChar) {
