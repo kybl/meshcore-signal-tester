@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=33">
+    <link rel="stylesheet" href="style.css?v=34">
 </head>
 <body>
     <div class="container">
@@ -68,22 +68,24 @@
                         </table>
                     </div>
                 </div>
-                <label class="ttl-control">
-                    <span class="ttl-label">Auto-remove after</span>
-                    <select id="ttlSelect">
-                        <option value="30">30 seconds</option>
-                        <option value="60">1 minute</option>
-                        <option value="120">2 minutes</option>
-                        <option value="300">5 minutes</option>
-                        <option value="600">10 minutes</option>
-                        <option value="900" selected>15 minutes</option>
-                        <option value="1800">30 minutes</option>
-                        <option value="3600">1 hour</option>
-                        <option value="Infinity">Never</option>
-                    </select>
-                    <span class="help-icon" data-help="ttl">?</span>
-                </label>
-                <button id="clearDataBtn" class="btn-clear-data" title="Delete all captured data">Clear data</button>
+                <div class="ttl-row">
+                    <label class="ttl-control">
+                        <span class="ttl-label">Auto-remove after</span>
+                        <select id="ttlSelect">
+                            <option value="30">30 seconds</option>
+                            <option value="60">1 minute</option>
+                            <option value="120">2 minutes</option>
+                            <option value="300">5 minutes</option>
+                            <option value="600">10 minutes</option>
+                            <option value="900" selected>15 minutes</option>
+                            <option value="1800">30 minutes</option>
+                            <option value="3600">1 hour</option>
+                            <option value="Infinity">Never</option>
+                        </select>
+                        <span class="help-icon" data-help="ttl">?</span>
+                    </label>
+                    <button id="clearDataBtn" class="btn-clear-data" title="Delete all captured data">Clear data</button>
+                </div>
             </div>
 
             <div class="section-wrap" id="rssiChartWrap">
@@ -241,6 +243,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=33"></script>
+    <script type="module" src="app.js?v=34"></script>
 </body>
 </html>

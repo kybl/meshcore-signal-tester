@@ -1689,7 +1689,7 @@ class MeshCoreMonitor {
         const rawRange = vMax - vMin || 1;
         const yStep = rawRange <= 5 ? 1 : rawRange <= 10 ? 2 : rawRange <= 25 ? 5 : rawRange <= 50 ? 10 : 20;
         const yPad = Math.max(1, yStep / 2);
-        const yMin = Math.floor((vMin - yPad) / yStep) * yStep;
+        const yMin = vMin - yPad;
         const yMax = Math.ceil((vMax + yPad) / yStep) * yStep;
         return { yMin, yMax, yStep };
     }

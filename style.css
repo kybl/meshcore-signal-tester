@@ -744,6 +744,15 @@ header {
 }
 
 /* TTL slider */
+.ttl-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+    padding-left: 2px;
+}
+
 .ttl-control {
     display: flex;
     align-items: center;
@@ -752,8 +761,6 @@ header {
     font-size: 12px;
     color: rgba(255,255,255,0.75);
     white-space: nowrap;
-    margin-top: 6px;
-    padding-left: 2px;
 }
 
 .btn-clear-data {
@@ -764,7 +771,6 @@ header {
     font-size: 11px;
     padding: 2px 8px;
     cursor: pointer;
-    margin-left: 6px;
     white-space: nowrap;
 }
 
