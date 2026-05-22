@@ -861,9 +861,10 @@ header {
 }
 
 /* The default blue-on-translucent-blue help icon disappears on the
-   purple section backgrounds (.ttl-control, .rep-filter-bar). Force a
-   white-on-translucent variant in those contexts. The header has a
+   purple section backgrounds (.section-header, .ttl-control, .rep-filter-bar).
+   Force a white-on-translucent variant in those contexts. The header has a
    white background, so .hstat / .sound-toggle keep the default style. */
+.section-header .help-icon,
 .ttl-control .help-icon,
 .rep-filter-bar .help-icon {
     background: rgba(255, 255, 255, 0.18);
@@ -871,6 +872,8 @@ header {
     border-color: rgba(255, 255, 255, 0.28);
 }
 
+.section-header .help-icon:hover,
+.section-header .help-icon.active,
 .ttl-control .help-icon:hover,
 .rep-filter-bar .help-icon:hover,
 .ttl-control .help-icon.active,
@@ -1264,6 +1267,32 @@ header {
 
 .signal-map-empty.hidden {
     display: none;
+}
+
+/* WebGL unavailable: collapse the map area to just an inline notice */
+.signal-map-offline .signal-map-controls,
+.signal-map-offline .signal-map-canvas,
+.signal-map-offline .signal-map-fullscreen-btn {
+    display: none;
+}
+
+.signal-map-offline .signal-map-container {
+    height: auto;
+    min-height: 0;
+    resize: none;
+    background: transparent;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+.signal-map-offline .signal-map-empty {
+    position: static;
+    padding: 2px 0 8px;
+    color: #bbb;
+    font-size: 12px;
+    text-align: left;
+    justify-content: flex-start;
+    pointer-events: auto;
 }
 
 .signal-map-info {

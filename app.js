@@ -64,6 +64,10 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
+        if (typeof ResizeObserver !== 'undefined') {
+            const obs = new ResizeObserver(() => this.scheduleChartRender());
+            document.querySelectorAll('.chart-svg-wrap').forEach(el => obs.observe(el));
+        }
         setInterval(() => {
             if (!this._chartFrozenAt) this.scheduleChartRender();
             this.updateStats();
@@ -389,7 +393,7 @@ class MeshCoreMonitor {
         } catch (err) {
             console.error('Signal3DMap init failed:', err);
             this.signalMap = null;
-            canvas.style.display = 'none';
+            document.getElementById('signalMapWrap')?.classList.add('signal-map-offline');
             const emptyEl = document.getElementById('signalMapEmpty');
             if (emptyEl) {
                 emptyEl.classList.remove('hidden');

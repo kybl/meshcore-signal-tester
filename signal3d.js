@@ -193,10 +193,21 @@ export class Signal3DMap {
 
     startWatching() {
         if (!('geolocation' in navigator) || this.watchId != null) return;
-        this._setStatus('Requesting location…');
+        this._setStatus('Requesting location… (allow in browser if prompted)');
         if (this.btnEl) this.btnEl.disabled = true;
+        let resolved = false;
+        const failTimer = setTimeout(() => {
+            if (!resolved) {
+                this._setStatus('No response from browser — check location permissions or browser shields (e.g. Brave).');
+                if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.classList.remove('hidden'); }
+                navigator.geolocation.clearWatch(this.watchId);
+                this.watchId = null;
+            }
+        }, 10000);
         this.watchId = navigator.geolocation.watchPosition(
             pos => {
+                resolved = true;
+                clearTimeout(failTimer);
                 if (this.btnEl) this.btnEl.classList.add('hidden');
                 const { latitude, longitude, accuracy } = pos.coords;
                 this.userLoc = { lat: latitude, lon: longitude, accuracy };
@@ -208,6 +219,8 @@ export class Signal3DMap {
                 this._updateUserMarker();
             },
             err => {
+                resolved = true;
+                clearTimeout(failTimer);
                 this._setStatus(`Location error: ${err.message}`);
                 if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.classList.remove('hidden'); }
                 this.watchId = null;
