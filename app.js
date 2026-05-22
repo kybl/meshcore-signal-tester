@@ -2290,7 +2290,7 @@ class MeshCoreMonitor {
 
         this.sortColumns();
         // Freeze chart at last packet time + 1 min so all imported data is in view
-        if (!this._collecting) this._chartFrozenAt = rows[rows.length - 1].time + 60_000;
+        if (!this._collecting) this._chartFrozenAt = rows[rows.length - 1].time + 1_000;
         this.renderMsgTable();
         this.updateRepeaterTable();
         this.scheduleChartRender();
