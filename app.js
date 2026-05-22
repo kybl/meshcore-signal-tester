@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=22';
+import { Signal3DMap } from './signal3d.js?v=23';
 
 class MeshCoreMonitor {
     constructor() {
@@ -823,77 +823,143 @@ class MeshCoreMonitor {
 
         const rawPrec = this.idPrecision(rawId);
 
-        // Compatible specific (non-collision) columns: share rawId's bytes at
-        // min(theirPrec, rawPrec). Split by relative precision.
-        const lessPrecise = [];   // cols.prec < rawPrec   (rawId refines them)
-        const morePrecise = [];   // cols.prec > rawPrec   (rawId is a less-precise prefix of them)
-        for (const c of this.repeaterColumns) {
-            if (c === 'direct' || c.includes('/')) continue;
-            const cPrec = this.idPrecision(c);
-            if (cPrec === rawPrec) continue;          // would be exact match, handled above
-            const minP  = Math.min(cPrec, rawPrec);
-            if (this.idSuffix(c, minP) !== this.idSuffix(rawId, minP)) continue;
-            (cPrec < rawPrec ? lessPrecise : morePrecise).push(c);
-        }
+        const colMinPrec = (col) => {
+            if (col === 'direct' || col.includes('/')) return this.idPrecision(col.split('/')[0]);
+            return this.allRepeaters.get(col)?.minPrecision ?? this.idPrecision(col);
+        };
+        const colSuffix = (col, p) => this.idSuffix(col.split('/')[0], p);
 
-        // rawId is a less-precise prefix of one or more known specific cols.
-        // The packet is genuinely ambiguous → use (or create) the collision key
-        // when multiple known siblings refine the prefix, else a standalone
-        // ambiguous column for rawId.
-        if (morePrecise.length >= 2) {
-            const collisionKey = morePrecise.sort().join('/');
-            if (!this.repeaterColumns.includes(collisionKey)) {
-                // If a subset collision already exists, fold it into the new one
-                const subsets = this.repeaterColumns.filter(c =>
-                    c.includes('/') && c !== collisionKey &&
-                    c.split('/').every(comp => morePrecise.includes(comp))
-                );
-                for (const sub of subsets) this.renameColumnKey(sub, collisionKey);
-                if (!this.repeaterColumns.includes(collisionKey)) this.repeaterColumns.push(collisionKey);
-            }
-            return collisionKey;
-        }
-        if (morePrecise.length === 1) {
-            // One known sibling — could be that node or an unknown new one.
-            // Keep rawId distinct (don't merge into the specific col).
+        // Match at min(rawPrec, colMinPrec) — promoted columns still catch
+        // siblings that share their original shorter prefix.
+        const matches = this.repeaterColumns.filter(col => {
+            if (col === 'direct') return false;
+            const cmp = colMinPrec(col);
+            const minP = Math.min(rawPrec, cmp);
+            return colSuffix(col, minP) === this.idSuffix(rawId, minP);
+        });
+
+        if (matches.length === 0) {
             this.repeaterColumns.push(rawId);
             return rawId;
         }
 
-        // rawId is at its own precision and either new, or more precise than
-        // some existing ambiguous cols. Create the specific column for rawId
-        // and, for each compatible less-precise col, check whether the arrival
-        // of rawId means that ambiguous col now has multiple known refinements
-        // → rename it to a collision key so all its previously-ambiguous data
-        // joins the collision bucket.
-        this.repeaterColumns.push(rawId);
+        if (matches.length === 1) {
+            const existing = matches[0];
+            // Already a collision key — merge into it.
+            if (existing.includes('/')) return existing;
 
-        for (const amb of lessPrecise) {
-            const ambPrec = this.idPrecision(amb);
-            const siblings = this.repeaterColumns.filter(c =>
-                c !== amb && c !== 'direct' && !c.includes('/') &&
-                this.idPrecision(c) > ambPrec &&
-                this.idSuffix(c, ambPrec) === this.idSuffix(amb, ambPrec)
-            );
-            if (siblings.length < 2) continue;
+            const existingPrec    = this.idPrecision(existing);
+            const existingMinPrec = colMinPrec(existing);
+            const commonPrec      = Math.min(rawPrec, existingPrec);
+            const compatibleAtCommon =
+                this.idSuffix(rawId, commonPrec) === this.idSuffix(existing, commonPrec);
 
-            const collisionKey = siblings.sort().join('/');
-            // Fold any subset collisions for the same prefix into the new key
-            const subsets = this.repeaterColumns.filter(c =>
-                c !== amb && c !== collisionKey && c.includes('/') &&
-                c.split('/').every(comp => siblings.includes(comp))
-            );
-            for (const sub of subsets) this.renameColumnKey(sub, collisionKey);
-            if (this.repeaterColumns.includes(collisionKey)) {
-                // Target collision already exists → merge ambiguous col's data into it
-                this.renameColumnKey(amb, collisionKey);
-            } else {
-                // Otherwise the ambiguous col becomes the collision key
-                this.renameColumnKey(amb, collisionKey);
+            if (compatibleAtCommon) {
+                // Optimistically promote — the column adopts the more-precise
+                // label. Per-packet rawId is preserved so a later collision
+                // can un-merge.
+                if (rawPrec > existingPrec) {
+                    this.renameColumnKey(existing, rawId);
+                    return rawId;
+                }
+                return existing;
+            }
+
+            // Match at minPrec but conflict at the column's full precision —
+            // the column was optimistically promoted and we now have a real
+            // sibling. Split: ambiguous (shorter-rawId) packets move to the
+            // collision key; specific packets stay in `existing`. The new
+            // rawId becomes its own specific column.
+            const collisionKey = [existing, rawId].sort().join('/');
+            this._splitColumn(existing, collisionKey);
+            if (!this.repeaterColumns.includes(rawId)) this.repeaterColumns.push(rawId);
+            return rawId;
+        }
+
+        // Multiple compatible columns — ambiguous short ID hitting several
+        // known siblings. Use (or create) the canonical collision key.
+        const collisionKey = matches.sort().join('/');
+        if (!this.repeaterColumns.includes(collisionKey)) this.repeaterColumns.push(collisionKey);
+        return collisionKey;
+    }
+
+    // Un-merge: move entries that came in at a shorter precision (= ambiguous
+    // at the column's current label) into the collision key, leaving the
+    // specifically-matched entries in place.
+    _splitColumn(existingCol, collisionKey) {
+        const existingPrec = this.idPrecision(existingCol);
+
+        if (!this.repeaterColumns.includes(collisionKey)) {
+            this.repeaterColumns.push(collisionKey);
+        }
+
+        // hashData: per (hash, repeater) entry
+        for (const [, data] of this.hashData) {
+            const entry = data.repeaters.get(existingCol);
+            if (!entry) continue;
+            const ePrec = entry.rawId ? this.idPrecision(entry.rawId) : existingPrec;
+            if (ePrec < existingPrec) {
+                data.repeaters.delete(existingCol);
+                // If the collision already has an entry for this hash, keep
+                // the newer one (Map.set overwrites — fine for our purposes).
+                data.repeaters.set(collisionKey, entry);
             }
         }
 
-        return rawId;
+        // chartPoints: per packet
+        for (const p of this.chartPoints) {
+            if (p.col !== existingCol) continue;
+            const ePrec = p.rawId ? this.idPrecision(p.rawId) : existingPrec;
+            if (ePrec < existingPrec) p.col = collisionKey;
+        }
+
+        // 3D map
+        this.signalMap?.splitPoints?.(existingCol, (rawId) => {
+            const ePrec = rawId ? this.idPrecision(rawId) : existingPrec;
+            return ePrec < existingPrec ? collisionKey : null;
+        });
+
+        // Open detail rows in the message table — flip those that should follow
+        this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => {
+            if (tr.dataset.col !== existingCol) return;
+            // Detail row doesn't know its rawId — safest is to drop the detail
+            tr.dataset.col = '';
+        });
+
+        // Recompute aggregate stats for both columns
+        this._recomputeRepeaterStats(existingCol);
+        this._recomputeRepeaterStats(collisionKey);
+    }
+
+    _recomputeRepeaterStats(col) {
+        let count = 0, lastSeen = -1, maxSnr = -Infinity, maxRssi = -Infinity;
+        let lastSnr = null, lastRssi = null, minPrec = Infinity;
+        for (const p of this.chartPoints) {
+            if (p.col !== col) continue;
+            count++;
+            if (p.time > lastSeen) {
+                lastSeen = p.time;
+                lastSnr  = p.snr;
+                lastRssi = p.rssi;
+            }
+            if (p.snr  > maxSnr)  maxSnr  = p.snr;
+            if (p.rssi > maxRssi) maxRssi = p.rssi;
+            if (p.rawId) {
+                const r = this.idPrecision(p.rawId);
+                if (r < minPrec) minPrec = r;
+            }
+        }
+        if (count === 0) {
+            this.allRepeaters.delete(col);
+            const idx = this.repeaterColumns.indexOf(col);
+            if (idx >= 0) this.repeaterColumns.splice(idx, 1);
+            return;
+        }
+        if (!Number.isFinite(minPrec)) minPrec = this.idPrecision(col.split('/')[0]);
+        this.allRepeaters.set(col, {
+            lastSeen, count, maxSnr, maxRssi, lastSnr, lastRssi,
+            minPrecision: minPrec,
+        });
     }
 
     renameColumnKey(oldKey, newKey) {
@@ -910,12 +976,16 @@ class MeshCoreMonitor {
             if (newData) {
                 const newer = oldData.lastSeen >= newData.lastSeen ? oldData : newData;
                 this.allRepeaters.set(newKey, {
-                    lastSeen: Math.max(oldData.lastSeen, newData.lastSeen),
-                    count:    oldData.count + newData.count,
-                    maxSnr:   Math.max(oldData.maxSnr,  newData.maxSnr),
-                    maxRssi:  Math.max(oldData.maxRssi, newData.maxRssi),
-                    lastSnr:  newer.lastSnr,
-                    lastRssi: newer.lastRssi,
+                    lastSeen:     Math.max(oldData.lastSeen, newData.lastSeen),
+                    count:        oldData.count + newData.count,
+                    maxSnr:       Math.max(oldData.maxSnr,  newData.maxSnr),
+                    maxRssi:      Math.max(oldData.maxRssi, newData.maxRssi),
+                    lastSnr:      newer.lastSnr,
+                    lastRssi:     newer.lastRssi,
+                    minPrecision: Math.min(
+                        oldData.minPrecision ?? this.idPrecision(oldKey.split('/')[0]),
+                        newData.minPrecision ?? this.idPrecision(newKey.split('/')[0]),
+                    ),
                 });
             } else {
                 this.allRepeaters.set(newKey, oldData);
@@ -977,7 +1047,7 @@ class MeshCoreMonitor {
 
         if (isNewHash) {
             this.hashData.set(hash, {
-                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex }]]),
+                repeaters: new Map([[canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater }]]),
                 firstSeen: now,
                 lastSeen: now,
                 insertOrder: ++this.hashCounter,
@@ -989,21 +1059,23 @@ class MeshCoreMonitor {
         } else {
             const data = this.hashData.get(hash);
             data.lastSeen = now;
-            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex });
+            data.repeaters.set(canonicalKey, { snr, rssi, packet, rawHex, rawId: repeater });
         }
 
+        const rawPrec  = this.idPrecision(repeater);
         const existing = this.allRepeaters.get(canonicalKey);
         this.allRepeaters.set(canonicalKey, {
-            lastSeen: now,
-            count:    (existing?.count ?? 0) + 1,
-            maxSnr:   Math.max(existing?.maxSnr  ?? -Infinity, snr),
-            maxRssi:  Math.max(existing?.maxRssi ?? -Infinity, rssi),
-            lastSnr:  snr,
-            lastRssi: rssi,
+            lastSeen:     now,
+            count:        (existing?.count ?? 0) + 1,
+            maxSnr:       Math.max(existing?.maxSnr  ?? -Infinity, snr),
+            maxRssi:      Math.max(existing?.maxRssi ?? -Infinity, rssi),
+            lastSnr:      snr,
+            lastRssi:     rssi,
+            minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
         });
-        this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey });
+        this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
         const loc = this.signalMap?.currentLocation();
-        if (loc) this.signalMap.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now });
+        if (loc) this.signalMap.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
         this.updateRepeaterTable();
         this.sortColumns();
         this.renderMsgTable(isNewHash ? hash : null);

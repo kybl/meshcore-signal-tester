@@ -238,6 +238,27 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
+    // For un-merging a previously-promoted column. classifier(rawId) returns
+    // a new col to migrate the point to, or null/undefined to leave it.
+    splitPoints(oldCol, classifier) {
+        let touched = false;
+        for (const p of this.points) {
+            if (p.col !== oldCol) continue;
+            const target = classifier(p.rawId);
+            if (target && target !== oldCol) {
+                p.col = target;
+                touched = true;
+            }
+        }
+        if (touched) {
+            if (this._selectedCol === oldCol) {
+                this._selectedCol = null;
+                this._updateInfoPanel();
+            }
+            this._repositionAll();
+        }
+    }
+
     setFilterFn(fn) {
         this.filterFn = fn;
         // If the currently selected repeater is now filtered out, deselect it
