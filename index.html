@@ -196,7 +196,7 @@
             <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality.</p>
 
             <div class="help-section-title">Getting started</div>
-            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section.</p>
+            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏸ Pause / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -223,6 +223,12 @@
 
                 <div class="help-dt">Column order in Messages</div>
                 <div class="help-dd">Repeater columns are sorted by: packets in the last 5 min (desc), then last RSSI (best first), then last SNR, then total RX count, then alphabetically.</div>
+
+                <div class="help-dt">Sound</div>
+                <div class="help-dd"><b>off</b> = silent. <b>short / medium / long</b> play a beep of increasing duration on each new incoming packet. Pitch varies with RSSI — stronger signal = higher pitch. The selected value is remembered across sessions.</div>
+
+                <div class="help-dt">Auto-remove TTL</div>
+                <div class="help-dd">Packets not seen within this window disappear from the Messages table, charts, and 3D map. The Seen Repeaters table is not affected — it keeps all repeaters seen during the whole session. Set to <b>Never</b> to keep everything indefinitely.</div>
             </div>
 
             <div class="help-section-title">Repeater ID prefix resolution</div>
