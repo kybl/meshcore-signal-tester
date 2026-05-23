@@ -192,7 +192,7 @@ header {
 }
 
 .signal-map-controls .size-label {
-    color: #bbb;
+    opacity: 0.85;
 }
 
 .size-range {
@@ -209,7 +209,7 @@ header {
 }
 
 .signal-map-controls .size-val {
-    color: #bbb;
+    opacity: 0.8;
 }
 
 .sound-select {
@@ -1243,7 +1243,7 @@ header {
     gap: 10px;
     padding: 8px 4px;
     font-size: 12px;
-    color: #555;
+    color: rgba(255,255,255,0.8);
 }
 
 .signal-map-controls .btn-primary.hidden {
@@ -1251,14 +1251,14 @@ header {
 }
 
 .location-status {
-    color: #c0c0c0;
     font-weight: 400;
+    opacity: 0.65;
 }
 
 .signal-map-hint {
     margin-left: auto;
-    color: #c0c0c0;
     font-size: 11px;
+    opacity: 0.65;
 }
 
 .map-source-label {
@@ -1515,23 +1515,21 @@ header {
 }
 
 /* ---- Map settings gear ---- */
-.signal-map-hint { margin-left: auto; }
-
 .map-settings-wrap {
     position: relative;
 }
 
 .map-settings-btn {
-    background: none;
-    border: 1px solid #ccc;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.45);
     border-radius: 4px;
     cursor: pointer;
     font-size: 15px;
     padding: 2px 5px;
-    color: #666;
+    color: rgba(255,255,255,0.9);
     line-height: 1;
 }
-.map-settings-btn:hover { background: #f0f0f0; border-color: #aaa; }
+.map-settings-btn:hover { background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
 
 .map-settings-panel {
     position: absolute;
@@ -1548,6 +1546,7 @@ header {
     gap: 10px;
     min-width: 200px;
     white-space: nowrap;
+    color: #444;
 }
 .map-settings-panel.hidden { display: none; }
 

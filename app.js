@@ -2318,12 +2318,7 @@ class MeshCoreMonitor {
             const vb = dB[key] ?? -Infinity;
             return dir * (va - vb);
         });
-        // Move selected repeater to top
         const sel = this._chartSelected;
-        if (sel) {
-            const selIdx = entries.findIndex(([id]) => id === sel);
-            if (selIdx > 0) entries.unshift(entries.splice(selIdx, 1)[0]);
-        }
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
             const mrc = this.signalColor(d.maxRssi,  -70, -130);
             const lrc = this.signalColor(d.lastRssi, -70, -130);
@@ -2341,6 +2336,11 @@ class MeshCoreMonitor {
                 <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
+        // Scroll selected row into view without moving it to the top
+        if (sel) {
+            const selRow = this.repeaterLogBody.querySelector(`tr.rl-row-sel`);
+            selRow?.scrollIntoView({ block: 'nearest' });
+        }
     }
 
     // --- Repeater selection ---
