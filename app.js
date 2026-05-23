@@ -2341,10 +2341,12 @@ class MeshCoreMonitor {
             const selRow = this.repeaterLogBody.querySelector('tr.rl-row-sel');
             const scroll = this.repeaterLogBody.closest('.repeater-log-scroll');
             if (selRow && scroll) {
+                const thead = scroll.querySelector('thead');
+                const headerH = thead ? thead.offsetHeight : 0;
                 const rowTop = selRow.offsetTop;
                 const rowBot = rowTop + selRow.offsetHeight;
-                if (rowTop < scroll.scrollTop)
-                    scroll.scrollTop = rowTop;
+                if (rowTop - headerH < scroll.scrollTop)
+                    scroll.scrollTop = rowTop - headerH;
                 else if (rowBot > scroll.scrollTop + scroll.clientHeight)
                     scroll.scrollTop = rowBot - scroll.clientHeight;
             }
