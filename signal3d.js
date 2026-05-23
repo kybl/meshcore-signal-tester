@@ -140,7 +140,7 @@ export class Signal3DMap {
         this.camera.position.set(70, 90, 110);
 
         this.controls = new OrbitControls(this.camera, canvas);
-        this.controls.target.set(0, MAX_HEIGHT * 0.25, 0);
+        this.controls.target.set(0, 2, 0);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.08;
         this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
@@ -521,7 +521,8 @@ export class Signal3DMap {
             const dny = dty + 2 * dpy;
             const dataPlaneW = dnx >= dny ? PLANE_SIZE : PLANE_SIZE * dnx / dny;
             const mPerUnit = tileWidthM * dnx / dataPlaneW;
-            this.controls.minDistance = Math.max(1, 50 / mPerUnit);
+            // target is near y=0, camera at polar≈45° → height ≈ d*0.707; factor ~1.4 converts
+            this.controls.minDistance = Math.max(0.5, 70 / mPerUnit);
         }
 
         // Asymmetric padding: proportional to data extent so elongated shapes don't waste tiles
@@ -617,7 +618,7 @@ export class Signal3DMap {
         const { w, h } = this.planeDim;
         const r = Math.max(w, h);
         this.camera.position.set(r * 0.4, r * 0.55, r * 0.6);
-        this.controls.target.set(0, MAX_HEIGHT * 0.3, 0);
+        this.controls.target.set(0, 2, 0);
         this.controls.update();
         this._cameraFit = true;
     }
@@ -648,9 +649,9 @@ export class Signal3DMap {
         if (!this.tileBounds) return null;
         const center = this._worldToLatLon(this.controls.target.x, this.controls.target.z);
         if (!center) return null;
-        // Radius of visible area on the floor: distance × tan(halfFOV)
-        const camDist = this.camera.position.distanceTo(this.controls.target);
-        const r = camDist * Math.tan((this.camera.fov / 2) * Math.PI / 180);
+        // Use camera height above floor as proxy for visible floor radius.
+        // camDist (distance to elevated target) severely underestimates the visible area.
+        const r = Math.max(1, this.camera.position.y) * Math.tan((this.camera.fov / 2) * Math.PI / 180);
         // Convert radius in world units → lon/lat delta using current tileBounds scale
         const { nx, ny, zoom } = this.tileBounds;
         const { w, h } = this.planeDim;
