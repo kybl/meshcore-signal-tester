@@ -140,14 +140,18 @@ export class Signal3DMap {
         this.camera.position.set(70, 90, 110);
 
         this.controls = new OrbitControls(this.camera, canvas);
-        this.controls.target.set(0, 2, 0);
-        this.controls.enableDamping    = true;
-        this.controls.dampingFactor    = 0.08;
-        this.controls.maxPolarAngle    = Math.PI / 2 - 0.02;
-        this.controls.screenSpacePanning = false;  // pan moves in XZ only, prevents target.y drift
-        this.controls.minDistance   = 0;
-        this.controls.maxDistance   = 300;
+        this.controls.target.set(0, 0, 0);
+        this.controls.enableDamping      = true;
+        this.controls.dampingFactor      = 0.08;
+        this.controls.maxPolarAngle      = Math.PI / 2 - 0.02;
+        this.controls.screenSpacePanning = true;
+        this.controls.minDistance        = 0.5;
+        this.controls.maxDistance        = 300;
         this.controls.update();
+        // Prevent target from drifting above floor when panning at a tilt
+        this.controls.addEventListener('change', () => {
+            if (this.controls.target.y > 0) this.controls.target.y = 0;
+        });
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
@@ -603,7 +607,7 @@ export class Signal3DMap {
         const { w, h } = this.planeDim;
         const r = Math.max(w, h);
         this.camera.position.set(r * 0.4, r * 0.55, r * 0.6);
-        this.controls.target.set(0, 2, 0);
+        this.controls.target.set(0, 0, 0);
         this.controls.update();
         this._cameraFit = true;
     }
@@ -634,9 +638,9 @@ export class Signal3DMap {
         if (!this.tileBounds) return null;
         const center = this._worldToLatLon(this.controls.target.x, this.controls.target.z);
         if (!center) return null;
-        // Use camera height above floor as proxy for visible floor radius.
-        // camDist (distance to elevated target) severely underestimates the visible area.
-        const r = Math.max(1, this.camera.position.y) * Math.tan((this.camera.fov / 2) * Math.PI / 180);
+        // Target is clamped to y=0 so getDistance() ≈ camera-to-floor distance.
+        // Multiply by 1.5 to cover tilted views where visible area extends past the target.
+        const r = Math.max(1, this.controls.getDistance()) * Math.tan((this.camera.fov / 2) * Math.PI / 180) * 1.5;
         // Convert radius in world units → lon/lat delta using current tileBounds scale
         const { nx, ny, zoom } = this.tileBounds;
         const { w, h } = this.planeDim;
@@ -881,13 +885,13 @@ export class Signal3DMap {
         if (!this.userMarker) {
             const group = new THREE.Group();
             const cone = new THREE.Mesh(
-                new THREE.ConeGeometry(1.8, 5, 14),
+                new THREE.ConeGeometry(1, 2.8, 14),
                 new THREE.MeshBasicMaterial({ color: 0xff3355 })
             );
-            cone.position.y = 2.5;
+            cone.position.y = 1.4;
             group.add(cone);
             const base = new THREE.Mesh(
-                new THREE.CircleGeometry(2.6, 24),
+                new THREE.CircleGeometry(1.44, 24),
                 new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.35 })
             );
             base.rotation.x = -Math.PI / 2;
@@ -896,6 +900,12 @@ export class Signal3DMap {
             this.userMarker = group;
             this.scene.add(this.userMarker);
         }
+        // Scale so the marker represents ~40m real-world radius regardless of base zoom
+        const { nx, zoom: bz } = this.tileBounds;
+        const { w } = this.planeDim;
+        const tileWidthM = 40075016.686 * Math.cos(this.userLoc.lat * Math.PI / 180) / Math.pow(2, bz);
+        const mPerUnit = tileWidthM * nx / w;
+        this.userMarker.scale.setScalar(Math.min(4, Math.max(0.15, 40 / mPerUnit)));
         this.userMarker.position.set(pos.x, 0, pos.z);
     }
 
