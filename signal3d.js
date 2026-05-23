@@ -47,6 +47,13 @@ function lonLatToTile(lon, lat, zoom) {
     return { x, y };
 }
 
+function tileToLatLon(tx, ty, zoom) {
+    const n = Math.pow(2, zoom);
+    const lon = tx / n * 360 - 180;
+    const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n))) * 180 / Math.PI;
+    return { lat, lon };
+}
+
 export class Signal3DMap {
     constructor(opts) {
         this.canvas    = opts.canvas;
@@ -66,6 +73,9 @@ export class Signal3DMap {
         this.lastBboxKey  = null;
         this._cameraFit   = false;
         this._mapBusy     = false;
+        this.overlayMesh  = null;
+        this._overlayBusy = false;
+        this._overlayKey  = null;
         this.filterFn     = null;   // col => boolean, or null (show all)
         this._displayCutoff = 0;    // timestamp ms; 0 = no filter
         this.mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
@@ -139,7 +149,7 @@ export class Signal3DMap {
         this.controls.update();
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
-            this._viewUpdateTimer = setTimeout(() => this._updateMap({ fromCamera: true }), 700);
+            this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
         });
 
         this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
@@ -394,6 +404,7 @@ export class Signal3DMap {
         this.points = [];
         this._selectedCol = null;
         this._disposeInstanced();
+        this._removeOverlay();
         this._updateInfoPanel();
         this.onSelect?.(null);
         if (this.emptyEl) {
@@ -411,8 +422,8 @@ export class Signal3DMap {
     setMapSource(source) {
         if (!TILE_SOURCES[source] || source === this.mapSource) return;
         this.mapSource = source;
-        // Force a tile reload on next update
         this.lastBboxKey = null;
+        this._removeOverlay();
         this._scheduleMapUpdate();
     }
 
@@ -473,7 +484,7 @@ export class Signal3DMap {
         return { minLat, maxLat, minLon, maxLon };
     }
 
-    async _updateMap({ fromCamera = false } = {}) {
+    async _updateMap() {
         if (this._mapBusy) { this._scheduleMapUpdate(); return; }
         const bb = this._bbox();
         if (!bb) return;
@@ -513,25 +524,8 @@ export class Signal3DMap {
             this.controls.minDistance = Math.max(1, 50 / mPerUnit);
         }
 
-        // Dynamic tile zoom: use camera view when zoomed in for higher-detail tiles
-        let zoom = dataZoom, tl = dataTl, br = dataBr;
-        if (fromCamera && this.tileBounds) {
-            const camBb = this._cameraViewBbox();
-            if (camBb) {
-                let cz = 19, cTl, cBr;
-                while (cz > 1) {
-                    cTl = lonLatToTile(camBb.minLon, camBb.maxLat, cz);
-                    cBr = lonLatToTile(camBb.maxLon, camBb.minLat, cz);
-                    const ctx = Math.floor(cBr.x) - Math.floor(cTl.x) + 1;
-                    const cty = Math.floor(cBr.y) - Math.floor(cTl.y) + 1;
-                    if (ctx <= MAX_TILES_AXIS && cty <= MAX_TILES_AXIS) break;
-                    cz--;
-                }
-                if (cz > dataZoom) { zoom = cz; tl = cTl; br = cBr; }
-            }
-        }
-
         // Asymmetric padding: proportional to data extent so elongated shapes don't waste tiles
+        const zoom = dataZoom, tl = dataTl, br = dataBr;
         const maxTile = Math.pow(2, zoom) - 1;
         const tx = Math.floor(br.x) - Math.floor(tl.x) + 1;
         const ty = Math.floor(br.y) - Math.floor(tl.y) + 1;
@@ -608,6 +602,7 @@ export class Signal3DMap {
             this.tileBounds  = { x0, y0, nx, ny, zoom };
             this.planeDim    = { w: planeW, h: planeH };
             this.lastBboxKey = key;
+            this._removeOverlay();   // scale changed — overlay must be rebuilt
 
             this._repositionAll();
             this._updateUserMarker();
@@ -666,6 +661,108 @@ export class Signal3DMap {
             minLat: center.lat - latDelta, maxLat: center.lat + latDelta,
             minLon: center.lon - lonDelta, maxLon: center.lon + lonDelta,
         };
+    }
+
+    // ---- Detail overlay (high-zoom tiles when camera is close) ----
+
+    async _updateOverlay() {
+        if (!this.tileBounds || this._overlayBusy) return;
+        const camBb = this._cameraViewBbox();
+        if (!camBb) { this._removeOverlay(); return; }
+
+        // Find highest zoom where camera view fits in MAX_TILES_AXIS × MAX_TILES_AXIS
+        let overlayZoom = 19, oTl, oBr;
+        while (overlayZoom > 1) {
+            oTl = lonLatToTile(camBb.minLon, camBb.maxLat, overlayZoom);
+            oBr = lonLatToTile(camBb.maxLon, camBb.minLat, overlayZoom);
+            if (Math.floor(oBr.x) - Math.floor(oTl.x) + 1 <= MAX_TILES_AXIS &&
+                Math.floor(oBr.y) - Math.floor(oTl.y) + 1 <= MAX_TILES_AXIS) break;
+            overlayZoom--;
+        }
+        // Only show overlay when it offers more detail than the base map
+        if (overlayZoom <= this.tileBounds.zoom) { this._removeOverlay(); return; }
+
+        const maxTile = Math.pow(2, overlayZoom) - 1;
+        const otx = Math.floor(oBr.x) - Math.floor(oTl.x) + 1;
+        const oty = Math.floor(oBr.y) - Math.floor(oTl.y) + 1;
+        const opx = Math.max(1, Math.min(2, Math.ceil(otx / 2)));
+        const opy = Math.max(1, Math.min(2, Math.ceil(oty / 2)));
+        const ox0 = Math.max(0, Math.floor(oTl.x) - opx);
+        const oy0 = Math.max(0, Math.floor(oTl.y) - opy);
+        const ox1 = Math.min(maxTile, Math.floor(oBr.x) + opx);
+        const oy1 = Math.min(maxTile, Math.floor(oBr.y) + opy);
+        const onx = ox1 - ox0 + 1;
+        const ony = oy1 - oy0 + 1;
+
+        const sourceId = this.mapSource;
+        const key = `ov/${sourceId}/${overlayZoom}/${ox0}/${oy0}/${ox1}/${oy1}`;
+        if (key === this._overlayKey) return;
+
+        this._overlayBusy = true;
+        try {
+            const tileCanvas = document.createElement('canvas');
+            tileCanvas.width  = onx * TILE_PX;
+            tileCanvas.height = ony * TILE_PX;
+            const ctx = tileCanvas.getContext('2d');
+            ctx.fillStyle = '#dfdfdf';
+            ctx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
+
+            const src = TILE_SOURCES[sourceId];
+            const tasks = [];
+            for (let dx = 0; dx < onx; dx++) {
+                for (let dy = 0; dy < ony; dy++) {
+                    tasks.push(new Promise(res => {
+                        const img = new Image();
+                        img.crossOrigin = 'anonymous';
+                        img.onload  = () => { ctx.drawImage(img, dx * TILE_PX, dy * TILE_PX); res(); };
+                        img.onerror = () => res();
+                        img.src = src.url(overlayZoom, ox0 + dx, oy0 + dy);
+                    }));
+                }
+            }
+            await Promise.all(tasks);
+
+            // Position overlay in world space using the current (fixed) base tileBounds
+            const nwLL  = tileToLatLon(ox0,     oy0,     overlayZoom);
+            const seLL  = tileToLatLon(ox1 + 1, oy1 + 1, overlayZoom);
+            const nwPos = this._latLonToWorld(nwLL.lat, nwLL.lon);
+            const sePos = this._latLonToWorld(seLL.lat, seLL.lon);
+            if (!nwPos || !sePos) return;
+
+            const oW  = Math.abs(sePos.x - nwPos.x);
+            const oH  = Math.abs(sePos.z - nwPos.z);
+            const ocx = (nwPos.x + sePos.x) / 2;
+            const ocz = (nwPos.z + sePos.z) / 2;
+
+            const texture = new THREE.CanvasTexture(tileCanvas);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.minFilter  = THREE.LinearFilter;
+            texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+            texture.needsUpdate = true;
+
+            const geo  = new THREE.PlaneGeometry(oW, oH);
+            const mat  = new THREE.MeshBasicMaterial({ map: texture });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.rotation.x = -Math.PI / 2;
+            mesh.position.set(ocx, 0.02, ocz);   // 0.02 above base to avoid z-fighting
+
+            this._removeOverlay();
+            this.overlayMesh = mesh;
+            this.scene.add(mesh);
+            this._overlayKey = key;
+        } finally {
+            this._overlayBusy = false;
+        }
+    }
+
+    _removeOverlay() {
+        if (!this.overlayMesh) return;
+        this.scene.remove(this.overlayMesh);
+        this.overlayMesh.geometry.dispose();
+        this.overlayMesh.material.map?.dispose();
+        this.overlayMesh.material.dispose();
+        this.overlayMesh = null;
+        this._overlayKey = null;
     }
 
     _rssiToHeight(rssi) {
@@ -823,6 +920,7 @@ export class Signal3DMap {
         cancelAnimationFrame(this._rafId);
         window.removeEventListener('resize', this._onResize);
         this._ro?.disconnect();
+        this._removeOverlay();
         this.renderer.dispose();
     }
 }
