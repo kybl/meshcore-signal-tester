@@ -2066,13 +2066,38 @@ class MeshCoreMonitor {
     // After chartPoints have been pruned: dissolve stale collision columns,
     // recompute repeater stats, and clean up empty columns.
     _rebuildAfterPrune() {
-        // Which specific (non-collision) columns still have live chartPoints?
+        // Step 1: Demote specific columns whose precise label has no remaining evidence.
+        // Example: column "1234" promoted from "12"; if the "1234" packet expired but
+        // "12" packets remain, the column label must revert to "12".
+        for (const col of [...this.repeaterColumns]) {
+            if (col.includes('/') || col === 'direct' || col === 'unknown') continue;
+            const colPrec = this.idPrecision(col);
+            let maxPrec = 0, bestRawId = null;
+            for (const p of this.chartPoints) {
+                if (p.col !== col || !p.rawId) continue;
+                const rp = this.idPrecision(p.rawId);
+                if (rp > maxPrec) { maxPrec = rp; bestRawId = p.rawId; }
+            }
+            if (bestRawId && maxPrec < colPrec) {
+                const oldCol = col;
+                this.renameColumnKey(oldCol, bestRawId);
+                // Mirror the demotion into every collision key that had oldCol as a component
+                for (const ck of [...this.repeaterColumns]) {
+                    if (!ck.includes('/')) continue;
+                    const comps = ck.split('/');
+                    if (!comps.includes(oldCol)) continue;
+                    const newCk = comps.map(c => c === oldCol ? bestRawId : c).sort().join('/');
+                    if (newCk !== ck) this.renameColumnKey(ck, newCk);
+                }
+            }
+        }
+
+        // Step 2: Dissolve collision columns whose component set shrank
         const activeSpecific = new Set();
         for (const p of this.chartPoints) {
             if (!p.col.includes('/')) activeSpecific.add(p.col);
         }
 
-        // Dissolve collision columns whose component set shrank
         for (const col of [...this.repeaterColumns]) {
             if (!col.includes('/')) continue;
             const comps = col.split('/');
@@ -2109,7 +2134,7 @@ class MeshCoreMonitor {
             }
         }
 
-        // Recompute stats for all remaining columns from the pruned chartPoints;
+        // Step 3: Recompute stats for all remaining columns from the pruned chartPoints;
         // _recomputeRepeaterStats also removes columns that now have count=0
         for (const col of [...this.repeaterColumns]) {
             this._recomputeRepeaterStats(col);
