@@ -477,6 +477,7 @@ header {
     color: rgba(255,255,255,0.55);
     font-style: italic;
 }
+.msg-table-empty.hidden { display: none; }
 
 .msg-table-scroll {
     background: white;

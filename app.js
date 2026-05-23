@@ -2336,10 +2336,18 @@ class MeshCoreMonitor {
                 <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
-        // Scroll selected row into view without moving it to the top
+        // Scroll selected row into view within the table — without moving the page viewport
         if (sel) {
-            const selRow = this.repeaterLogBody.querySelector(`tr.rl-row-sel`);
-            selRow?.scrollIntoView({ block: 'nearest' });
+            const selRow = this.repeaterLogBody.querySelector('tr.rl-row-sel');
+            const scroll = this.repeaterLogBody.closest('.repeater-log-scroll');
+            if (selRow && scroll) {
+                const rowTop = selRow.offsetTop;
+                const rowBot = rowTop + selRow.offsetHeight;
+                if (rowTop < scroll.scrollTop)
+                    scroll.scrollTop = rowTop;
+                else if (rowBot > scroll.scrollTop + scroll.clientHeight)
+                    scroll.scrollTop = rowBot - scroll.clientHeight;
+            }
         }
     }
 
