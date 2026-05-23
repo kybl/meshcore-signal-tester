@@ -5,7 +5,7 @@
 // Two tile sources: Mapy.com (default, requires API key) and OpenStreetMap.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
-import { OrbitControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+import { MapControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/MapControls.js';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 60;    // world units for strongest signal
@@ -139,7 +139,7 @@ export class Signal3DMap {
         this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 5000);
         this.camera.position.set(70, 90, 110);
 
-        this.controls = new OrbitControls(this.camera, canvas);
+        this.controls = new MapControls(this.camera, canvas);
         this.controls.target.set(0, 0, 0);
         this.controls.enableDamping      = true;
         this.controls.dampingFactor      = 0.08;
@@ -148,9 +148,9 @@ export class Signal3DMap {
         this.controls.minDistance        = 0.5;
         this.controls.maxDistance        = 300;
         this.controls.update();
-        // Prevent target from drifting above floor when panning at a tilt
+        // Keep target on the floor plane — prevents camera going above or below the map
         this.controls.addEventListener('change', () => {
-            if (this.controls.target.y > 0) this.controls.target.y = 0;
+            this.controls.target.y = 0;
         });
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
