@@ -134,7 +134,7 @@ export class Signal3DMap {
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.08;
         this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
-        this.controls.minDistance   = 20;
+        this.controls.minDistance   = 5;
         this.controls.maxDistance   = 600;
         this.controls.update();
 
