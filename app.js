@@ -500,15 +500,17 @@ class MeshCoreMonitor {
     _initHelpSystem() {
         const HELP = {
             'active':
-                'Unique packets currently visible — within the auto-remove time window. Older packets disappear automatically.',
+                'Unique packets in the current display window. Data outside the window is still stored (see Auto-remove) but not shown (see Display).',
             'totalrx':
                 'All packet arrivals this session. The same packet heard via two different repeaters counts as two.',
             'repeaters-count':
-                'Number of distinct mesh nodes that have forwarded at least one packet to your device this session.',
+                'Distinct repeaters visible in the current display window. More may be stored but hidden.',
             'sound':
                 'off = silent. short / medium / long play a beep of increasing duration (long is 4× short) on each new packet. Pitch varies with RSSI — stronger signal → higher pitch. Setting is remembered across sessions.',
             'ttl':
-                'Packets not seen within this window are removed from the Messages table, charts, and 3D map. Does not affect the Seen Repeaters table — that keeps all encountered repeaters for the whole session. "Never" keeps data in all sections for the whole session.',
+                'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import).',
+            'display':
+                'How far back to look when displaying data. Does not delete anything — data outside this window is still stored and continues to influence repeater ID merging and collision detection. "All" shows the full storage window. Can only be set equal to or shorter than Auto-remove.',
             'repeater':
                 '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Columns are sorted by recent activity (last 5 min), then last RSSI, last SNR, total RX, alphabetically. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'rssi':
@@ -1444,8 +1446,8 @@ class MeshCoreMonitor {
                 .map(tr => [tr.id.slice(7), tr.dataset.col ?? null])
         );
 
-        // Show filter bar whenever there is data
-        document.getElementById('msgFilterBar')?.classList.toggle('hidden', this.hashData.size === 0);
+        // Show filter bar only when there are visible rows
+        const msgFilterBar = document.getElementById('msgFilterBar');
 
         const filter = this._msgFilter.toLowerCase().trim();
         const displayCutoff = this._displayCutoffNow();
@@ -1462,6 +1464,7 @@ class MeshCoreMonitor {
         const msgTableScroll = this.msgTableHead?.closest('.msg-table-scroll');
 
         if (allRows.length === 0) {
+            if (msgFilterBar) msgFilterBar.classList.add('hidden');
             if (msgTableScroll) msgTableScroll.style.display = 'none';
             if (msgTableEmpty) {
                 msgTableEmpty.textContent = displayCutoff
@@ -1474,6 +1477,8 @@ class MeshCoreMonitor {
             this._lastColKey = null;
             return;
         }
+
+        if (msgFilterBar) msgFilterBar.classList.remove('hidden');
 
         if (msgTableScroll) msgTableScroll.style.display = '';
         if (msgTableEmpty) msgTableEmpty.classList.add('hidden');
