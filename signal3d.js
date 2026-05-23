@@ -23,7 +23,7 @@ const mapycomUrl = type => (z, x, y) =>
 const TILE_SOURCES = {
     'mapycom-basic':   { label: 'Mapy.com — Basic',             url: mapycomUrl('basic'),   attrib: '© Mapy.com' },
     'mapycom-outdoor': { label: 'Mapy.com — Outdoor (hiking)',   url: mapycomUrl('outdoor'), attrib: '© Mapy.com' },
-    'mapycom-aerial':  { label: 'Mapy.com — Aerial (ortofoto)', url: mapycomUrl('aerial'),  attrib: '© Mapy.com' },
+    'mapycom-aerial':  { label: 'Mapy.com — Aerial (orthophoto)', url: mapycomUrl('aerial'),  attrib: '© Mapy.com' },
     'mapycom-winter':  { label: 'Mapy.com — Winter',             url: mapycomUrl('winter'),  attrib: '© Mapy.com' },
     'osm':             {
         label:  'OpenStreetMap',
@@ -137,6 +137,10 @@ export class Signal3DMap {
         this.controls.minDistance   = 5;
         this.controls.maxDistance   = 600;
         this.controls.update();
+        this.controls.addEventListener('end', () => {
+            clearTimeout(this._viewUpdateTimer);
+            this._viewUpdateTimer = setTimeout(() => this._updateMap({ fromCamera: true }), 700);
+        });
 
         this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
         const dl = new THREE.DirectionalLight(0xffffff, 0.45);
@@ -469,7 +473,7 @@ export class Signal3DMap {
         return { minLat, maxLat, minLon, maxLon };
     }
 
-    async _updateMap() {
+    async _updateMap({ fromCamera = false } = {}) {
         if (this._mapBusy) { this._scheduleMapUpdate(); return; }
         const bb = this._bbox();
         if (!bb) return;
@@ -483,22 +487,60 @@ export class Signal3DMap {
         if (maxLat === minLat) { minLat -= padLat / 2; maxLat += padLat / 2; }
         if (maxLon === minLon) { minLon -= padLon / 2; maxLon += padLon / 2; }
 
-        let zoom = 19;
-        let tl, br;
-        while (zoom > 1) {
-            tl = lonLatToTile(minLon, maxLat, zoom);
-            br = lonLatToTile(maxLon, minLat, zoom);
-            const tx = Math.floor(br.x) - Math.floor(tl.x) + 1;
-            const ty = Math.floor(br.y) - Math.floor(tl.y) + 1;
-            if (tx <= MAX_TILES_AXIS && ty <= MAX_TILES_AXIS) break;
-            zoom--;
+        // Data-extent zoom — always computed; drives minDistance and serves as fallback
+        let dataZoom = 19;
+        let dataTl, dataBr;
+        while (dataZoom > 1) {
+            dataTl = lonLatToTile(minLon, maxLat, dataZoom);
+            dataBr = lonLatToTile(maxLon, minLat, dataZoom);
+            const dtx = Math.floor(dataBr.x) - Math.floor(dataTl.x) + 1;
+            const dty = Math.floor(dataBr.y) - Math.floor(dataTl.y) + 1;
+            if (dtx <= MAX_TILES_AXIS && dty <= MAX_TILES_AXIS) break;
+            dataZoom--;
+        }
+        // Scale-based minDistance: closest zoom shows ~50 real-world metres
+        {
+            const centerLat = (minLat + maxLat) / 2;
+            const tileWidthM = 40075016.686 * Math.cos(centerLat * Math.PI / 180) / Math.pow(2, dataZoom);
+            const dtx = Math.floor(dataBr.x) - Math.floor(dataTl.x) + 1;
+            const dty = Math.floor(dataBr.y) - Math.floor(dataTl.y) + 1;
+            const dpx = Math.max(1, Math.min(2, Math.ceil(dtx / 2)));
+            const dpy = Math.max(1, Math.min(2, Math.ceil(dty / 2)));
+            const dnx = dtx + 2 * dpx;
+            const dny = dty + 2 * dpy;
+            const dataPlaneW = dnx >= dny ? PLANE_SIZE : PLANE_SIZE * dnx / dny;
+            const mPerUnit = tileWidthM * dnx / dataPlaneW;
+            this.controls.minDistance = Math.max(1, 50 / mPerUnit);
         }
 
+        // Dynamic tile zoom: use camera view when zoomed in for higher-detail tiles
+        let zoom = dataZoom, tl = dataTl, br = dataBr;
+        if (fromCamera && this.tileBounds) {
+            const camBb = this._cameraViewBbox();
+            if (camBb) {
+                let cz = 19, cTl, cBr;
+                while (cz > 1) {
+                    cTl = lonLatToTile(camBb.minLon, camBb.maxLat, cz);
+                    cBr = lonLatToTile(camBb.maxLon, camBb.minLat, cz);
+                    const ctx = Math.floor(cBr.x) - Math.floor(cTl.x) + 1;
+                    const cty = Math.floor(cBr.y) - Math.floor(cTl.y) + 1;
+                    if (ctx <= MAX_TILES_AXIS && cty <= MAX_TILES_AXIS) break;
+                    cz--;
+                }
+                if (cz > dataZoom) { zoom = cz; tl = cTl; br = cBr; }
+            }
+        }
+
+        // Asymmetric padding: proportional to data extent so elongated shapes don't waste tiles
         const maxTile = Math.pow(2, zoom) - 1;
-        const x0 = Math.max(0, Math.floor(tl.x) - 2);
-        const y0 = Math.max(0, Math.floor(tl.y) - 2);
-        const x1 = Math.min(maxTile, Math.floor(br.x) + 2);
-        const y1 = Math.min(maxTile, Math.floor(br.y) + 2);
+        const tx = Math.floor(br.x) - Math.floor(tl.x) + 1;
+        const ty = Math.floor(br.y) - Math.floor(tl.y) + 1;
+        const padX = Math.max(1, Math.min(2, Math.ceil(tx / 2)));
+        const padY = Math.max(1, Math.min(2, Math.ceil(ty / 2)));
+        const x0 = Math.max(0, Math.floor(tl.x) - padX);
+        const y0 = Math.max(0, Math.floor(tl.y) - padY);
+        const x1 = Math.min(maxTile, Math.floor(br.x) + padX);
+        const y1 = Math.min(maxTile, Math.floor(br.y) + padY);
         const nx = x1 - x0 + 1;
         const ny = y1 - y0 + 1;
 
@@ -593,6 +635,42 @@ export class Signal3DMap {
         const fy = (t.y - y0) / ny;
         const { w, h } = this.planeDim;
         return new THREE.Vector3((fx - 0.5) * w, 0, (fy - 0.5) * h);
+    }
+
+    _worldToLatLon(wx, wz) {
+        if (!this.tileBounds || !this.planeDim) return null;
+        const { x0, y0, nx, ny, zoom } = this.tileBounds;
+        const { w, h } = this.planeDim;
+        const tx = (wx / w + 0.5) * nx + x0;
+        const ty = (wz / h + 0.5) * ny + y0;
+        const n = Math.pow(2, zoom);
+        const lon = tx / n * 360 - 180;
+        const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n))) * 180 / Math.PI;
+        return { lat, lon };
+    }
+
+    _cameraViewBbox() {
+        if (!this.tileBounds) return null;
+        const locs = [];
+        const camPos = this.camera.position;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            const worldPt = new THREE.Vector3(sx, sy, 0.5).unproject(this.camera);
+            const dir = worldPt.clone().sub(camPos).normalize();
+            if (Math.abs(dir.y) < 1e-6) continue;
+            const t = -camPos.y / dir.y;
+            if (t < 0) continue;
+            const ll = this._worldToLatLon(camPos.x + t * dir.x, camPos.z + t * dir.z);
+            if (ll && isFinite(ll.lat) && isFinite(ll.lon)) locs.push(ll);
+        }
+        if (locs.length < 2) return null;
+        let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+        for (const { lat, lon } of locs) {
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+            if (lon < minLon) minLon = lon;
+            if (lon > maxLon) maxLon = lon;
+        }
+        return { minLat, maxLat, minLon, maxLon };
     }
 
     _rssiToHeight(rssi) {
