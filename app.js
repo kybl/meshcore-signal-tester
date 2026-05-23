@@ -30,6 +30,7 @@ class MeshCoreMonitor {
         this._msgFilter = '';
         this._repFilterTerms = [];
         this._collecting = false;
+        this._unsavedRxCount = 0; // packets received since last CSV export
         this._chartFrozenAt = Date.now();
 
         this.initUI();
@@ -53,6 +54,12 @@ class MeshCoreMonitor {
             btn.classList.remove('collecting');
             if (!this._chartFrozenAt) this._chartFrozenAt = Date.now();
         }
+        this._syncWakeLock();
+    }
+
+    _syncWakeLock() {
+        if (this._collecting) this.acquireWakeLock();
+        else this.releaseWakeLock();
     }
 
     initUI() {
@@ -379,7 +386,7 @@ class MeshCoreMonitor {
         }
 
         window.addEventListener('beforeunload', e => {
-            if (this.device) {
+            if (this.device || this._unsavedRxCount > 0) {
                 e.preventDefault();
                 e.returnValue = '';
             }
@@ -752,7 +759,6 @@ class MeshCoreMonitor {
             } catch (e) { /* device does not expose Battery Service */ }
         }
 
-        this.acquireWakeLock();
         this.saveDevice(device);
 
         this.updateStatus('Connected', 'connected');
@@ -1281,6 +1287,7 @@ class MeshCoreMonitor {
         if (!this._collecting && !opts.importing && !opts.forceIngest) return;
         const wasAtBottom = !opts.importing && this._isAtPageBottom();
         this.totalRxCount++;
+        if (!opts.importing) this._unsavedRxCount++;
         const now = opts.timestamp ?? Date.now();
         if (!opts.importing) this._rxTimestamps.push(now);
         const isNewHash = !this.hashData.has(hash);
@@ -2401,6 +2408,7 @@ class MeshCoreMonitor {
 
     _exportCsv() {
         if (this.hashData.size === 0) return;
+        this._unsavedRxCount = 0;
 
         const msgFilter = this._msgFilter.toLowerCase().trim();
 
