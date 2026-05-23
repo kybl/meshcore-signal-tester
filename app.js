@@ -1665,10 +1665,6 @@ class MeshCoreMonitor {
     }
 
     renderCharts() {
-        if (isFinite(this.HASH_LIFETIME)) {
-            const cutoff = Date.now() - this.HASH_LIFETIME;
-            this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
-        }
         if (this._chartSelected && !this._visibleChartPoints().some(p => p.col === this._chartSelected)) {
             this._chartSelected = null;
         }
@@ -2028,10 +2024,15 @@ class MeshCoreMonitor {
         for (const [hash, data] of this.hashData.entries()) {
             if (now - data.lastSeen > this.HASH_LIFETIME) toRemove.push(hash);
         }
-        // Even with nothing to delete, packets may have aged out of the
-        // rolling 5-minute count → re-sort columns and refresh the table
-        // only if their order actually changed.
+
         if (!toRemove.length) {
+            // No hashData expired, but chartPoints may still need pruning
+            if (isFinite(this.HASH_LIFETIME)) {
+                const cutoff = now - this.HASH_LIFETIME;
+                const before = this.chartPoints.length;
+                this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
+                if (this.chartPoints.length !== before) this._rebuildAfterPrune();
+            }
             const prev = this.repeaterColumns.join('|');
             this.sortColumns();
             if (this.repeaterColumns.join('|') !== prev) this.renderMsgTable();
@@ -2047,21 +2048,72 @@ class MeshCoreMonitor {
             const cutoff = Date.now() - this.HASH_LIFETIME;
             for (const hash of toRemove) {
                 const data = this.hashData.get(hash);
-                // Re-check TTL: a fresh packet may have arrived during the animation delay
                 if (data && data.lastSeen <= cutoff) this.hashData.delete(hash);
             }
-            this.signalMap?.purgeOlderThan(cutoff);
-            this.repeaterColumns = this.repeaterColumns.filter(r =>
-                Array.from(this.hashData.values()).some(d => d.repeaters.has(r))
-            );
-            for (const key of this.allRepeaters.keys()) {
-                if (!this.repeaterColumns.includes(key)) this.allRepeaters.delete(key);
+            if (isFinite(this.HASH_LIFETIME)) {
+                this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
             }
+            this.signalMap?.purgeOlderThan(cutoff);
+            this._rebuildAfterPrune();
             this.sortColumns();
             this.renderMsgTable();
+            this.updateRepeaterTable();
             this.updateStats();
             if (this.hashData.size === 0 && this.emptyState) this.emptyState.classList.remove('hidden');
         }, 400);
+    }
+
+    // After chartPoints have been pruned: dissolve stale collision columns,
+    // recompute repeater stats, and clean up empty columns.
+    _rebuildAfterPrune() {
+        // Which specific (non-collision) columns still have live chartPoints?
+        const activeSpecific = new Set();
+        for (const p of this.chartPoints) {
+            if (!p.col.includes('/')) activeSpecific.add(p.col);
+        }
+
+        // Dissolve collision columns whose component set shrank
+        for (const col of [...this.repeaterColumns]) {
+            if (!col.includes('/')) continue;
+            const comps = col.split('/');
+            const survivors = comps.filter(c => activeSpecific.has(c));
+            if (survivors.length === comps.length) continue; // nothing changed
+
+            if (survivors.length > 1) {
+                // Shrink: e.g. "A/B/C" → "A/C"
+                this.renameColumnKey(col, survivors.sort().join('/'));
+            } else if (survivors.length === 1) {
+                // Dissolve: "A/B" → "B"
+                this.renameColumnKey(col, survivors[0]);
+            } else {
+                // All specific siblings expired — release orphaned ambiguous points
+                // back to their original raw prefix so they form their own column
+                for (const p of this.chartPoints) {
+                    if (p.col !== col) continue;
+                    const rId = p.rawId ?? col;
+                    if (!this.repeaterColumns.includes(rId)) this.repeaterColumns.push(rId);
+                    p.col = rId;
+                }
+                for (const data of this.hashData.values()) {
+                    const entry = data.repeaters.get(col);
+                    if (!entry) continue;
+                    const rId = entry.rawId ?? col;
+                    if (!data.repeaters.has(rId)) data.repeaters.set(rId, entry);
+                    data.repeaters.delete(col);
+                }
+                this.signalMap?.splitPoints?.(col, p => p ?? col);
+                const idx = this.repeaterColumns.indexOf(col);
+                if (idx >= 0) this.repeaterColumns.splice(idx, 1);
+                this.allRepeaters.delete(col);
+                this.chartColors.delete(col);
+            }
+        }
+
+        // Recompute stats for all remaining columns from the pruned chartPoints;
+        // _recomputeRepeaterStats also removes columns that now have count=0
+        for (const col of [...this.repeaterColumns]) {
+            this._recomputeRepeaterStats(col);
+        }
     }
 
     _clearAllData() {

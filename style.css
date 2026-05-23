@@ -748,25 +748,27 @@ header {
     color: white;
 }
 
-/* TTL slider */
-.ttl-row {
+/* Auto-remove in header */
+.ttl-header-label {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 6px;
-    padding-left: 2px;
-}
-
-.ttl-control {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
     gap: 4px;
     font-size: 12px;
-    color: rgba(255,255,255,0.75);
+    color: #999;
     white-space: nowrap;
 }
+
+.ttl-header-select {
+    font-size: 11px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+    background: #fff;
+    color: #333;
+    cursor: pointer;
+}
+
+/* Clear data button (inside repeater section) */
 
 .btn-clear-data {
     background: none;
@@ -777,6 +779,9 @@ header {
     padding: 2px 8px;
     cursor: pointer;
     white-space: nowrap;
+    margin-top: 6px;
+    margin-left: 2px;
+    display: block;
 }
 
 .btn-clear-data:hover {
@@ -785,10 +790,6 @@ header {
     color: rgba(255,255,255,0.9);
 }
 
-.ttl-sep {
-    color: rgba(255,255,255,0.25);
-    margin: 0 3px;
-}
 
 .rep-filter-input {
     font-size: 12px;
@@ -947,11 +948,10 @@ header {
 }
 
 /* The default blue-on-translucent-blue help icon disappears on the
-   purple section backgrounds (.section-header, .ttl-control, .rep-filter-bar).
+   purple section backgrounds (.section-header, .rep-filter-bar).
    Force a white-on-translucent variant in those contexts. The header has a
    white background, so .hstat / .sound-toggle keep the default style. */
 .section-header .help-icon,
-.ttl-control .help-icon,
 .rep-filter-bar .help-icon {
     background: rgba(255, 255, 255, 0.18);
     color: rgba(255, 255, 255, 0.85);
@@ -960,9 +960,7 @@ header {
 
 .section-header .help-icon:hover,
 .section-header .help-icon.active,
-.ttl-control .help-icon:hover,
 .rep-filter-bar .help-icon:hover,
-.ttl-control .help-icon.active,
 .rep-filter-bar .help-icon.active {
     background: rgba(255, 255, 255, 0.32);
     color: white;
