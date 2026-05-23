@@ -10,7 +10,8 @@ class MeshCoreMonitor {
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
-        this.HASH_LIFETIME = 15 * 60 * 1000;
+        this.HASH_LIFETIME    = 15 * 60 * 1000;
+        this.DISPLAY_LIFETIME = Infinity; // separate display window; Infinity = same as HASH_LIFETIME
         this.cleanupInterval = null;
         this._connectionMonitor = null;
         this._monitorDelay = null;
@@ -70,6 +71,11 @@ class MeshCoreMonitor {
         }
         setInterval(() => {
             if (!this._chartFrozenAt) this.scheduleChartRender();
+            if (isFinite(this.DISPLAY_LIFETIME)) {
+                this.signalMap?.setDisplayCutoff?.(this._displayCutoffNow());
+                this.updateRepeaterTable();
+                this.renderMsgTable();
+            }
             this.updateStats();
         }, 2000);
 
@@ -200,7 +206,8 @@ class MeshCoreMonitor {
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
-        const ttlSelect = document.getElementById('ttlSelect');
+        const ttlSelect  = document.getElementById('ttlSelect');
+        const hideSelect = document.getElementById('hideSelect');
         if (ttlSelect) {
             try { const s = localStorage.getItem('ttl'); if (s) ttlSelect.value = s; } catch {}
             const v = ttlSelect.value;
@@ -209,8 +216,18 @@ class MeshCoreMonitor {
                 const v = ttlSelect.value;
                 this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
                 try { localStorage.setItem('ttl', v); } catch {}
+                this._updateHideSelectOptions();
             });
         }
+        if (hideSelect) {
+            try { const s = localStorage.getItem('hide'); if (s) hideSelect.value = s; } catch {}
+            this._applyHideSelect();
+            hideSelect.addEventListener('change', () => {
+                try { localStorage.setItem('hide', hideSelect.value); } catch {}
+                this._applyHideSelect();
+            });
+        }
+        this._updateHideSelectOptions();
 
         document.getElementById('clearDataBtn')?.addEventListener('click', () => {
             if (!confirm('Delete all captured data? This cannot be undone.')) return;
@@ -1443,7 +1460,9 @@ class MeshCoreMonitor {
         document.getElementById('msgFilterBar')?.classList.toggle('hidden', this.hashData.size === 0);
 
         const filter = this._msgFilter.toLowerCase().trim();
+        const displayCutoff = this._displayCutoffNow();
         const allRows = Array.from(this.hashData.entries())
+            .filter(([, data]) => !displayCutoff || data.lastSeen >= displayCutoff)
             .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
         let rows = filter
             ? allRows.filter(([, data]) => this._rowMatchesFilter(data, filter))
@@ -2157,14 +2176,50 @@ class MeshCoreMonitor {
         if (this.emptyState) this.emptyState.classList.remove('hidden');
     }
 
+    _displayCutoffNow() {
+        return isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : 0;
+    }
+
+    _applyHideSelect() {
+        const hideSelect = document.getElementById('hideSelect');
+        if (!hideSelect) return;
+        const v = hideSelect.value;
+        this.DISPLAY_LIFETIME = (v === 'same' || v === 'Infinity') ? Infinity : +v * 1000;
+        const cutoff = this._displayCutoffNow();
+        this.signalMap?.setDisplayCutoff?.(cutoff);
+        this.scheduleChartRender();
+        this.updateRepeaterTable();
+        this.renderMsgTable();
+        this.updateStats();
+    }
+
+    _updateHideSelectOptions() {
+        const hideSelect = document.getElementById('hideSelect');
+        if (!hideSelect) return;
+        const ttlMs = this.HASH_LIFETIME;
+        let currentValid = false;
+        for (const opt of hideSelect.options) {
+            if (opt.value === 'same') { opt.disabled = false; currentValid ||= (hideSelect.value === 'same'); continue; }
+            const ms = opt.value === 'Infinity' ? Infinity : +opt.value * 1000;
+            opt.disabled = isFinite(ttlMs) && ms > ttlMs;
+            if (!opt.disabled && hideSelect.value === opt.value) currentValid = true;
+        }
+        if (!currentValid) {
+            hideSelect.value = 'same';
+            try { localStorage.setItem('hide', 'same'); } catch {}
+            this._applyHideSelect();
+        }
+    }
+
     // --- Repeater log table ---
 
     updateRepeaterTable() {
         if (!this.repeaterLogBody) return;
         const key = this.repeaterSortKey;
         const dir = this.repeaterSortDir;
+        const cutoff = this._displayCutoffNow();
         const entries = Array.from(this.allRepeaters.entries())
-            .filter(([id]) => this._colMatchesRepFilter(id));
+            .filter(([id, d]) => this._colMatchesRepFilter(id) && (!cutoff || d.lastSeen >= cutoff));
         entries.sort(([idA, dA], [idB, dB]) => {
             if (key === 'id') {
                 // 'direct' sorts first ascending, last descending
@@ -2271,11 +2326,19 @@ class MeshCoreMonitor {
 
     updateStats() {
         if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0;
-        this.activeHashesEl.textContent = this.hashData.size;
+        const displayCutoff = this._displayCutoffNow();
+        const visibleHashes = displayCutoff
+            ? Array.from(this.hashData.values()).filter(d => d.lastSeen >= displayCutoff).length
+            : this.hashData.size;
+        this.activeHashesEl.textContent = visibleHashes;
         this.totalRxEl.textContent = this.totalRxCount;
-        this.totalRepeatersEl.textContent = this._repFilterTerms.length
-            ? this.repeaterColumns.filter(c => this._colMatchesRepFilter(c)).length
-            : this.repeaterColumns.length;
+        const visibleRepeaters = displayCutoff
+            ? Array.from(this.allRepeaters.entries())
+                .filter(([id, d]) => d.lastSeen >= displayCutoff && this._colMatchesRepFilter(id)).length
+            : (this._repFilterTerms.length
+                ? this.repeaterColumns.filter(c => this._colMatchesRepFilter(c)).length
+                : this.repeaterColumns.length);
+        this.totalRepeatersEl.textContent = visibleRepeaters;
         if (this.packetRateEl) {
             const now = Date.now();
             this._rxTimestamps = this._rxTimestamps.filter(t => t > now - 120000);
@@ -2319,9 +2382,11 @@ class MeshCoreMonitor {
     }
 
     _visibleChartPoints() {
+        const cutoff = this._displayCutoffNow();
+        let pts = cutoff ? this.chartPoints.filter(p => p.time >= cutoff) : this.chartPoints;
         return this._repFilterTerms.length
-            ? this.chartPoints.filter(p => this._colMatchesRepFilter(p.col))
-            : this.chartPoints;
+            ? pts.filter(p => this._colMatchesRepFilter(p.col))
+            : pts;
     }
 
     _applyRepFilter() {
@@ -2474,6 +2539,7 @@ class MeshCoreMonitor {
             ttlSelect.value = 'Infinity';
             this.HASH_LIFETIME = Infinity;
             try { localStorage.setItem('ttl', 'Infinity'); } catch {}
+            this._updateHideSelectOptions();
         }
 
         for (const row of rows) {

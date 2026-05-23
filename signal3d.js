@@ -67,6 +67,7 @@ export class Signal3DMap {
         this._cameraFit   = false;
         this._mapBusy     = false;
         this.filterFn     = null;   // col => boolean, or null (show all)
+        this._displayCutoff = 0;    // timestamp ms; 0 = no filter
         this.mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
             ? opts.initialSource : DEFAULT_SOURCE;
         this.sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
@@ -327,6 +328,11 @@ export class Signal3DMap {
             this._updateInfoPanel();
             this.onSelect?.(null);
         }
+        this._repositionAll();
+    }
+
+    setDisplayCutoff(cutoffMs) {
+        this._displayCutoff = cutoffMs || 0;
         this._repositionAll();
     }
 
@@ -613,7 +619,11 @@ export class Signal3DMap {
         if (!this.tileBounds) return;
 
         const sel     = this._selectedCol;
-        const visible = this.filterFn ? this.points.filter(p => this.filterFn(p.col)) : this.points;
+        const cutoff  = this._displayCutoff;
+        const visible = this.points.filter(p =>
+            (!this.filterFn || this.filterFn(p.col)) &&
+            (!cutoff || p.time >= cutoff)
+        );
         if (!visible.length) return;
 
         const litPts = sel ? visible.filter(p => p.col === sel) : visible;
