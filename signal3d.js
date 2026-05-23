@@ -144,8 +144,8 @@ export class Signal3DMap {
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.08;
         this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
-        this.controls.minDistance   = 5;
-        this.controls.maxDistance   = 600;
+        this.controls.minDistance   = 2;
+        this.controls.maxDistance   = 300;
         this.controls.update();
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
@@ -498,35 +498,19 @@ export class Signal3DMap {
         if (maxLat === minLat) { minLat -= padLat / 2; maxLat += padLat / 2; }
         if (maxLon === minLon) { minLon -= padLon / 2; maxLon += padLon / 2; }
 
-        // Data-extent zoom — always computed; drives minDistance and serves as fallback
-        let dataZoom = 19;
-        let dataTl, dataBr;
-        while (dataZoom > 1) {
-            dataTl = lonLatToTile(minLon, maxLat, dataZoom);
-            dataBr = lonLatToTile(maxLon, minLat, dataZoom);
-            const dtx = Math.floor(dataBr.x) - Math.floor(dataTl.x) + 1;
-            const dty = Math.floor(dataBr.y) - Math.floor(dataTl.y) + 1;
+        // Find highest zoom where data fits within MAX_TILES_AXIS × MAX_TILES_AXIS
+        let zoom = 19;
+        let tl, br;
+        while (zoom > 1) {
+            tl = lonLatToTile(minLon, maxLat, zoom);
+            br = lonLatToTile(maxLon, minLat, zoom);
+            const dtx = Math.floor(br.x) - Math.floor(tl.x) + 1;
+            const dty = Math.floor(br.y) - Math.floor(tl.y) + 1;
             if (dtx <= MAX_TILES_AXIS && dty <= MAX_TILES_AXIS) break;
-            dataZoom--;
-        }
-        // Scale-based minDistance: closest zoom shows ~50 real-world metres
-        {
-            const centerLat = (minLat + maxLat) / 2;
-            const tileWidthM = 40075016.686 * Math.cos(centerLat * Math.PI / 180) / Math.pow(2, dataZoom);
-            const dtx = Math.floor(dataBr.x) - Math.floor(dataTl.x) + 1;
-            const dty = Math.floor(dataBr.y) - Math.floor(dataTl.y) + 1;
-            const dpx = Math.max(1, Math.min(2, Math.ceil(dtx / 2)));
-            const dpy = Math.max(1, Math.min(2, Math.ceil(dty / 2)));
-            const dnx = dtx + 2 * dpx;
-            const dny = dty + 2 * dpy;
-            const dataPlaneW = dnx >= dny ? PLANE_SIZE : PLANE_SIZE * dnx / dny;
-            const mPerUnit = tileWidthM * dnx / dataPlaneW;
-            // target is near y=0, camera at polar≈45° → height ≈ d*0.707; factor ~1.4 converts
-            this.controls.minDistance = Math.max(0.5, 70 / mPerUnit);
+            zoom--;
         }
 
         // Asymmetric padding: proportional to data extent so elongated shapes don't waste tiles
-        const zoom = dataZoom, tl = dataTl, br = dataBr;
         const maxTile = Math.pow(2, zoom) - 1;
         const tx = Math.floor(br.x) - Math.floor(tl.x) + 1;
         const ty = Math.floor(br.y) - Math.floor(tl.y) + 1;
