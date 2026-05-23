@@ -2394,7 +2394,15 @@ class MeshCoreMonitor {
         if (sel) {
             const th = document.querySelector(`#msgTableHead th.msg-col-rep[data-col="${CSS.escape(sel)}"]`);
             const scroll = this.msgTableHead?.closest('.msg-table-scroll');
-            if (th && scroll) scroll.scrollLeft = Math.max(0, th.offsetLeft - 60);
+            if (th && scroll) {
+                const colLeft  = th.offsetLeft;
+                const colRight = colLeft + th.offsetWidth;
+                const firstColW = scroll.querySelector('th')?.offsetWidth ?? 0;
+                if (colLeft - firstColW < scroll.scrollLeft)
+                    scroll.scrollLeft = colLeft - firstColW;
+                else if (colRight > scroll.scrollLeft + scroll.clientWidth)
+                    scroll.scrollLeft = colRight - scroll.clientWidth;
+            }
         }
     }
 
