@@ -227,7 +227,7 @@ class MeshCoreMonitor {
             });
         }
         if (hideSelect) {
-            try { const s = localStorage.getItem('hide'); if (s) hideSelect.value = s; } catch {}
+            try { let s = localStorage.getItem('hide'); if (s === 'same') s = 'all'; if (s) hideSelect.value = s; } catch {}
             this._applyHideSelect();
             hideSelect.addEventListener('change', () => {
                 try { localStorage.setItem('hide', hideSelect.value); } catch {}
@@ -2216,7 +2216,7 @@ class MeshCoreMonitor {
         const hideSelect = document.getElementById('hideSelect');
         if (!hideSelect) return;
         const v = hideSelect.value;
-        this.DISPLAY_LIFETIME = (v === 'same' || v === 'Infinity') ? Infinity : +v * 1000;
+        this.DISPLAY_LIFETIME = (v === 'all' || v === 'Infinity') ? Infinity : +v * 1000;
         const cutoff = this._displayCutoffNow();
         this.signalMap?.setDisplayCutoff?.(cutoff);
         this.scheduleChartRender();
@@ -2237,8 +2237,8 @@ class MeshCoreMonitor {
             if (!opt.disabled && hideSelect.value === opt.value) currentValid = true;
         }
         if (!currentValid) {
-            hideSelect.value = 'same';
-            try { localStorage.setItem('hide', 'same'); } catch {}
+            hideSelect.value = 'all';
+            try { localStorage.setItem('hide', 'all'); } catch {}
             this._applyHideSelect();
         }
     }
@@ -2573,6 +2573,13 @@ class MeshCoreMonitor {
             this.HASH_LIFETIME = Infinity;
             try { localStorage.setItem('ttl', 'Infinity'); } catch {}
             this._updateHideSelectOptions();
+        }
+        // Show all imported data regardless of previous display window setting
+        const hideSelect = document.getElementById('hideSelect');
+        if (hideSelect && hideSelect.value !== 'all') {
+            hideSelect.value = 'all';
+            try { localStorage.setItem('hide', 'all'); } catch {}
+            this._applyHideSelect();
         }
 
         for (const row of rows) {
