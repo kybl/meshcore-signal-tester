@@ -471,6 +471,13 @@ header {
     flex-shrink: 0;
 }
 
+.msg-table-empty {
+    padding: 14px 16px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.55);
+    font-style: italic;
+}
+
 .msg-table-scroll {
     background: white;
     border-radius: 8px;

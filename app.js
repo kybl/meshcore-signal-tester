@@ -1444,7 +1444,48 @@ class MeshCoreMonitor {
                 .map(tr => [tr.id.slice(7), tr.dataset.col ?? null])
         );
 
-        const visibleCols = this.repeaterColumns.filter(c => this._colMatchesRepFilter(c));
+        // Show filter bar whenever there is data
+        document.getElementById('msgFilterBar')?.classList.toggle('hidden', this.hashData.size === 0);
+
+        const filter = this._msgFilter.toLowerCase().trim();
+        const displayCutoff = this._displayCutoffNow();
+        const allRows = Array.from(this.hashData.entries())
+            .filter(([, data]) => !displayCutoff || data.lastSeen >= displayCutoff)
+            .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
+
+        // Only include columns that actually appear in the visible rows (respects display cutoff)
+        const activeColsInRows = new Set(allRows.flatMap(([, data]) => [...data.repeaters.keys()]));
+        const visibleCols = this.repeaterColumns
+            .filter(c => this._colMatchesRepFilter(c) && activeColsInRows.has(c));
+
+        const msgTableEmpty = document.getElementById('msgTableEmpty');
+        const msgTableScroll = this.msgTableHead?.closest('.msg-table-scroll');
+
+        if (allRows.length === 0) {
+            if (msgTableScroll) msgTableScroll.style.display = 'none';
+            if (msgTableEmpty) {
+                msgTableEmpty.textContent = displayCutoff
+                    ? 'No packets in the current display window.'
+                    : 'No packets yet.';
+                msgTableEmpty.classList.remove('hidden');
+            }
+            this.msgTableHead.innerHTML = '';
+            this.msgTableBody.innerHTML = '';
+            this._lastColKey = null;
+            return;
+        }
+
+        if (msgTableScroll) msgTableScroll.style.display = '';
+        if (msgTableEmpty) msgTableEmpty.classList.add('hidden');
+        let rows = filter
+            ? allRows.filter(([, data]) => this._rowMatchesFilter(data, filter))
+            : allRows;
+        // When repeater filter is active, hide rows that have no data from visible columns
+        if (this._repFilterTerms.length) {
+            rows = rows.filter(([, data]) => visibleCols.some(c => data.repeaters.has(c)));
+        }
+
+        // Rebuild header when column set changes
         const colKey = visibleCols.join(',');
         if (colKey !== this._lastColKey) {
             this._lastColKey = colKey;
@@ -1461,22 +1502,6 @@ class MeshCoreMonitor {
                 </tr>
                 <tr>${subHeaders}</tr>
             `;
-        }
-
-        // Show filter bar whenever there is data
-        document.getElementById('msgFilterBar')?.classList.toggle('hidden', this.hashData.size === 0);
-
-        const filter = this._msgFilter.toLowerCase().trim();
-        const displayCutoff = this._displayCutoffNow();
-        const allRows = Array.from(this.hashData.entries())
-            .filter(([, data]) => !displayCutoff || data.lastSeen >= displayCutoff)
-            .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
-        let rows = filter
-            ? allRows.filter(([, data]) => this._rowMatchesFilter(data, filter))
-            : allRows;
-        // When repeater filter is active, hide rows that have no data from visible columns
-        if (this._repFilterTerms.length) {
-            rows = rows.filter(([, data]) => visibleCols.some(c => data.repeaters.has(c)));
         }
 
         // Filter count badge
