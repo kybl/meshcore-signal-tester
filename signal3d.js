@@ -141,9 +141,10 @@ export class Signal3DMap {
 
         this.controls = new OrbitControls(this.camera, canvas);
         this.controls.target.set(0, 2, 0);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.08;
-        this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
+        this.controls.enableDamping    = true;
+        this.controls.dampingFactor    = 0.08;
+        this.controls.maxPolarAngle    = Math.PI / 2 - 0.02;
+        this.controls.screenSpacePanning = false;  // pan moves in XZ only, prevents target.y drift
         this.controls.minDistance   = 0;
         this.controls.maxDistance   = 300;
         this.controls.update();
