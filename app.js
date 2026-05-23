@@ -399,7 +399,7 @@ class MeshCoreMonitor {
             const hash    = this.hashPayload(fakeHex);
             const rssi    = -60 - Math.floor(Math.random() * 50);
             const snr     = Math.round((Math.random() * 25 - 10) * 10) / 10;
-            this.addRxEntry(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null);
+            this.addRxEntry(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null, { forceIngest: true });
             if (fbk) {
                 const col = this.findOrCreateColumn(repeater);
                 fbk.textContent = `→ column ${this.displayId(col)}`;
@@ -1261,7 +1261,7 @@ class MeshCoreMonitor {
     }
 
     addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null, opts = {}) {
-        if (!this._collecting && !opts.importing) return;
+        if (!this._collecting && !opts.importing && !opts.forceIngest) return;
         const wasAtBottom = !opts.importing && this._isAtPageBottom();
         this.totalRxCount++;
         const now = opts.timestamp ?? Date.now();

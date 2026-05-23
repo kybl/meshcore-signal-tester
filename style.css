@@ -768,26 +768,23 @@ header {
     cursor: pointer;
 }
 
-/* Clear data button (inside repeater section) */
+/* Clear data button (in header, next to auto-remove) */
 
-.btn-clear-data {
+.btn-clear-data-header {
     background: none;
-    border: 1px solid rgba(255,255,255,0.3);
+    border: 1px solid #ccc;
     border-radius: 4px;
-    color: rgba(255,255,255,0.65);
+    color: #666;
     font-size: 11px;
-    padding: 2px 8px;
+    padding: 1px 8px;
     cursor: pointer;
     white-space: nowrap;
-    margin-top: 6px;
-    margin-left: 2px;
-    display: block;
 }
 
-.btn-clear-data:hover {
-    background: rgba(255,255,255,0.12);
-    border-color: rgba(255,255,255,0.55);
-    color: rgba(255,255,255,0.9);
+.btn-clear-data-header:hover {
+    background: #fee;
+    border-color: #c66;
+    color: #c33;
 }
 
 
