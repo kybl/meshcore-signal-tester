@@ -8,7 +8,7 @@ import * as THREE from 'https://esm.sh/three@0.160.0';
 import { MapControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/MapControls.js';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
-const MAX_HEIGHT     = 60;    // world units for strongest signal
+const MAX_HEIGHT     = 12;    // world units for strongest signal
 const MIN_HEIGHT     = 2;     // world units for weakest signal
 const RSSI_GOOD      = -50;
 const RSSI_BAD       = -125;
@@ -207,6 +207,7 @@ export class Signal3DMap {
 
         const tick = () => {
             this.controls.update();
+            this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
             this._rafId = requestAnimationFrame(tick);
         };
@@ -811,8 +812,8 @@ export class Signal3DMap {
             geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
             return new THREE.Points(geo, new THREE.PointsMaterial({
                 map:             this._sphereTex,
-                size:            this.sphereSize * sizeMult,
-                sizeAttenuation: true,
+                size:            this.sphereSize * sizeMult * 7,
+                sizeAttenuation: false,
                 vertexColors:    true,
                 transparent:     true,
                 opacity,
@@ -878,6 +879,15 @@ export class Signal3DMap {
         this.pointsGroup.add(this._lineSegs);
     }
 
+    _scaleMarkerToScreen() {
+        if (!this.userMarker) return;
+        const d = this.camera.position.distanceTo(this.userMarker.position);
+        const screenH = this.canvas.clientHeight || 1;
+        // Cone local height = 2.8; target 40 CSS pixels tall on screen
+        const fovFactor = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
+        this.userMarker.scale.setScalar(40 * d * fovFactor / (2.8 * screenH));
+    }
+
     _updateUserMarker() {
         if (!this.userLoc || !this.tileBounds) return;
         const pos = this._latLonToWorld(this.userLoc.lat, this.userLoc.lon);
@@ -900,13 +910,7 @@ export class Signal3DMap {
             this.userMarker = group;
             this.scene.add(this.userMarker);
         }
-        // Scale so the marker represents ~40m real-world radius regardless of base zoom
-        const { nx, zoom: bz } = this.tileBounds;
-        const { w } = this.planeDim;
-        const tileWidthM = 40075016.686 * Math.cos(this.userLoc.lat * Math.PI / 180) / Math.pow(2, bz);
-        const mPerUnit = tileWidthM * nx / w;
-        this.userMarker.scale.setScalar(Math.min(4, Math.max(0.15, 40 / mPerUnit)));
-        this.userMarker.position.set(pos.x, 0, pos.z);
+        this.userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
     }
 
     // ---- Lifecycle ----
