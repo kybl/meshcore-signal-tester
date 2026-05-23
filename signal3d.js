@@ -651,26 +651,21 @@ export class Signal3DMap {
 
     _cameraViewBbox() {
         if (!this.tileBounds) return null;
-        const locs = [];
-        const camPos = this.camera.position;
-        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-            const worldPt = new THREE.Vector3(sx, sy, 0.5).unproject(this.camera);
-            const dir = worldPt.clone().sub(camPos).normalize();
-            if (Math.abs(dir.y) < 1e-6) continue;
-            const t = -camPos.y / dir.y;
-            if (t < 0) continue;
-            const ll = this._worldToLatLon(camPos.x + t * dir.x, camPos.z + t * dir.z);
-            if (ll && isFinite(ll.lat) && isFinite(ll.lon)) locs.push(ll);
-        }
-        if (locs.length < 2) return null;
-        let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
-        for (const { lat, lon } of locs) {
-            if (lat < minLat) minLat = lat;
-            if (lat > maxLat) maxLat = lat;
-            if (lon < minLon) minLon = lon;
-            if (lon > maxLon) maxLon = lon;
-        }
-        return { minLat, maxLat, minLon, maxLon };
+        const center = this._worldToLatLon(this.controls.target.x, this.controls.target.z);
+        if (!center) return null;
+        // Radius of visible area on the floor: distance × tan(halfFOV)
+        const camDist = this.camera.position.distanceTo(this.controls.target);
+        const r = camDist * Math.tan((this.camera.fov / 2) * Math.PI / 180);
+        // Convert radius in world units → lon/lat delta using current tileBounds scale
+        const { nx, ny, zoom } = this.tileBounds;
+        const { w, h } = this.planeDim;
+        const n = Math.pow(2, zoom);
+        const lonDelta = r * nx / (w * n) * 360;
+        const latDelta = r * ny / (h * n) * 360;
+        return {
+            minLat: center.lat - latDelta, maxLat: center.lat + latDelta,
+            minLon: center.lon - lonDelta, maxLon: center.lon + lonDelta,
+        };
     }
 
     _rssiToHeight(rssi) {
