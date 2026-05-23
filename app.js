@@ -163,9 +163,7 @@ class MeshCoreMonitor {
                 const item = e.target.closest('.legend-item[data-col]');
                 if (!item) return;
                 const col = item.dataset.col;
-                this._chartSelected = this._chartSelected === col ? null : col;
-                this.signalMap?.selectColumn(this._chartSelected);
-                this.scheduleChartRender();
+                this._selectRepeater(this._chartSelected === col ? null : col);
             });
         };
         bindLegendClick(this.rssiChartLegend);
@@ -204,6 +202,22 @@ class MeshCoreMonitor {
                 const firstCol = this.repeaterColumns.find(col => data.repeaters.has(col));
                 if (firstCol) this.toggleDetailRow(hash, firstCol);
             }
+        });
+
+        // Click repeater row in Seen Repeaters to select it
+        document.getElementById('repeaterLogBody')?.addEventListener('click', e => {
+            const row = e.target.closest('tr[data-col]');
+            if (!row) return;
+            const col = row.dataset.col;
+            this._selectRepeater(col === this._chartSelected ? null : col);
+        });
+
+        // Click column header in Received Packets to select repeater
+        document.getElementById('msgTableHead')?.addEventListener('click', e => {
+            const th = e.target.closest('th.msg-col-rep[data-col]');
+            if (!th) return;
+            const col = th.dataset.col;
+            this._selectRepeater(col === this._chartSelected ? null : col);
         });
 
         document.getElementById('savedDevices')?.addEventListener('click', e => {
@@ -461,8 +475,7 @@ class MeshCoreMonitor {
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
                 onSelect:      col => {
-                    this._chartSelected = col;
-                    this.scheduleChartRender();
+                    this._selectRepeater(col);
                 },
                 onFilter:      col => {
                     if (!col) return;
@@ -495,6 +508,42 @@ class MeshCoreMonitor {
             this.signalMap.setMapSource(sourceSel.value);
             try { localStorage.setItem('mapSource', sourceSel.value); } catch {}
         });
+
+        // Settings gear panel
+        const settingsBtn   = document.getElementById('mapSettingsBtn');
+        const settingsPanel = document.getElementById('mapSettingsPanel');
+        if (settingsBtn && settingsPanel) {
+            settingsBtn.addEventListener('click', e => {
+                e.stopPropagation();
+                settingsPanel.classList.toggle('hidden');
+            });
+            document.addEventListener('click', e => {
+                if (!settingsPanel.contains(e.target) && e.target !== settingsBtn)
+                    settingsPanel.classList.add('hidden');
+            });
+        }
+
+        const showLinesChk  = document.getElementById('showLinesChk');
+        const showMarkerChk = document.getElementById('showMarkerChk');
+        showLinesChk?.addEventListener('change', () => {
+            this.signalMap?.setShowLines(showLinesChk.checked);
+            try { localStorage.setItem('showLines', showLinesChk.checked); } catch {}
+        });
+        showMarkerChk?.addEventListener('change', () => {
+            this.signalMap?.setShowMarker(showMarkerChk.checked);
+            try { localStorage.setItem('showMarker', showMarkerChk.checked); } catch {}
+        });
+        // Restore saved values
+        try {
+            if (localStorage.getItem('showLines') === 'false' && showLinesChk) {
+                showLinesChk.checked = false;
+                this.signalMap?.setShowLines(false);
+            }
+            if (localStorage.getItem('showMarker') === 'false' && showMarkerChk) {
+                showMarkerChk.checked = false;
+                this.signalMap?.setShowMarker(false);
+            }
+        } catch {}
     }
 
     _initHelpSystem() {
@@ -1495,7 +1544,7 @@ class MeshCoreMonitor {
         if (colKey !== this._lastColKey) {
             this._lastColKey = colKey;
             const repHeaders = visibleCols.map(r =>
-                `<th colspan="2" class="msg-col-rep"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}</th>`
+                `<th colspan="2" class="msg-col-rep" data-col="${this.escHtml(r)}"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}</th>`
             ).join('');
             const subHeaders = visibleCols.map(() =>
                 `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
@@ -1540,6 +1589,8 @@ class MeshCoreMonitor {
                     .forEach(el => el.classList.add('sig-active'));
             }
         }
+
+        this._applyMsgTableSelection();
 
         if (flashHash) {
             const row = document.getElementById(`row-${flashHash}`);
@@ -1722,7 +1773,7 @@ class MeshCoreMonitor {
 
     renderCharts() {
         if (this._chartSelected && !this._visibleChartPoints().some(p => p.col === this._chartSelected)) {
-            this._chartSelected = null;
+            this._selectRepeater(null);
         }
         this.renderChart('rssi');
         this.renderChart('snr');
@@ -1782,12 +1833,10 @@ class MeshCoreMonitor {
             if (d < minDist) { minDist = d; nearest = p; }
         }
         if (!nearest || minDist > 2500) {
-            if (this._chartSelected) { this._chartSelected = null; this.signalMap?.selectColumn(null); this.scheduleChartRender(); }
+            if (this._chartSelected) this._selectRepeater(null);
             return;
         }
-        this._chartSelected = this._chartSelected === nearest.col ? null : nearest.col;
-        this.signalMap?.selectColumn(this._chartSelected);
-        this.scheduleChartRender();
+        this._selectRepeater(this._chartSelected === nearest.col ? null : nearest.col);
     }
 
     _xLabelStepMs(rangeMs, chartWidthPx) {
@@ -2203,6 +2252,7 @@ class MeshCoreMonitor {
         this.repeaterColumns = [];
         this.allRepeaters.clear();
         this._chartSelected = null;
+        this.signalMap?.selectColumn(null);
         this.signalMap?.clearPoints?.();
         if (this.msgTableBody) this.msgTableBody.innerHTML = '';
         if (this.msgTableHead) this.msgTableHead.innerHTML = '';
@@ -2268,13 +2318,21 @@ class MeshCoreMonitor {
             const vb = dB[key] ?? -Infinity;
             return dir * (va - vb);
         });
+        // Move selected repeater to top
+        const sel = this._chartSelected;
+        if (sel) {
+            const selIdx = entries.findIndex(([id]) => id === sel);
+            if (selIdx > 0) entries.unshift(entries.splice(selIdx, 1)[0]);
+        }
         this.repeaterLogBody.innerHTML = entries.map(([repeater, d]) => {
             const mrc = this.signalColor(d.maxRssi,  -70, -130);
             const lrc = this.signalColor(d.lastRssi, -70, -130);
             const msc = this.signalColor(d.maxSnr,   13, -10, 0);
             const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
-            return `<tr>
-                <td class="rl-id"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}</td>
+            const isSel = repeater === sel;
+            const rowCls = sel ? (isSel ? 'rl-row-sel' : 'rl-row-dim') : '';
+            return `<tr data-col="${this.escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
+                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}</td>
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${mrc}">${d.maxRssi}</td>
                 <td class="rl-num" style="color:${lrc}">${d.lastRssi}</td>
@@ -2283,6 +2341,51 @@ class MeshCoreMonitor {
                 <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
+    }
+
+    // --- Repeater selection ---
+
+    _selectRepeater(col) {
+        this._chartSelected = col ?? null;
+        this.signalMap?.selectColumn(this._chartSelected);
+        this.scheduleChartRender();
+        this.updateRepeaterTable();
+        this._applyMsgTableSelection();
+    }
+
+    _applyMsgTableSelection() {
+        const sel = this._chartSelected;
+
+        // Repeater column headers: dim non-selected
+        document.querySelectorAll('#msgTableHead th.msg-col-rep[data-col]').forEach(th => {
+            th.classList.toggle('col-dim', !!sel && th.dataset.col !== sel);
+            th.classList.toggle('col-sel', !!sel && th.dataset.col === sel);
+        });
+
+        // Data cells: dim non-selected repeater columns
+        document.querySelectorAll('#msgTableBody td.sig-rssi[data-col], #msgTableBody td.sig-snr[data-col]').forEach(td => {
+            td.classList.toggle('col-dim', !!sel && td.dataset.col !== sel);
+        });
+
+        // Rows: hide if selected repeater has no data for that packet
+        document.querySelectorAll('#msgTableBody tr[id^="row-"]').forEach(tr => {
+            if (!sel) { tr.style.display = ''; return; }
+            const hash = tr.id.slice(4);
+            const data = this.hashData.get(hash);
+            tr.style.display = data?.repeaters.has(sel) ? '' : 'none';
+        });
+        // Keep detail rows in sync with their parent row
+        document.querySelectorAll('#msgTableBody tr.detail-row').forEach(tr => {
+            const prev = tr.previousElementSibling;
+            if (prev) tr.style.display = prev.style.display;
+        });
+
+        // Scroll to selected column
+        if (sel) {
+            const th = document.querySelector(`#msgTableHead th.msg-col-rep[data-col="${CSS.escape(sel)}"]`);
+            const scroll = this.msgTableHead?.closest('.msg-table-scroll');
+            if (th && scroll) scroll.scrollLeft = Math.max(0, th.offsetLeft - 60);
+        }
     }
 
     // --- Signal color ---

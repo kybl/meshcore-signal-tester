@@ -81,6 +81,8 @@ export class Signal3DMap {
         this.mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
             ? opts.initialSource : DEFAULT_SOURCE;
         this.sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
+        this._showLines   = opts.showLines !== false;
+        this._showMarker  = opts.showMarker !== false;
         this._selectedCol = null;
         // Points / mesh handles — replaced per _repositionAll call
         this._ptsMeshLit  = null;   // THREE.Points for lit spheres (sprite texture)
@@ -423,6 +425,16 @@ export class Signal3DMap {
         if (n === this.sphereSize) return;
         this.sphereSize = n;
         this._repositionAll();
+    }
+
+    setShowLines(v) {
+        this._showLines = !!v;
+        if (this._lineSegs) this._lineSegs.visible = this._showLines;
+    }
+
+    setShowMarker(v) {
+        this._showMarker = !!v;
+        if (this.userMarker) this.userMarker.visible = this._showMarker;
     }
 
     setMapSource(source) {
@@ -823,7 +835,7 @@ export class Signal3DMap {
         };
 
         if (litPts.length) {
-            this._ptsMeshLit = makePoints(litPts, 1.0, sel ? 3.6 : 2.0);
+            this._ptsMeshLit = makePoints(litPts, 1.0, 2.0);
             this.pointsGroup.add(this._ptsMeshLit);
         }
         if (dimPts.length) {
@@ -876,6 +888,7 @@ export class Signal3DMap {
             transparent: lineOpacity < 1,
             opacity: lineOpacity,
         }));
+        this._lineSegs.visible = this._showLines;
         this.pointsGroup.add(this._lineSegs);
     }
 
@@ -908,6 +921,7 @@ export class Signal3DMap {
             base.position.y = 0.05;
             group.add(base);
             this.userMarker = group;
+            this.userMarker.visible = this._showMarker;
             this.scene.add(this.userMarker);
         }
         this.userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()

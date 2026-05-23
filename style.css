@@ -1514,3 +1514,64 @@ header {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* ---- Map settings gear ---- */
+.signal-map-hint { margin-left: auto; }
+
+.map-settings-wrap {
+    position: relative;
+}
+
+.map-settings-btn {
+    background: none;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 15px;
+    padding: 2px 5px;
+    color: #666;
+    line-height: 1;
+}
+.map-settings-btn:hover { background: #f0f0f0; border-color: #aaa; }
+
+.map-settings-panel {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 50;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.13);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 200px;
+    white-space: nowrap;
+}
+.map-settings-panel.hidden { display: none; }
+
+.map-setting-toggle {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    cursor: pointer;
+    color: #444;
+}
+.map-setting-toggle input[type="checkbox"] { cursor: pointer; }
+
+/* ---- Repeater table selection ---- */
+.rl-id-clickable { cursor: pointer; }
+.rl-id-clickable:hover { text-decoration: underline; }
+
+.rl-row-sel { background: #eef3ff !important; font-weight: 600; }
+.rl-row-dim { opacity: 0.4; }
+
+/* ---- Message table column selection ---- */
+th.msg-col-rep { cursor: pointer; }
+th.msg-col-rep:hover { background: #dde4f0; }
+th.col-sel { background: #c8d8f8 !important; }
+th.col-dim { opacity: 0.4; }
+td.col-dim { opacity: 0.25; }
+
