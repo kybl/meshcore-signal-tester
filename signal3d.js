@@ -628,15 +628,15 @@ export class Signal3DMap {
         this.controls.target.set(0, 0, 0);
         this.controls.update();
         this._cameraFit = true;
+        this._refCamDist = this.controls.getDistance();
         this._updateHeightScale();
     }
 
     _updateHeightScale() {
-        if (!this.planeDim) return;
-        // Reference altitude: camera Y at initial fit (r * 0.55 where r = max plane edge).
-        // At that height scale = 1 (full MAX_HEIGHT). Closer to ground → shorter spikes.
-        const refY = Math.max(this.planeDim.w, this.planeDim.h) * 0.55;
-        const scale = Math.max(0.05, Math.min(1, this.camera.position.y / refY));
+        if (!this._refCamDist) return;
+        // Same metric as _scaleMarkerToScreen: getDistance() gives stable zoom level
+        // unaffected by camera tilt. At initial fit distance scale = 1; closer → shorter.
+        const scale = Math.max(0.05, this.controls.getDistance() / this._refCamDist);
         this.pointsGroup.scale.y = scale;
     }
 
