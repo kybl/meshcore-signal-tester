@@ -880,38 +880,47 @@ export class Signal3DMap {
         this._iMeshHit.instanceMatrix.needsUpdate = true;
         this.pointsGroup.add(this._iMeshHit);
 
-        // Vertical lines — split into lit and dim so opacity can differ (like spheres)
-        const makeLines = (pts, opacity) => {
+        // Vertical lines — split into lit (coloured) and dim (flat grey, low opacity)
+        const makeLines = (pts, mat) => {
             if (!pts.length) return null;
             const pos = new Float32Array(pts.length * 6);
-            const col = new Float32Array(pts.length * 6);
             for (let i = 0; i < pts.length; i++) {
                 const p  = pts[i];
                 const wp = this._latLonToWorld(p.lat, p.lon);
                 if (!wp) continue;
                 const h = this._rssiToHeight(p.rssi);
-                _col.set(this.colorFor(p.col));
                 const j = i * 6;
-                pos[j]   = wp.x; pos[j+1] = 0;  pos[j+2] = wp.z;
-                pos[j+3] = wp.x; pos[j+4] = h;  pos[j+5] = wp.z;
-                col[j]   = _col.r; col[j+1] = _col.g; col[j+2] = _col.b;
-                col[j+3] = _col.r; col[j+4] = _col.g; col[j+5] = _col.b;
+                pos[j]   = wp.x; pos[j+1] = 0; pos[j+2] = wp.z;
+                pos[j+3] = wp.x; pos[j+4] = h; pos[j+5] = wp.z;
             }
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-            const seg = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-                vertexColors: true,
-                transparent: true,
-                opacity,
-            }));
+            const seg = new THREE.LineSegments(geo, mat);
             seg.visible = this._showLines;
             this.pointsGroup.add(seg);
             return seg;
         };
+
+        const litCol = new Float32Array(litPts.length * 6);
+        for (let i = 0; i < litPts.length; i++) {
+            _col.set(this.colorFor(litPts[i].col));
+            const j = i * 6;
+            litCol[j]   = _col.r; litCol[j+1] = _col.g; litCol[j+2] = _col.b;
+            litCol[j+3] = _col.r; litCol[j+4] = _col.g; litCol[j+5] = _col.b;
+        }
         const lineOpacity = Math.min(1, 0.25 + 0.35 * this.sphereSize);
-        this._lineSegs    = makeLines(litPts, lineOpacity);
-        this._lineSegsDim = makeLines(dimPts, 0.08);
+        const litMat = new THREE.LineBasicMaterial({
+            vertexColors: true, transparent: lineOpacity < 1,
+            depthWrite: false, opacity: lineOpacity,
+        });
+        const dimMat = new THREE.LineBasicMaterial({
+            color: 0x888888, transparent: true, depthWrite: false, opacity: 0.18,
+        });
+
+        this._lineSegs = makeLines(litPts, litMat);
+        if (this._lineSegs)
+            this._lineSegs.geometry.setAttribute('color', new THREE.BufferAttribute(litCol, 3));
+        this._lineSegsDim = makeLines(dimPts, dimMat);
     }
 
     _scaleMarkerToScreen() {
