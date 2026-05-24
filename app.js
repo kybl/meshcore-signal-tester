@@ -1811,14 +1811,16 @@ class MeshCoreMonitor {
         if (repEntry) {
             const rc = this.signalColor(repEntry.rssi, -70, -130);
             const sc = this.signalColor(repEntry.snr,  13, -10, 0);
-            const hexShort = hex.slice(0, 12);
             const timeStr = repEntry.time ? this.formatTimeMs(repEntry.time) : '';
+            const hexPart = hex
+                ? ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hex.slice(0, 12))}…</code>`
+                : '';
             header = `<div class="detail-sig">` +
                 `<b>${this.escHtml(this.displayId(col))}</b>` +
                 (timeStr ? ` &nbsp; <span class="detail-time">${timeStr}</span>` : '') +
                 ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi ?? '—'}</span>` +
                 ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr?.toFixed(1) ?? '—'}</span>` +
-                ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
+                hexPart +
                 `</div>`;
         }
 
