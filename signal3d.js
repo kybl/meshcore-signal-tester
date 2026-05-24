@@ -153,6 +153,7 @@ export class Signal3DMap {
         // Keep target on the floor plane — prevents camera going above or below the map
         this.controls.addEventListener('change', () => {
             this.controls.target.y = 0;
+            this._updateHeightScale();
         });
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
@@ -627,6 +628,16 @@ export class Signal3DMap {
         this.controls.target.set(0, 0, 0);
         this.controls.update();
         this._cameraFit = true;
+        this._updateHeightScale();
+    }
+
+    _updateHeightScale() {
+        if (!this.planeDim) return;
+        // Reference altitude: camera Y at initial fit (r * 0.55 where r = max plane edge).
+        // At that height scale = 1 (full MAX_HEIGHT). Closer to ground → shorter spikes.
+        const refY = Math.max(this.planeDim.w, this.planeDim.h) * 0.55;
+        const scale = Math.max(0.05, Math.min(1, this.camera.position.y / refY));
+        this.pointsGroup.scale.y = scale;
     }
 
     _latLonToWorld(lat, lon) {
@@ -772,9 +783,9 @@ export class Signal3DMap {
         this._overlayKey = null;
     }
 
-    _rssiToHeight(rssi, maxH = MAX_HEIGHT) {
+    _rssiToHeight(rssi) {
         const t = (rssi - RSSI_BAD) / (RSSI_GOOD - RSSI_BAD);
-        return MIN_HEIGHT + Math.max(0, Math.min(1, t)) * (maxH - MIN_HEIGHT);
+        return MIN_HEIGHT + Math.max(0, Math.min(1, t)) * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
     _disposeInstanced() {
@@ -806,23 +817,6 @@ export class Signal3DMap {
         const litPts = sel ? visible.filter(p => p.col === sel) : visible;
         const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
 
-        // Scale height proportionally to the XZ spread of visible points so
-        // spikes don't dwarf a geographically small cluster of data.
-        const { x0, y0, nx, ny, zoom } = this.tileBounds;
-        const { w: planeW, h: planeH } = this.planeDim;
-        let minFx = Infinity, maxFx = -Infinity, minFy = Infinity, maxFy = -Infinity;
-        for (const p of visible) {
-            const t = lonLatToTile(p.lon, p.lat, zoom);
-            const fx = (t.x - x0) / nx;
-            const fy = (t.y - y0) / ny;
-            if (fx < minFx) minFx = fx; if (fx > maxFx) maxFx = fx;
-            if (fy < minFy) minFy = fy; if (fy > maxFy) maxFy = fy;
-        }
-        const spreadX = isFinite(maxFx) ? (maxFx - minFx) * planeW : 0;
-        const spreadZ = isFinite(maxFy) ? (maxFy - minFy) * planeH : 0;
-        const spread  = Math.max(spreadX, spreadZ, 1);
-        const effectiveMaxH = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT * 1.5, spread * 0.25));
-
         const _m4 = new THREE.Matrix4(), _v = new THREE.Vector3();
         const _s  = new THREE.Vector3(), _q = new THREE.Quaternion();
         const _col = new THREE.Color();
@@ -835,7 +829,7 @@ export class Signal3DMap {
                 const p  = pts[i];
                 const wp = this._latLonToWorld(p.lat, p.lon);
                 pos[i*3]   = wp ? wp.x : 0;
-                pos[i*3+1] = wp ? this._rssiToHeight(p.rssi, effectiveMaxH) : 0;
+                pos[i*3+1] = wp ? this._rssiToHeight(p.rssi) : 0;
                 pos[i*3+2] = wp ? wp.z : 0;
                 _col.set(this.colorFor(p.col));
                 col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
@@ -875,7 +869,7 @@ export class Signal3DMap {
             const p   = visible[i];
             const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) { _m4.makeScale(0, 0, 0); this._iMeshHit.setMatrixAt(i, _m4); continue; }
-            const h  = this._rssiToHeight(p.rssi, effectiveMaxH);
+            const h  = this._rssiToHeight(p.rssi);
             const hr = this.sphereSize + 1.8;
             _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(hr, hr, hr));
             this._iMeshHit.setMatrixAt(i, _m4);
@@ -891,7 +885,7 @@ export class Signal3DMap {
             const p   = visible[i];
             const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) continue;
-            const h = this._rssiToHeight(p.rssi, effectiveMaxH);
+            const h = this._rssiToHeight(p.rssi);
             _col.set(this.colorFor(p.col));
             const f = (!sel || sel === p.col) ? 1 : 0.15;
             const j = i * 6;
