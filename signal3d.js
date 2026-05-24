@@ -377,10 +377,10 @@ export class Signal3DMap {
             }
         }
         this._selectedCol = newCol;
-        this._infoPanelFromClick = !!newCol;   // show info only on direct click
         this._repositionAll();
+        this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
+        this._infoPanelFromClick = !!newCol;   // set after the feedback loop so panel stays visible
         this._updateInfoPanel();
-        this.onSelect?.(newCol);
     }
 
     _updateInfoPanel() {
@@ -636,7 +636,7 @@ export class Signal3DMap {
         if (!this._refCamDist) return;
         // Same metric as _scaleMarkerToScreen: getDistance() gives stable zoom level
         // unaffected by camera tilt. At initial fit distance scale = 1; closer → shorter.
-        const scale = Math.max(0.05, this.controls.getDistance() / this._refCamDist);
+        const scale = Math.max(0.05, this.controls.getDistance() / this._refCamDist) * 2;
         this.pointsGroup.scale.y = scale;
     }
 
