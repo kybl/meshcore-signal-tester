@@ -590,23 +590,23 @@ class MeshCoreMonitor {
             'display':
                 'How far back to look when displaying data. Does not delete anything — data outside this window is still stored and continues to influence repeater ID merging and collision detection. "All" shows the full storage window. Can only be set equal to or shorter than Auto-remove.',
             'repeater':
-                '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Columns are sorted by recent activity (last 5 min), then last RSSI, last SNR, total RX, alphabetically. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
+                '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Click a row to select that repeater — dims others in all views (charts, Received packets, 3D map); click again to deselect. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'rssi':
                 'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
             'snr':
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
             'chart-interact':
-                'Click a dot or legend label to highlight that repeater across both charts; click again or elsewhere to deselect. The shaded area on the RSSI chart shows the estimated noise floor (RSSI − SNR).',
+                'Click a dot or legend label to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. The shaded area on the RSSI chart shows the estimated noise floor (RSSI − SNR).',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':
-                'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "5E9F1234" and vice versa. Affects the table, charts, Received packets, and 3D map.',
+                'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "5E9F1234" and vice versa. Affects Seen Repeaters, charts, Received Packets, and the 3D map. A notice appears top-right while a filter is active.',
             'messages':
-                'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Repeater columns are ordered by: packets received in the last 5 min (desc), then last RSSI, last SNR, total RX count, then alphabetically.',
+                'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then last RSSI, last SNR, total RX count, then alphabetically.',
             'msg-type':
                 'Type abbreviations — AD: Advert · GT: GroupText · TR: Traceroute · RS: Response · RQ: Request · PN: Ping · TX: TextMessage · PT: Path · CT: Control · PV: Private. Full type is shown in the expanded row.',
             'signal3d':
-                'Allow location access, then drag to rotate and scroll/pinch to zoom. Each bead sits at your GPS position when the packet was received; height reflects RSSI. Click a bead to highlight that repeater in the RSSI/SNR charts. Map tiles: Mapy.com (basic, outdoor, winter, aerial) or OpenStreetMap (standard, OpenTopoMap).',
+                'Interactive 3D map of received signal strength. Each dot is positioned at your GPS location at reception time; height reflects RSSI (taller = stronger) and scales with camera zoom. Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. Use ⚙ (top right) to change map source, dot size, guide lines, and the location marker. Navigation: drag to pan · scroll/pinch to zoom · right-drag to tilt/rotate.',
         };
 
         const tipEl = document.getElementById('helpTip');
