@@ -462,9 +462,12 @@ export class Signal3DMap {
 
     // Called by the host app when chart/legend selection changes.
     selectColumn(col) {
-        if (this._selectedCol === col) return;
+        this._infoPanelFromClick = false;   // always hide info panel on external selection
+        if (this._selectedCol === col) {
+            this._updateInfoPanel();
+            return;
+        }
         this._selectedCol = col ?? null;
-        this._infoPanelFromClick = false;   // external — don't show info panel
         this._repositionAll();
         this._updateInfoPanel();
     }
