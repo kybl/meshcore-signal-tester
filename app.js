@@ -979,19 +979,18 @@ class MeshCoreMonitor {
     }
 
     _handleAdvertPush(payload) {
-        const hex = Array.from(payload).map(b => b.toString(16).padStart(2,'0')).join(' ');
-        console.log(`_handleAdvertPush: len=${payload.length} bytes=[${hex}]`);
-        if (payload.length < 34) { console.warn('_handleAdvertPush: too short (need 34), ignoring'); return; }
+        // Format: byte 0 = push code, bytes 1-32 = pub_key (32 B),
+        // optional byte 33 = adv_type, optional bytes 34+ = name (null-term)
+        if (payload.length < 33) return;
         const pubKey = payload.slice(1, 33);
-        const advType = payload[33];
+        const advType = payload.length > 33 ? payload[33] : null;
         const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'RoomSrv', 4: 'Sensor' };
-        const typeName = TYPE_NAMES[advType] ?? `Adv${advType}`;
+        const typeName = advType != null ? (TYPE_NAMES[advType] ?? `Adv${advType}`) : 'Node';
         let name = '';
         for (let i = 34; i < payload.length && payload[i] !== 0; i++)
             name += String.fromCharCode(payload[i]);
         const pubKeyHex = Array.from(pubKey.slice(0, 6))
             .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
-        // Stable hash per node (same node → merges into one row)
         const hash = 'AD:' + pubKeyHex;
         const meta = { name: name || null, advType, pubKeyHex };
         this.addRxEntry(hash, 'direct', typeName + ' AD', null, null, null, meta, null);
