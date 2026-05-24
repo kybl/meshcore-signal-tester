@@ -1575,3 +1575,60 @@ th.col-sel { background: #c8d8f8 !important; }
 th.col-dim { opacity: 0.4; }
 td.col-dim { opacity: 0.25; }
 
+/* ---- Corner notices (filter / selection) ---- */
+.corner-notice {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 200;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 210px;
+    max-width: 280px;
+    font-size: 12px;
+}
+.corner-notice.hidden { display: none; }
+
+.corner-notice-title {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #999;
+}
+.corner-notice-rep {
+    font-weight: 700;
+    font-size: 13px;
+    color: #333;
+    word-break: break-all;
+}
+.corner-notice-hint {
+    color: #888;
+    font-size: 11px;
+    line-height: 1.4;
+}
+.corner-notice-btn {
+    padding: 5px 10px;
+    border-radius: 5px;
+    border: 1px solid #ddd;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 11px;
+    color: #444;
+    text-align: center;
+}
+.corner-notice-btn:hover { background: #eaeaea; border-color: #bbb; }
+.corner-notice-btn-primary {
+    background: #667eea;
+    border-color: #5569d4;
+    color: #fff;
+    font-weight: 600;
+}
+.corner-notice-btn-primary:hover { background: #5569d4; border-color: #4457c0; }
+

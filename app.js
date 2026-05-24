@@ -399,6 +399,31 @@ class MeshCoreMonitor {
             });
         }
 
+        // Corner notice buttons
+        document.getElementById('filterNoticeClear')?.addEventListener('click', () => {
+            this._repFilterTerms = [];
+            const inp = document.getElementById('repFilter');
+            if (inp) { inp.value = ''; inp.classList.remove('has-value'); }
+            document.getElementById('repFilterClear')?.classList.add('hidden');
+            document.getElementById('repFilterApplied')?.classList.add('hidden');
+            this._applyRepFilter();
+        });
+        document.getElementById('selNoticeFilter')?.addEventListener('click', () => {
+            const col = this._chartSelected;
+            if (!col) return;
+            const term = this.displayId(col).toUpperCase();
+            const inp = document.getElementById('repFilter');
+            if (inp) { inp.value = term; inp.classList.add('has-value'); }
+            document.getElementById('repFilterClear')?.classList.remove('hidden');
+            document.getElementById('repFilterApplied')?.classList.remove('hidden');
+            this._repFilterTerms = [term];
+            this._selectRepeater(null);   // clears selection; _applyRepFilter called via _updateCornerNotices inside
+            this._applyRepFilter();
+        });
+        document.getElementById('selNoticeClear')?.addEventListener('click', () => {
+            this._selectRepeater(null);
+        });
+
         window.addEventListener('beforeunload', e => {
             if (this.device || this._unsavedRxCount > 0) {
                 e.preventDefault();
@@ -2361,6 +2386,29 @@ class MeshCoreMonitor {
         this.scheduleChartRender();
         this.updateRepeaterTable();
         this._applyMsgTableSelection();
+        this._updateCornerNotices();
+    }
+
+    _updateCornerNotices() {
+        const filterNotice  = document.getElementById('filterNotice');
+        const selNotice     = document.getElementById('selNotice');
+        const filterRep     = document.getElementById('filterNoticeRep');
+        const selRep        = document.getElementById('selNoticeRep');
+
+        const hasFilter = this._repFilterTerms.length > 0;
+        const hasSel    = !!this._chartSelected;
+
+        // Filter notice — shown when filter active (and no separate selection notice)
+        if (filterNotice) {
+            filterNotice.classList.toggle('hidden', !hasFilter);
+            if (filterRep) filterRep.textContent = this._repFilterTerms.join(', ');
+        }
+
+        // Selection notice — shown only when selection is active (filter notice takes priority)
+        if (selNotice) {
+            selNotice.classList.toggle('hidden', !hasSel || hasFilter);
+            if (selRep && hasSel) selRep.textContent = this.displayId(this._chartSelected);
+        }
     }
 
     _applyMsgTableSelection() {
@@ -2555,6 +2603,7 @@ class MeshCoreMonitor {
         this.signalMap?.setFilterFn(
             this._repFilterTerms.length ? col => this._colMatchesRepFilter(col) : null
         );
+        this._updateCornerNotices();
     }
 
     _exportCsv() {
