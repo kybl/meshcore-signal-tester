@@ -400,6 +400,10 @@ class MeshCoreMonitor {
         }
 
         // Corner notice buttons
+        document.getElementById('filterNoticeHelpBtn')?.addEventListener('click', () => {
+            const hint = document.getElementById('filterNoticeHint');
+            hint?.classList.toggle('hidden');
+        });
         document.getElementById('filterNoticeClear')?.addEventListener('click', () => {
             this._repFilterTerms = [];
             const inp = document.getElementById('repFilter');
@@ -2390,24 +2394,35 @@ class MeshCoreMonitor {
     }
 
     _updateCornerNotices() {
-        const filterNotice  = document.getElementById('filterNotice');
-        const selNotice     = document.getElementById('selNotice');
-        const filterRep     = document.getElementById('filterNoticeRep');
-        const selRep        = document.getElementById('selNoticeRep');
-
         const hasFilter = this._repFilterTerms.length > 0;
         const hasSel    = !!this._chartSelected;
 
-        // Filter notice — shown when filter active (and no separate selection notice)
+        // --- Filter notice ---
+        const filterNotice = document.getElementById('filterNotice');
         if (filterNotice) {
             filterNotice.classList.toggle('hidden', !hasFilter);
-            if (filterRep) filterRep.textContent = this._repFilterTerms.join(', ');
+            if (hasFilter) {
+                const term = this._repFilterTerms.join(', ');
+                document.getElementById('filterNoticeRep').textContent = term;
+                // Try to find a matching column for the dot color
+                const matchCol = this.repeaterColumns.find(c => this._colMatchesRepFilter(c));
+                const dot = document.getElementById('filterNoticeDot');
+                if (dot) {
+                    dot.style.background = matchCol ? this.getRepeaterColor(matchCol) : 'transparent';
+                    dot.style.display    = matchCol ? '' : 'none';
+                }
+            }
         }
 
-        // Selection notice — shown only when selection is active (filter notice takes priority)
+        // --- Selection notice (hidden when filter is also active) ---
+        const selNotice = document.getElementById('selNotice');
         if (selNotice) {
             selNotice.classList.toggle('hidden', !hasSel || hasFilter);
-            if (selRep && hasSel) selRep.textContent = this.displayId(this._chartSelected);
+            if (hasSel && !hasFilter) {
+                document.getElementById('selNoticeRep').textContent = this.displayId(this._chartSelected);
+                const dot = document.getElementById('selNoticeDot');
+                if (dot) dot.style.background = this.getRepeaterColor(this._chartSelected);
+            }
         }
     }
 

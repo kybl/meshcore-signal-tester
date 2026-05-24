@@ -376,6 +376,7 @@ export class Signal3DMap {
             }
         }
         this._selectedCol = newCol;
+        this._infoPanelFromClick = !!newCol;   // show info only on direct click
         this._repositionAll();
         this._updateInfoPanel();
         this.onSelect?.(newCol);
@@ -384,7 +385,7 @@ export class Signal3DMap {
     _updateInfoPanel() {
         if (!this.infoEl) return;
         const col = this._selectedCol;
-        if (!col) { this.infoEl.classList.add('hidden'); return; }
+        if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
         const pts = this.points.filter(p => p.col === col);
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const maxRssi = Math.max(...pts.map(p => p.rssi));
@@ -397,8 +398,7 @@ export class Signal3DMap {
             `<button class="smi-close" title="Deselect">✕</button>` +
             `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b><span class="smi-count">${pts.length} pkt${pts.length !== 1 ? 's' : ''}</span></div>` +
             `<div class="smi-stat">RSSI: best <b>${maxRssi}</b>, last <b>${last.rssi}</b> dBm</div>` +
-            `<div class="smi-stat">SNR: best <b>${fSnr(maxSnr)}</b>, last <b>${fSnr(last.snr)}</b> dB</div>` +
-            (this.onFilter ? `<button class="smi-filter">Filter</button>` : '');
+            `<div class="smi-stat">SNR: best <b>${fSnr(maxSnr)}</b>, last <b>${fSnr(last.snr)}</b> dB</div>`;
         this.infoEl.classList.remove('hidden');
     }
 
@@ -464,6 +464,7 @@ export class Signal3DMap {
     selectColumn(col) {
         if (this._selectedCol === col) return;
         this._selectedCol = col ?? null;
+        this._infoPanelFromClick = false;   // external — don't show info panel
         this._repositionAll();
         this._updateInfoPanel();
     }

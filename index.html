@@ -201,18 +201,23 @@
 
     <!-- Corner notice: repeater filter active -->
     <div id="filterNotice" class="corner-notice hidden">
-        <div class="corner-notice-title">Filtered to repeater</div>
-        <div class="corner-notice-rep" id="filterNoticeRep"></div>
-        <div class="corner-notice-hint">Display &amp; charts show only this repeater. All data is still captured.</div>
+        <div class="corner-notice-line1">
+            Filtered to <span class="corner-notice-dot" id="filterNoticeDot"></span><span class="corner-notice-id" id="filterNoticeRep"></span>
+            <button class="corner-notice-help-btn" id="filterNoticeHelpBtn" title="About filtering">?</button>
+        </div>
+        <div class="corner-notice-hint hidden" id="filterNoticeHint">Display &amp; charts show only this repeater. All data is still captured.</div>
         <button id="filterNoticeClear" class="corner-notice-btn">Clear filter</button>
     </div>
 
     <!-- Corner notice: repeater selected -->
     <div id="selNotice" class="corner-notice hidden">
-        <div class="corner-notice-title">Selected repeater</div>
-        <div class="corner-notice-rep" id="selNoticeRep"></div>
-        <button id="selNoticeFilter" class="corner-notice-btn corner-notice-btn-primary">Filter to this repeater only</button>
-        <button id="selNoticeClear" class="corner-notice-btn">Clear selection</button>
+        <div class="corner-notice-line1">
+            Selected <span class="corner-notice-dot" id="selNoticeDot"></span><span class="corner-notice-id" id="selNoticeRep"></span>
+        </div>
+        <div class="corner-notice-btns">
+            <button id="selNoticeClear" class="corner-notice-btn">Deselect</button>
+            <button id="selNoticeFilter" class="corner-notice-btn corner-notice-btn-primary">Filter to this only</button>
+        </div>
     </div>
 
     <div id="helpModal" class="help-modal-overlay hidden">
