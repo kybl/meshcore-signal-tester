@@ -229,7 +229,7 @@
         <div class="help-modal">
             <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
             <div class="help-modal-title">MeshCore RX Monitor</div>
-            <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. Monitoring is entirely <b>passive</b> — the app only listens, it does not transmit any packets (no pings, no requests).</p>
+            <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Ping</b> button sends a zero-hop self-advertisement so nearby repeaters announce themselves; everything else is passive listening.</p>
 
             <div class="help-section-title">Getting started</div>
             <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏸ Pause / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
