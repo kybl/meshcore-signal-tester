@@ -979,8 +979,9 @@ class MeshCoreMonitor {
     }
 
     _handleAdvertPush(payload) {
-        console.log('_handleAdvertPush: len=' + payload.length, Array.from(payload.slice(0, 36)).map(b => b.toString(16).padStart(2,'0')).join(' '));
-        if (payload.length < 34) { console.warn('_handleAdvertPush: too short, ignoring'); return; }
+        const hex = Array.from(payload).map(b => b.toString(16).padStart(2,'0')).join(' ');
+        console.log(`_handleAdvertPush: len=${payload.length} bytes=[${hex}]`);
+        if (payload.length < 34) { console.warn('_handleAdvertPush: too short (need 34), ignoring'); return; }
         const pubKey = payload.slice(1, 33);
         const advType = payload[33];
         const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'RoomSrv', 4: 'Sensor' };
