@@ -88,7 +88,8 @@ export class Signal3DMap {
         this._ptsMeshLit  = null;   // THREE.Points for lit spheres (sprite texture)
         this._ptsMeshDim  = null;   // THREE.Points for dim spheres
         this._iMeshHit    = null;   // invisible InstancedMesh for raycasting only
-        this._lineSegs    = null;   // all vertical lines as one LineSegments object
+        this._lineSegs    = null;   // vertical lines for lit (selected/all) points
+        this._lineSegsDim = null;   // vertical lines for dim (unselected) points
         this._iHitClusters = [];
         // Shared hit-test geometry & sphere sprite texture (created once)
         this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
@@ -430,7 +431,8 @@ export class Signal3DMap {
 
     setShowLines(v) {
         this._showLines = !!v;
-        if (this._lineSegs) this._lineSegs.visible = this._showLines;
+        if (this._lineSegs)    this._lineSegs.visible    = this._showLines;
+        if (this._lineSegsDim) this._lineSegsDim.visible = this._showLines;
     }
 
     setShowMarker(v) {
@@ -789,16 +791,17 @@ export class Signal3DMap {
     }
 
     _disposeInstanced() {
-        for (const obj of [this._ptsMeshLit, this._ptsMeshDim, this._iMeshHit, this._lineSegs]) {
+        for (const obj of [this._ptsMeshLit, this._ptsMeshDim, this._iMeshHit, this._lineSegs, this._lineSegsDim]) {
             if (!obj) continue;
             this.pointsGroup.remove(obj);
             obj.material?.dispose();
             if (obj !== this._iMeshHit) obj.geometry?.dispose();
         }
-        this._ptsMeshLit = null;
-        this._ptsMeshDim = null;
-        this._iMeshHit   = null;
-        this._lineSegs   = null;
+        this._ptsMeshLit  = null;
+        this._ptsMeshDim  = null;
+        this._iMeshHit    = null;
+        this._lineSegs    = null;
+        this._lineSegsDim = null;
         this._iHitClusters = [];
     }
 
@@ -877,34 +880,38 @@ export class Signal3DMap {
         this._iMeshHit.instanceMatrix.needsUpdate = true;
         this.pointsGroup.add(this._iMeshHit);
 
-        // All vertical lines as one LineSegments draw call
-        const n    = visible.length;
-        const lPos = new Float32Array(n * 6);
-        const lCol = new Float32Array(n * 6);
-        for (let i = 0; i < n; i++) {
-            const p   = visible[i];
-            const pos = this._latLonToWorld(p.lat, p.lon);
-            if (!pos) continue;
-            const h = this._rssiToHeight(p.rssi);
-            _col.set(this.colorFor(p.col));
-            const f = (!sel || sel === p.col) ? 1 : 0.15;
-            const j = i * 6;
-            lPos[j]   = pos.x; lPos[j+1] = 0; lPos[j+2] = pos.z;
-            lPos[j+3] = pos.x; lPos[j+4] = h; lPos[j+5] = pos.z;
-            lCol[j]   = _col.r * f; lCol[j+1] = _col.g * f; lCol[j+2] = _col.b * f;
-            lCol[j+3] = _col.r * f; lCol[j+4] = _col.g * f; lCol[j+5] = _col.b * f;
-        }
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(lPos, 3));
-        geo.setAttribute('color',    new THREE.BufferAttribute(lCol, 3));
+        // Vertical lines — split into lit and dim so opacity can differ (like spheres)
+        const makeLines = (pts, opacity) => {
+            if (!pts.length) return null;
+            const pos = new Float32Array(pts.length * 6);
+            const col = new Float32Array(pts.length * 6);
+            for (let i = 0; i < pts.length; i++) {
+                const p  = pts[i];
+                const wp = this._latLonToWorld(p.lat, p.lon);
+                if (!wp) continue;
+                const h = this._rssiToHeight(p.rssi);
+                _col.set(this.colorFor(p.col));
+                const j = i * 6;
+                pos[j]   = wp.x; pos[j+1] = 0;  pos[j+2] = wp.z;
+                pos[j+3] = wp.x; pos[j+4] = h;  pos[j+5] = wp.z;
+                col[j]   = _col.r; col[j+1] = _col.g; col[j+2] = _col.b;
+                col[j+3] = _col.r; col[j+4] = _col.g; col[j+5] = _col.b;
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+            const seg = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+                vertexColors: true,
+                transparent: true,
+                opacity,
+            }));
+            seg.visible = this._showLines;
+            this.pointsGroup.add(seg);
+            return seg;
+        };
         const lineOpacity = Math.min(1, 0.25 + 0.35 * this.sphereSize);
-        this._lineSegs = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-            vertexColors: true,
-            transparent: lineOpacity < 1,
-            opacity: lineOpacity,
-        }));
-        this._lineSegs.visible = this._showLines;
-        this.pointsGroup.add(this._lineSegs);
+        this._lineSegs    = makeLines(litPts, lineOpacity);
+        this._lineSegsDim = makeLines(dimPts, 0.08);
     }
 
     _scaleMarkerToScreen() {
