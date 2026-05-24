@@ -130,6 +130,12 @@ class MeshCoreMonitor {
             this.msgTableBody.addEventListener('mouseleave', () => {
                 this.msgTableBody.querySelectorAll('.sig-pair-hover').forEach(el => el.classList.remove('sig-pair-hover'));
             });
+            this.msgTableBody.addEventListener('click', e => {
+                const btn = e.target.closest('.path-btn');
+                if (!btn) return;
+                e.stopPropagation();
+                this.sendPathDiscovery(btn.dataset.hash, btn.dataset.pubkey);
+            });
         }
 
         let _resizeTimer;
@@ -877,13 +883,30 @@ class MeshCoreMonitor {
     }
 
     async sendSelfAdvert() {
-        if (!this.bleRxCharacteristic) { console.warn('sendSelfAdvert: no BLE characteristic'); return; }
+        if (!this.bleRxCharacteristic) return;
         try {
-            console.log('sendSelfAdvert: writing [0x07, 0x00]');
             await this.bleRxCharacteristic.writeValueWithoutResponse(new Uint8Array([0x07, 0x00]));
-            console.log('sendSelfAdvert: write OK');
         } catch (e) {
             console.error('sendSelfAdvert:', e);
+        }
+    }
+
+    async sendPathDiscovery(hash, pubKeyFullHex) {
+        if (!this.bleRxCharacteristic) return;
+        const bytes = new Uint8Array(34);
+        bytes[0] = 0x34;
+        bytes[1] = 0x00;
+        for (let i = 0; i < 32; i++)
+            bytes[2 + i] = parseInt(pubKeyFullHex.slice(i * 2, i * 2 + 2), 16);
+        this._pendingDiscovery = { hash, time: Date.now() };
+        // Mark row as waiting
+        const data = this.hashData.get(hash);
+        if (data?.meta) { data.meta.uplinkSnr = 'pending'; this.renderMsgTable(); }
+        try {
+            await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
+        } catch (e) {
+            console.error('sendPathDiscovery:', e);
+            if (data?.meta) { data.meta.uplinkSnr = null; this.renderMsgTable(); }
         }
     }
 
@@ -938,7 +961,6 @@ class MeshCoreMonitor {
 
     handlePayload(payload) {
         const pushCode = payload[0];
-        console.log(`handlePayload: code=0x${pushCode.toString(16).padStart(2,'0')} len=${payload.length} bytes=[${Array.from(payload.slice(0,8)).map(b=>b.toString(16).padStart(2,'0')).join(' ')}]`);
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
@@ -991,8 +1013,13 @@ class MeshCoreMonitor {
             name += String.fromCharCode(payload[i]);
         const pubKeyHex = Array.from(pubKey.slice(0, 6))
             .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+        const pubKeyFull = Array.from(pubKey)
+            .map(b => b.toString(16).padStart(2, '0')).join('');
         const hash = 'AD:' + pubKeyHex;
-        const meta = { name: name || null, advType, pubKeyHex };
+        // Preserve uplinkSnr across repeated adverts from same node
+        const existing = this.hashData.get(hash);
+        const uplinkSnr = existing?.meta?.uplinkSnr ?? null;
+        const meta = { name: name || null, advType, pubKeyHex, pubKeyFull, uplinkSnr };
         this.addRxEntry(hash, 'direct', typeName + ' AD', null, null, null, meta, null);
     }
 
@@ -1002,17 +1029,28 @@ class MeshCoreMonitor {
         const tag = ((payload[4]) | (payload[5]<<8) | (payload[6]<<16) | (payload[7]<<24)) >>> 0;
         const needed = 12 + pathLen + pathLen + 1;
         if (payload.length < needed) return;
-        // Last path hash = last repeater before destination
-        const lastHash = pathLen > 0 ? payload[12 + pathLen - 1] : null;
-        const repeaterCol = lastHash != null
-            ? lastHash.toString(16).padStart(2, '0').toUpperCase()
-            : 'direct';
         // SNRs: path_len+1 values (signed byte / 4)
         const snrs = [];
         for (let i = 0; i <= pathLen; i++) {
             const b = payload[12 + pathLen + i];
             snrs.push((b > 127 ? b - 256 : b) / 4);
         }
+        // Correlate with a pending path discovery (CMD_SEND_PATH_DISCOVERY_REQ 0x34)
+        // path_snrs[0] = SNR at first hop = how well the target repeater heard us (uplink)
+        if (this._pendingDiscovery && Date.now() - this._pendingDiscovery.time < 10000) {
+            const adData = this.hashData.get(this._pendingDiscovery.hash);
+            if (adData?.meta) {
+                adData.meta.uplinkSnr = snrs[0];
+                this.renderMsgTable();
+            }
+            this._pendingDiscovery = null;
+            return;
+        }
+        // Last path hash = last repeater before destination
+        const lastHash = pathLen > 0 ? payload[12 + pathLen - 1] : null;
+        const repeaterCol = lastHash != null
+            ? lastHash.toString(16).padStart(2, '0').toUpperCase()
+            : 'direct';
         const lastSnr = snrs[snrs.length - 1];
         const hash = 'TR:' + tag.toString(16).toUpperCase().padStart(8, '0');
         const meta = { pathLen, tag, snrs };
@@ -1699,9 +1737,21 @@ class MeshCoreMonitor {
         const typeDisplay = this._useAbbreviatedTypes
             ? this.escHtml(this.abbreviateType(data.type))
             : this.escHtml(data.type || '?');
+        let pathWidget = '';
+        if (data.meta?.pubKeyFull) {
+            const u = data.meta.uplinkSnr;
+            if (u === 'pending') {
+                pathWidget = `<span class="path-pending" title="Waiting for response…">↑…</span>`;
+            } else if (u != null) {
+                const color = this.signalColor(u, 13, -10, 0);
+                pathWidget = `<span class="path-snr" style="color:${color}" title="Uplink SNR (repeater heard you)">↑${u.toFixed(1)}</span>`;
+            } else {
+                pathWidget = `<button class="path-btn" data-hash="${this.escHtml(hash)}" data-pubkey="${data.meta.pubKeyFull}" title="Send path discovery — measure uplink SNR">↑?</button>`;
+            }
+        }
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
+                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>${pathWidget}
             </td>
             ${cells}
         </tr>`;
