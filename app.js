@@ -877,10 +877,11 @@ class MeshCoreMonitor {
     }
 
     async sendSelfAdvert() {
-        if (!this.bleRxCharacteristic) return;
+        if (!this.bleRxCharacteristic) { console.warn('sendSelfAdvert: no BLE characteristic'); return; }
         try {
-            // CMD_SEND_SELF_ADVERT (7), flood=0 → zero-hop only
+            console.log('sendSelfAdvert: writing [0x07, 0x00]');
             await this.bleRxCharacteristic.writeValueWithoutResponse(new Uint8Array([0x07, 0x00]));
+            console.log('sendSelfAdvert: write OK');
         } catch (e) {
             console.error('sendSelfAdvert:', e);
         }
@@ -937,6 +938,7 @@ class MeshCoreMonitor {
 
     handlePayload(payload) {
         const pushCode = payload[0];
+        console.log(`handlePayload: code=0x${pushCode.toString(16).padStart(2,'0')} len=${payload.length} bytes=[${Array.from(payload.slice(0,8)).map(b=>b.toString(16).padStart(2,'0')).join(' ')}]`);
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
@@ -977,7 +979,8 @@ class MeshCoreMonitor {
     }
 
     _handleAdvertPush(payload) {
-        if (payload.length < 34) return;
+        console.log('_handleAdvertPush: len=' + payload.length, Array.from(payload.slice(0, 36)).map(b => b.toString(16).padStart(2,'0')).join(' '));
+        if (payload.length < 34) { console.warn('_handleAdvertPush: too short, ignoring'); return; }
         const pubKey = payload.slice(1, 33);
         const advType = payload[33];
         const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'RoomSrv', 4: 'Sensor' };
