@@ -255,6 +255,8 @@ class MeshCoreMonitor {
             this._clearAllData();
         });
 
+        document.getElementById('pingBtn')?.addEventListener('click', () => this.sendSelfAdvert());
+
         this.soundSelect?.addEventListener('change', () => {
             try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
         });
@@ -874,6 +876,16 @@ class MeshCoreMonitor {
         await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
     }
 
+    async sendSelfAdvert() {
+        if (!this.bleRxCharacteristic) return;
+        try {
+            // CMD_SEND_SELF_ADVERT (7), flood=0 → zero-hop only
+            await this.bleRxCharacteristic.writeValueWithoutResponse(new Uint8Array([0x07, 0x00]));
+        } catch (e) {
+            console.error('sendSelfAdvert:', e);
+        }
+    }
+
     // --- Saved devices (localStorage) ---
 
     getSavedDevices() {
@@ -941,6 +953,12 @@ class MeshCoreMonitor {
             loraPacket = payload.slice(3);
         } else if (pushCode === 0x84 || pushCode === 0x8e) {
             loraPacket = payload.slice(4);
+        } else if (pushCode === 0x80) {
+            this._handleAdvertPush(payload);
+            return;
+        } else if (pushCode === 0x89) {
+            this._handleTracePush(payload);
+            return;
         } else {
             return;
         }
@@ -956,6 +974,46 @@ class MeshCoreMonitor {
         } catch (e) {
             console.error('Decode error:', e);
         }
+    }
+
+    _handleAdvertPush(payload) {
+        if (payload.length < 34) return;
+        const pubKey = payload.slice(1, 33);
+        const advType = payload[33];
+        const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'RoomSrv', 4: 'Sensor' };
+        const typeName = TYPE_NAMES[advType] ?? `Adv${advType}`;
+        let name = '';
+        for (let i = 34; i < payload.length && payload[i] !== 0; i++)
+            name += String.fromCharCode(payload[i]);
+        const pubKeyHex = Array.from(pubKey.slice(0, 6))
+            .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+        // Stable hash per node (same node → merges into one row)
+        const hash = 'AD:' + pubKeyHex;
+        const meta = { name: name || null, advType, pubKeyHex };
+        this.addRxEntry(hash, 'direct', typeName + ' AD', null, null, null, meta, null);
+    }
+
+    _handleTracePush(payload) {
+        if (payload.length < 12) return;
+        const pathLen = payload[2];
+        const tag = ((payload[4]) | (payload[5]<<8) | (payload[6]<<16) | (payload[7]<<24)) >>> 0;
+        const needed = 12 + pathLen + pathLen + 1;
+        if (payload.length < needed) return;
+        // Last path hash = last repeater before destination
+        const lastHash = pathLen > 0 ? payload[12 + pathLen - 1] : null;
+        const repeaterCol = lastHash != null
+            ? lastHash.toString(16).padStart(2, '0').toUpperCase()
+            : 'direct';
+        // SNRs: path_len+1 values (signed byte / 4)
+        const snrs = [];
+        for (let i = 0; i <= pathLen; i++) {
+            const b = payload[12 + pathLen + i];
+            snrs.push((b > 127 ? b - 256 : b) / 4);
+        }
+        const lastSnr = snrs[snrs.length - 1];
+        const hash = 'TR:' + tag.toString(16).toUpperCase().padStart(8, '0');
+        const meta = { pathLen, tag, snrs };
+        this.addRxEntry(hash, repeaterCol, 'Trace', null, lastSnr, null, meta, null);
     }
 
     bufferToHex(buffer) {
@@ -1262,7 +1320,7 @@ class MeshCoreMonitor {
     }
 
     _recomputeRepeaterStats(col) {
-        let count = 0, lastSeen = -1, maxSnr = -Infinity, maxRssi = -Infinity;
+        let count = 0, lastSeen = -1, maxSnr = null, maxRssi = null;
         let lastSnr = null, lastRssi = null, minPrec = Infinity;
         for (const p of this.chartPoints) {
             if (p.col !== col) continue;
@@ -1272,8 +1330,8 @@ class MeshCoreMonitor {
                 lastSnr  = p.snr;
                 lastRssi = p.rssi;
             }
-            if (p.snr  > maxSnr)  maxSnr  = p.snr;
-            if (p.rssi > maxRssi) maxRssi = p.rssi;
+            if (p.snr  != null && (maxSnr  == null || p.snr  > maxSnr))  maxSnr  = p.snr;
+            if (p.rssi != null && (maxRssi == null || p.rssi > maxRssi)) maxRssi = p.rssi;
             if (p.rawId) {
                 const r = this.idPrecision(p.rawId);
                 if (r < minPrec) minPrec = r;
@@ -1305,11 +1363,12 @@ class MeshCoreMonitor {
             const newData = this.allRepeaters.get(newKey);
             if (newData) {
                 const newer = oldData.lastSeen >= newData.lastSeen ? oldData : newData;
+                const mergeMax = (a, b) => a == null ? b : b == null ? a : Math.max(a, b);
                 this.allRepeaters.set(newKey, {
                     lastSeen:     Math.max(oldData.lastSeen, newData.lastSeen),
                     count:        oldData.count + newData.count,
-                    maxSnr:       Math.max(oldData.maxSnr,  newData.maxSnr),
-                    maxRssi:      Math.max(oldData.maxRssi, newData.maxRssi),
+                    maxSnr:       mergeMax(oldData.maxSnr,  newData.maxSnr),
+                    maxRssi:      mergeMax(oldData.maxRssi, newData.maxRssi),
                     lastSnr:      newer.lastSnr,
                     lastRssi:     newer.lastRssi,
                     minPrecision: Math.min(
@@ -1403,13 +1462,15 @@ class MeshCoreMonitor {
         this.allRepeaters.set(canonicalKey, {
             lastSeen:     now,
             count:        (existing?.count ?? 0) + 1,
-            maxSnr:       Math.max(existing?.maxSnr  ?? -Infinity, snr),
-            maxRssi:      Math.max(existing?.maxRssi ?? -Infinity, rssi),
-            lastSnr:      snr,
-            lastRssi:     rssi,
+            maxSnr:  snr  != null ? Math.max(existing?.maxSnr  ?? -Infinity, snr)  : (existing?.maxSnr  ?? null),
+            maxRssi: rssi != null ? Math.max(existing?.maxRssi ?? -Infinity, rssi) : (existing?.maxRssi ?? null),
+            lastSnr:  snr  != null ? snr  : (existing?.lastSnr  ?? null),
+            lastRssi: rssi != null ? rssi : (existing?.lastRssi ?? null),
             minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
         });
-        this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
+        if (snr != null || rssi != null) {
+            this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
+        }
         if (loc) this.signalMap?.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
 
         if (opts.importing) return;
@@ -1752,8 +1813,8 @@ class MeshCoreMonitor {
             header = `<div class="detail-sig">` +
                 `<b>${this.escHtml(this.displayId(col))}</b>` +
                 (timeStr ? ` &nbsp; <span class="detail-time">${timeStr}</span>` : '') +
-                ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi}</span>` +
-                ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr.toFixed(1)}</span>` +
+                ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi ?? '—'}</span>` +
+                ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr?.toFixed(1) ?? '—'}</span>` +
                 ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hexShort)}…</code>` +
                 `</div>`;
         }
@@ -1771,8 +1832,10 @@ class MeshCoreMonitor {
     buildSigCellsHtml(rssi, snr, hash, col) {
         const rc = this.signalColor(rssi, -70, -130);
         const sc = this.signalColor(snr,  13, -10, 0);
-        return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssi}</td>` +
-               `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:${sc}">${snr.toFixed(1)}</td>`;
+        const rssiStr = rssi != null ? rssi : '—';
+        const snrStr  = snr  != null ? snr.toFixed(1) : '—';
+        return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssiStr}</td>` +
+               `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:${sc}">${snrStr}</td>`;
     }
 
     scheduleChartRender() {
@@ -1814,6 +1877,7 @@ class MeshCoreMonitor {
         let vMin = Infinity, vMax = -Infinity;
         for (const p of pts) {
             const v = type === 'rssi' ? p.rssi : p.snr;
+            if (v == null) continue;
             if (v < vMin) vMin = v;
             if (v > vMax) vMax = v;
         }
@@ -1856,8 +1920,10 @@ class MeshCoreMonitor {
         const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
+            const v = type === 'rssi' ? p.rssi : p.snr;
+            if (v == null) continue;
             const dx = xOf(p.time) - mx;
-            const dy = yOf(type === 'rssi' ? p.rssi : p.snr) - my;
+            const dy = yOf(v) - my;
             const d = dx * dx + dy * dy;
             if (d < minDist) { minDist = d; nearest = p; }
         }
@@ -1964,19 +2030,21 @@ class MeshCoreMonitor {
 
         // Noise floor area (RSSI chart only) — drawn behind repeater lines/dots
         if (type === 'rssi' && hasData) {
-            const sorted = [...pts].sort((a, b) => a.time - b.time);
-            const bottom = (pt + ch).toFixed(1);
-            const lastP = sorted[sorted.length - 1];
-            const nfPts = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`);
-            nfPts.push(`${xOf(now)},${yOf(lastP.rssi - lastP.snr)}`);
-            const topEdge = nfPts.join(' ');
-            const firstX = xOf(sorted[0].time);
-            const lastX  = xOf(now);
-            parts.push(
-                `<polygon points="${topEdge} ${lastX},${bottom} ${firstX},${bottom}" ` +
-                `fill="rgba(140,140,140,0.15)"/>`,
-                `<polyline points="${topEdge}" fill="none" stroke="rgba(120,120,120,0.45)" stroke-width="1"/>`
-            );
+            const sorted = [...pts].filter(p => p.rssi != null && p.snr != null).sort((a, b) => a.time - b.time);
+            if (sorted.length > 0) {
+                const bottom = (pt + ch).toFixed(1);
+                const lastP = sorted[sorted.length - 1];
+                const nfPts = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`);
+                nfPts.push(`${xOf(now)},${yOf(lastP.rssi - lastP.snr)}`);
+                const topEdge = nfPts.join(' ');
+                const firstX = xOf(sorted[0].time);
+                const lastX  = xOf(now);
+                parts.push(
+                    `<polygon points="${topEdge} ${lastX},${bottom} ${firstX},${bottom}" ` +
+                    `fill="rgba(140,140,140,0.15)"/>`,
+                    `<polyline points="${topEdge}" fill="none" stroke="rgba(120,120,120,0.45)" stroke-width="1"/>`
+                );
+            }
         }
 
         const selected = this._chartSelected;
@@ -1995,12 +2063,13 @@ class MeshCoreMonitor {
         }
 
         for (const [col, dPts] of decimGroups) {
-            if (dPts.length < 2) continue;
+            const validPts = dPts.filter(p => valOf(p) != null);
+            if (validPts.length < 2) continue;
             const color = this.getRepeaterColor(col);
             const isHighlighted = !selected || selected === col;
             const strokeW = (selected && selected === col) ? 2.5 : 1;
             const strokeOp = isHighlighted ? 0.55 : 0.12;
-            const pointsStr = dPts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
+            const pointsStr = validPts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
             parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="${strokeW}" stroke-opacity="${strokeOp}"/>`);
         }
 
@@ -2008,6 +2077,7 @@ class MeshCoreMonitor {
         for (const [col, dPts] of decimGroups) {
             if (selected && selected === col) continue;
             for (const p of dPts) {
+                if (valOf(p) == null) continue;
                 parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${selected ? 0.07 : 0.85}"/>`);
             }
         }
@@ -2015,6 +2085,7 @@ class MeshCoreMonitor {
             const selPts = decimGroups.get(selected);
             if (selPts) {
                 for (const p of selPts) {
+                    if (valOf(p) == null) continue;
                     parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize * 1.43}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.92"/>`);
                 }
             }
@@ -2034,7 +2105,12 @@ class MeshCoreMonitor {
         }
         const visible = [...lastByCol.keys()].sort((a, b) => {
             const pa = lastByCol.get(a), pb = lastByCol.get(b);
-            return type === 'rssi' ? pb.rssi - pa.rssi : pb.snr - pa.snr;
+            const va = type === 'rssi' ? pa.rssi : pa.snr;
+            const vb = type === 'rssi' ? pb.rssi : pb.snr;
+            if (vb == null && va == null) return 0;
+            if (vb == null) return -1;
+            if (va == null) return 1;
+            return vb - va;
         });
 
         if (legend) {
@@ -2042,24 +2118,26 @@ class MeshCoreMonitor {
                 const c = this.getRepeaterColor(col);
                 const last = lastByCol.get(col);
                 const val = type === 'rssi' ? last.rssi : last.snr;
-                const valStr = type === 'rssi'
-                    ? `${val} dBm`
-                    : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
-                const isSelected = !selected || selected === col;
-                const isDimmed   = selected && selected !== col;
+                const valStr = val == null ? '—'
+                    : type === 'rssi'
+                        ? `${val} dBm`
+                        : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
                 const selClass   = !selected ? '' : (selected === col ? ' legend-item-selected' : ' legend-item-dimmed');
                 return {
-                    val,
+                    val: val ?? -Infinity,
                     html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span class="legend-dot" style="background:${c}"></span>${this.escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
                 };
             });
             if (type === 'rssi' && hasData) {
-                const lastPt = [...lastByCol.values()].reduce((a, b) => a.time > b.time ? a : b);
-                const nf = lastPt.rssi - lastPt.snr;
-                entries.push({
-                    val: nf,
-                    html: `<span class="legend-item"><span class="legend-nf"></span>Noise floor <span class="legend-val">(${nf} dBm)</span></span>`,
-                });
+                const nfPts = [...lastByCol.values()].filter(p => p.rssi != null && p.snr != null);
+                if (nfPts.length > 0) {
+                    const lastPt = nfPts.reduce((a, b) => a.time > b.time ? a : b);
+                    const nf = lastPt.rssi - lastPt.snr;
+                    entries.push({
+                        val: nf,
+                        html: `<span class="legend-item"><span class="legend-nf"></span>Noise floor <span class="legend-val">(${nf} dBm)</span></span>`,
+                    });
+                }
                 entries.sort((a, b) => b.val - a.val);
             }
             legend.innerHTML = entries.map(e => e.html).join('');
@@ -2120,8 +2198,10 @@ class MeshCoreMonitor {
 
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
+            const v = type === 'rssi' ? p.rssi : p.snr;
+            if (v == null) continue;
             const dx = xOf(p.time) - mx;
-            const dy = yOf(type === 'rssi' ? p.rssi : p.snr) - my;
+            const dy = yOf(v) - my;
             const d = dx * dx + dy * dy;
             if (d < minDist) { minDist = d; nearest = p; }
         }
@@ -2133,7 +2213,7 @@ class MeshCoreMonitor {
         this.tooltip.innerHTML =
             `${dot}<b>${this.escHtml(this.displayId(nearest.col))}</b><br>` +
             `${time}<br>` +
-            `RSSI ${nearest.rssi} &nbsp; SNR ${nearest.snr.toFixed(1)}`;
+            `RSSI ${nearest.rssi ?? '—'} &nbsp; SNR ${nearest.snr?.toFixed(1) ?? '—'}`;
 
         const tx = e.clientX + 14;
         const ty = e.clientY - 10;
@@ -2358,10 +2438,10 @@ class MeshCoreMonitor {
             return `<tr data-col="${this.escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
                 <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}</td>
                 <td class="rl-num">${d.count}</td>
-                <td class="rl-num" style="color:${mrc}">${d.maxRssi}</td>
-                <td class="rl-num" style="color:${lrc}">${d.lastRssi}</td>
-                <td class="rl-num" style="color:${msc}">${d.maxSnr.toFixed(1)}</td>
-                <td class="rl-num" style="color:${lsc}">${d.lastSnr.toFixed(1)}</td>
+                <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
+                <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
+                <td class="rl-num" style="color:${msc}">${d.maxSnr?.toFixed(1) ?? '—'}</td>
+                <td class="rl-num" style="color:${lsc}">${d.lastSnr?.toFixed(1) ?? '—'}</td>
                 <td class="rl-time">${this.formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
@@ -2523,10 +2603,11 @@ class MeshCoreMonitor {
 
     _updateBleBatteryVoltage(milliVolts) {
         if (!this.batteryEl || !this.device) return;
-        const volts = (milliVolts / 1000).toFixed(2);
-        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span>🔋${volts}V`;
+        // LiPo: 3000 mV = 0%, 4200 mV = 100%
+        const pct = Math.round(Math.min(100, Math.max(0, (milliVolts - 3000) / 1200 * 100)));
+        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span>🔋${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
-        if (milliVolts < 3300) this.batteryEl.classList.add('battery-low');
+        if (pct <= 20) this.batteryEl.classList.add('battery-low');
     }
 
     // --- Wake Lock ---

@@ -1662,3 +1662,13 @@ td.col-dim { opacity: 0.25; }
 }
 .corner-notice-btn-primary:hover { background: #5569d4; border-color: #4457c0; }
 
+.ping-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 0 8px;
+}
+.ping-hint {
+    font-size: 12px;
+    color: #888;
+}
