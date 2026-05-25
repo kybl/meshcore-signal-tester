@@ -24,6 +24,9 @@ class MeshCoreMonitor {
         this.chartColors = new Map();
         this._sentSnrHistory = []; // { time, snr, col, label }
         this._dscSeq = 0;
+        this._contacts = new Map(); // pubKeyFullHex → {name, type, lat, lon, lastAdvert, lastmod}
+        this._contactsLastmod = 0;
+        this._contactsReceiving = false;
         this._batteryCharacteristic = null;
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
@@ -829,6 +832,7 @@ class MeshCoreMonitor {
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
+        await this.sendGetContacts();
 
         // Try to read BLE device battery (standard Battery Service 0x180F)
         if (this.device && server) {
@@ -879,6 +883,55 @@ class MeshCoreMonitor {
         // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
         const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
         await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
+    }
+
+    async sendGetContacts() {
+        if (!this.bleRxCharacteristic) return;
+        // CMD_GET_CONTACTS = 0x04; optional 4-byte LE lastmod for incremental sync
+        const cmd = new Uint8Array(this._contactsLastmod > 0 ? 5 : 1);
+        cmd[0] = 0x04;
+        if (this._contactsLastmod > 0)
+            new DataView(cmd.buffer).setUint32(1, this._contactsLastmod, true);
+        try { await this.bleRxCharacteristic.writeValueWithoutResponse(cmd); }
+        catch (e) { console.error('sendGetContacts:', e); }
+    }
+
+    _parseContact(payload) {
+        // byte 0 = code (0x03 RESP_CODE_CONTACT or 0x8A PUSH_CODE_NEW_ADVERT)
+        // bytes 1-32  = pub_key
+        // byte 33     = type (1=Chat 2=Repeater 3=RoomSrv 4=Sensor)
+        // byte 34     = flags, byte 35 = path_len
+        // bytes 36-99 = out_path (64 B)
+        // bytes 100-131 = adv_name (32 B, null-terminated UTF-8)
+        // bytes 132-135 = last_advert (uint32 LE)
+        // bytes 136-139 = lat (int32 LE / 1e6)
+        // bytes 140-143 = lon (int32 LE / 1e6)
+        // bytes 144-147 = lastmod (uint32 LE)
+        if (payload.length < 148) return;
+        const pubKey = payload.slice(1, 33);
+        const pubKeyFull = Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('');
+        const type = payload[33];
+        let name = '';
+        for (let i = 100; i < 132 && payload[i] !== 0; i++)
+            name += String.fromCharCode(payload[i]);
+        const dv = new DataView(payload.buffer, payload.byteOffset);
+        const lastAdvert = dv.getUint32(132, true);
+        const lat = dv.getInt32(136, true) / 1e6;
+        const lon = dv.getInt32(140, true) / 1e6;
+        const lastmod = dv.getUint32(144, true);
+        this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod });
+        if (lastmod > this._contactsLastmod) this._contactsLastmod = lastmod;
+        // Keep the AD stub's name in sync
+        const pubKeyHex = pubKeyFull.slice(0, 6).toUpperCase();
+        const stub = this.hashData.get('AD:' + pubKeyHex);
+        if (stub?._stub && name) stub.meta.name = name;
+    }
+
+    _contactByPrefix(hexPrefix) {
+        const p = hexPrefix.toLowerCase();
+        for (const [key, val] of this._contacts)
+            if (key.startsWith(p)) return val;
+        return null;
     }
 
     // Send DISCOVER_REQ 4 times with 500 ms gaps — LoRa is lossy, repeating improves coverage.
@@ -988,6 +1041,23 @@ class MeshCoreMonitor {
             }
             return;
         }
+
+        // Contact list responses (from CMD_GET_CONTACTS = 0x04)
+        if (pushCode === 0x02) { this._contactsReceiving = true; return; }
+        if (pushCode === 0x03) {
+            if (this._contactsReceiving) this._parseContact(payload);
+            return;
+        }
+        if (pushCode === 0x04 && this._contactsReceiving) {
+            this._contactsReceiving = false;
+            if (payload.length >= 5)
+                this._contactsLastmod = new DataView(payload.buffer, payload.byteOffset).getUint32(1, true);
+            this.renderMsgTable();
+            this.scheduleChartRender();
+            return;
+        }
+        // PUSH_CODE_NEW_ADVERT = 0x8A — device heard an advert from a node not yet in contacts
+        if (pushCode === 0x8a) { this._parseContact(payload); return; }
 
         // PUSH_CODE_CONTROL_DATA (0x8E) may carry a DISCOVER_RESP (ctl_type 0x9X)
         // Format: [0x8E, snr*4, rssi, path_len, ctl_type, ...payload]
@@ -1939,10 +2009,24 @@ class MeshCoreMonitor {
         let metaHtml = '';
         if (data.meta?.pubKeyFull) {
             const pk = data.meta.pubKeyFull.toUpperCase().match(/.{1,8}/g).join(' ');
+            const contact = this._contacts.get(data.meta.pubKeyFull);
+            const name = contact?.name ?? data.meta.name ?? null;
+            const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'Room server', 4: 'Sensor' };
+            const typeName = contact?.type != null ? (TYPE_NAMES[contact.type] ?? `Type ${contact.type}`) : null;
+            const nameStr = name ? `<b>${this.escHtml(name)}</b>` + (typeName ? ` <span style="color:#888">(${this.escHtml(typeName)})</span>` : '') + ' &nbsp; ' : '';
             const rs = data.meta.remoteSnr;
             const remoteStr = rs != null
-                ? ` &nbsp; <b>Uplink SNR: <span style="color:${this.signalColor(rs, 13, -10, 0)}">${rs.toFixed(1)} dB</span></b>` : '';
-            metaHtml = `<div class="detail-pubkey">Public key: <code>${pk}</code>${remoteStr}</div>`;
+                ? `Uplink SNR: <span style="color:${this.signalColor(rs, 13, -10, 0)};font-weight:700">${rs.toFixed(1)} dB</span> &nbsp; ` : '';
+            metaHtml = `<div class="detail-pubkey">${nameStr}${remoteStr}Key: <code>${pk}</code></div>`;
+        } else if (col) {
+            // Column header click — try to show name for the repeater column
+            const contact = this._contactByPrefix(col);
+            if (contact?.name) {
+                const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'Room server', 4: 'Sensor' };
+                const typeName = TYPE_NAMES[contact.type] ?? null;
+                metaHtml = `<div class="detail-pubkey"><b>${this.escHtml(contact.name)}</b>` +
+                    (typeName ? ` <span style="color:#888">(${this.escHtml(typeName)})</span>` : '') + `</div>`;
+            }
         }
 
         return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${metaHtml}${jsonHtml}</div></td>`;
