@@ -261,7 +261,7 @@ class MeshCoreMonitor {
             this._clearAllData();
         });
 
-        document.getElementById('discoverBtn')?.addEventListener('click', () => this.sendDiscoverRequest(0x0F));
+        document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F));
 
         this.soundSelect?.addEventListener('change', () => {
             try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
@@ -882,21 +882,47 @@ class MeshCoreMonitor {
         await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
     }
 
-    async sendDiscoverRequest(filterMask) {
+    // Send DISCOVER_REQ 4 times with 500 ms gaps — LoRa is lossy, repeating improves coverage.
+    // All retries share the same tag so every response is correlated correctly.
+    async startDiscoverSequence(filterMask) {
+        if (!this.bleRxCharacteristic) return;
+        if (this._discoverActive) return; // prevent double-click overlap
+
+        const btn = document.getElementById('discoverBtn');
+        const REPEATS = 4;
+        const INTERVAL_MS = 500;
+        this._discoverActive = true;
+
+        const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
+        if (!this._discoverTags) this._discoverTags = new Map();
+        this._discoverTags.set(tag, Date.now());
+        // Prune tags older than 30 s
+        for (const [t, ts] of this._discoverTags)
+            if (Date.now() - ts > 30000) this._discoverTags.delete(t);
+
+        for (let i = 0; i < REPEATS; i++) {
+            if (i > 0) await new Promise(r => setTimeout(r, INTERVAL_MS));
+            await this.sendDiscoverRequest(filterMask, tag);
+            if (btn) btn.textContent = `Discovering… (${i + 1}/${REPEATS})`;
+        }
+
+        // Keep button showing "Discovering…" for a further 2 s to collect late responses
+        await new Promise(r => setTimeout(r, 2000));
+        if (btn) btn.textContent = 'Discover nodes';
+        this._discoverActive = false;
+    }
+
+    async sendDiscoverRequest(filterMask, tag) {
         if (!this.bleRxCharacteristic) return;
         // CMD_SEND_CONTROL_DATA (0x37) + CTL_TYPE_NODE_DISCOVER_REQ (0x80) + filter + tag (4 B LE)
         // filter bits: 0=Chat, 1=Repeater, 2=Room, 3=Sensor
-        const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
+        if (tag === undefined) tag = (Math.random() * 0xFFFFFFFF) >>> 0;
         const bytes = new Uint8Array([
             0x37, 0x80, filterMask & 0x0F,
             tag & 0xFF, (tag >>> 8) & 0xFF, (tag >>> 16) & 0xFF, (tag >>> 24) & 0xFF,
         ]);
         if (!this._discoverTags) this._discoverTags = new Map();
         this._discoverTags.set(tag, Date.now());
-        // Prune tags older than 30 s
-        for (const [t, ts] of this._discoverTags) {
-            if (Date.now() - ts > 30000) this._discoverTags.delete(t);
-        }
         try {
             await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
         } catch (e) {
