@@ -1036,7 +1036,7 @@ class MeshCoreMonitor {
         let name = '';
         for (let i = 34; i < payload.length && payload[i] !== 0; i++)
             name += String.fromCharCode(payload[i]);
-        const pubKeyHex = Array.from(pubKey.slice(0, 6))
+        const pubKeyHex = Array.from(pubKey.slice(0, 3))
             .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
         const pubKeyFull = Array.from(pubKey)
             .map(b => b.toString(16).padStart(2, '0')).join('');
@@ -1071,7 +1071,7 @@ class MeshCoreMonitor {
 
         const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'RoomSrv', 4: 'Sensor' };
         const typeName = TYPE_NAMES[advType] ?? `Adv${advType}`;
-        const pubKeyHex = Array.from(pubKey.slice(0, 6))
+        const pubKeyHex = Array.from(pubKey.slice(0, 3))
             .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
         const pubKeyFull = pubKeyLen === 32
             ? Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('')
