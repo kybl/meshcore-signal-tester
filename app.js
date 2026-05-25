@@ -261,7 +261,7 @@ class MeshCoreMonitor {
             this._clearAllData();
         });
 
-        document.getElementById('pingBtn')?.addEventListener('click', () => this.sendSelfAdvert());
+        document.getElementById('discoverBtn')?.addEventListener('click', () => this.sendDiscoverRequest(0x0F));
 
         this.soundSelect?.addEventListener('change', () => {
             try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
@@ -882,12 +882,25 @@ class MeshCoreMonitor {
         await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
     }
 
-    async sendSelfAdvert() {
+    async sendDiscoverRequest(filterMask) {
         if (!this.bleRxCharacteristic) return;
+        // CMD_SEND_CONTROL_DATA (0x37) + CTL_TYPE_NODE_DISCOVER_REQ (0x80) + filter + tag (4 B LE)
+        // filter bits: 0=Chat, 1=Repeater, 2=Room, 3=Sensor
+        const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
+        const bytes = new Uint8Array([
+            0x37, 0x80, filterMask & 0x0F,
+            tag & 0xFF, (tag >>> 8) & 0xFF, (tag >>> 16) & 0xFF, (tag >>> 24) & 0xFF,
+        ]);
+        if (!this._discoverTags) this._discoverTags = new Map();
+        this._discoverTags.set(tag, Date.now());
+        // Prune tags older than 30 s
+        for (const [t, ts] of this._discoverTags) {
+            if (Date.now() - ts > 30000) this._discoverTags.delete(t);
+        }
         try {
-            await this.bleRxCharacteristic.writeValueWithoutResponse(new Uint8Array([0x07, 0x00]));
+            await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
         } catch (e) {
-            console.error('sendSelfAdvert:', e);
+            console.error('sendDiscoverRequest:', e);
         }
     }
 
@@ -980,6 +993,12 @@ class MeshCoreMonitor {
             return;
         }
 
+        // PUSH_CODE_CONTROL_DATA (0x8E) may carry a DISCOVER_RESP (ctl_type 0x9X)
+        // Format: [0x8E, snr*4, rssi, path_len, ctl_type, ...payload]
+        if (pushCode === 0x8e && payload.length >= 5 && (payload[4] & 0xF0) === 0x90) {
+            this._handleDiscoverResp(payload);
+            return;
+        }
         // Only the three known LoRa RX push codes carry the SNR/RSSI/path
         // layout we trust. Everything else is silently ignored.
         let loraPacket;
@@ -1031,6 +1050,44 @@ class MeshCoreMonitor {
         const uplinkSnr = existing?.meta?.uplinkSnr ?? null;
         const meta = { name: name || null, advType, pubKeyHex, pubKeyFull, uplinkSnr };
         this.addRxEntry(hash, 'direct', typeName + ' AD', null, null, null, meta, null);
+    }
+
+    _handleDiscoverResp(payload) {
+        // Outer 0x8E header: [code, snr*4, rssi, path_len]
+        // Inner control_data: [0x9X (X=adv_type), snr_remote, tag(4 LE), pub_key (32 or 8)]
+        const ourSnrByte = payload[1];
+        const ourSnr  = (ourSnrByte > 127 ? ourSnrByte - 256 : ourSnrByte) / 4;
+        const ourRssiByte = payload[2];
+        const ourRssi = ourRssiByte > 127 ? ourRssiByte - 256 : ourRssiByte;
+        const ctlType = payload[4];
+        const advType = ctlType & 0x0F;
+        const remoteSnrByte = payload[5];
+        const remoteSnr = (remoteSnrByte > 127 ? remoteSnrByte - 256 : remoteSnrByte) / 4;
+        const tag = (payload[6] | (payload[7] << 8) | (payload[8] << 16) | (payload[9] << 24)) >>> 0;
+        const pubKeyLen = payload.length - 10;
+        if (pubKeyLen !== 32 && pubKeyLen !== 8) return;
+        const pubKey = payload.slice(10, 10 + pubKeyLen);
+
+        const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'RoomSrv', 4: 'Sensor' };
+        const typeName = TYPE_NAMES[advType] ?? `Adv${advType}`;
+        const pubKeyHex = Array.from(pubKey.slice(0, 6))
+            .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+        const pubKeyFull = pubKeyLen === 32
+            ? Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('')
+            : null;
+        const hash = 'AD:' + pubKeyHex;
+        const existing = this.hashData.get(hash);
+        const tagKnown = this._discoverTags?.has(tag);
+        const meta = {
+            name: existing?.meta?.name ?? null,
+            advType,
+            pubKeyHex,
+            pubKeyFull: pubKeyFull ?? existing?.meta?.pubKeyFull ?? null,
+            uplinkSnr: remoteSnr,
+            tag,
+            tagKnown,
+        };
+        this.addRxEntry(hash, 'direct', typeName + ' DSC', null, ourSnr, ourRssi, meta, null);
     }
 
     _handleTracePush(payload) {
