@@ -899,9 +899,19 @@ class MeshCoreMonitor {
         for (let i = 0; i < 32; i++)
             bytes[2 + i] = parseInt(pubKeyFullHex.slice(i * 2, i * 2 + 2), 16);
         this._pendingDiscovery = { hash, time: Date.now() };
-        // Mark row as waiting
         const data = this.hashData.get(hash);
         if (data?.meta) { data.meta.uplinkSnr = 'pending'; this.renderMsgTable(); }
+        // Reset to ↑? after 12 s if no 0x89 response arrives
+        setTimeout(() => {
+            if (this._pendingDiscovery?.hash === hash) {
+                this._pendingDiscovery = null;
+                const d = this.hashData.get(hash);
+                if (d?.meta && d.meta.uplinkSnr === 'pending') {
+                    d.meta.uplinkSnr = null;
+                    this.renderMsgTable();
+                }
+            }
+        }, 12000);
         try {
             await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
         } catch (e) {
@@ -1880,8 +1890,16 @@ class MeshCoreMonitor {
         const jsonHtml = pkt
             ? `<pre class="detail-json">${this.syntaxHighlightJson(this.formatPacketDetail(pkt))}</pre>`
             : '';
+        let metaHtml = '';
+        if (data.meta?.pubKeyFull) {
+            const pk = data.meta.pubKeyFull.toUpperCase().match(/.{1,8}/g).join(' ');
+            const u = data.meta.uplinkSnr;
+            const uplinkStr = (u != null && u !== 'pending')
+                ? ` &nbsp; <b>Uplink SNR: <span style="color:${this.signalColor(u, 13, -10, 0)}">${u.toFixed(1)} dB</span></b>` : '';
+            metaHtml = `<div class="detail-pubkey">Public key: <code>${pk}</code>${uplinkStr}</div>`;
+        }
 
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${jsonHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${metaHtml}${jsonHtml}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr, hash, col) {
