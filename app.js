@@ -1085,6 +1085,7 @@ class MeshCoreMonitor {
         const ourSnr  = (ourSnrByte > 127 ? ourSnrByte - 256 : ourSnrByte) / 4;
         const ourRssiByte = payload[2];
         const ourRssi = ourRssiByte > 127 ? ourRssiByte - 256 : ourRssiByte;
+        const pathLen = payload[3];
         const ctlType = payload[4];
         const advType = ctlType & 0x0F;
         const remoteSnrByte = payload[5];
@@ -1113,7 +1114,20 @@ class MeshCoreMonitor {
             tag,
             tagKnown,
         };
-        this.addRxEntry(hash, 'direct', typeName + ' DSC', null, ourSnr, ourRssi, meta, null);
+
+        // If the responding node already has an AD entry, put the DSC in the same
+        // repeater column so they appear side-by-side in the table. Fall back to
+        // 'direct' when path_len==0 (no relay hop) or no prior AD exists.
+        let repeaterCol = 'direct';
+        if (existing?.repeaters?.size) {
+            // Use the column key that already exists for this hash
+            repeaterCol = existing.repeaters.keys().next().value;
+        } else if (pathLen > 0) {
+            repeaterCol = 'mesh'; // relayed but origin unknown
+        }
+
+        const rawHex = Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join('');
+        this.addRxEntry(hash, repeaterCol, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null);
     }
 
     _handleTracePush(payload) {
