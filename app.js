@@ -22,6 +22,8 @@ class MeshCoreMonitor {
         this.hashCounter = 0;
         this.chartPoints = [];
         this.chartColors = new Map();
+        this._sentSnrHistory = []; // { time, snr, col, label }
+        this._dscSeq = 0;
         this._batteryCharacteristic = null;
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
@@ -72,6 +74,9 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
+        this.sentSnrChartWrap  = document.getElementById('sentSnrChartWrap');
+        this.sentSnrChartSvg   = document.getElementById('sentSnrChart');
+        this.sentSnrChartLegend = document.getElementById('sentSnrChartLegend');
         if (typeof ResizeObserver !== 'undefined') {
             const obs = new ResizeObserver(() => this.scheduleChartRender());
             document.querySelectorAll('.chart-svg-wrap').forEach(el => obs.observe(el));
@@ -129,12 +134,6 @@ class MeshCoreMonitor {
             });
             this.msgTableBody.addEventListener('mouseleave', () => {
                 this.msgTableBody.querySelectorAll('.sig-pair-hover').forEach(el => el.classList.remove('sig-pair-hover'));
-            });
-            this.msgTableBody.addEventListener('click', e => {
-                const btn = e.target.closest('.path-btn');
-                if (!btn) return;
-                e.stopPropagation();
-                this.sendPathDiscovery(btn.dataset.hash, btn.dataset.pubkey);
             });
         }
 
@@ -930,35 +929,6 @@ class MeshCoreMonitor {
         }
     }
 
-    async sendPathDiscovery(hash, pubKeyFullHex) {
-        if (!this.bleRxCharacteristic) return;
-        const bytes = new Uint8Array(34);
-        bytes[0] = 0x34;
-        bytes[1] = 0x00;
-        for (let i = 0; i < 32; i++)
-            bytes[2 + i] = parseInt(pubKeyFullHex.slice(i * 2, i * 2 + 2), 16);
-        this._pendingDiscovery = { hash, time: Date.now() };
-        const data = this.hashData.get(hash);
-        if (data?.meta) { data.meta.uplinkSnr = 'pending'; this.renderMsgTable(); }
-        // Reset to ↑? after 12 s if no 0x89 response arrives
-        setTimeout(() => {
-            if (this._pendingDiscovery?.hash === hash) {
-                this._pendingDiscovery = null;
-                const d = this.hashData.get(hash);
-                if (d?.meta && d.meta.uplinkSnr === 'pending') {
-                    d.meta.uplinkSnr = null;
-                    this.renderMsgTable();
-                }
-            }
-        }, 12000);
-        try {
-            await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
-        } catch (e) {
-            console.error('sendPathDiscovery:', e);
-            if (data?.meta) { data.meta.uplinkSnr = null; this.renderMsgTable(); }
-        }
-    }
-
     // --- Saved devices (localStorage) ---
 
     getSavedDevices() {
@@ -1070,12 +1040,16 @@ class MeshCoreMonitor {
             .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
         const pubKeyFull = Array.from(pubKey)
             .map(b => b.toString(16).padStart(2, '0')).join('');
+        // Store advert metadata for later DSC correlation (name lookup etc.) without
+        // adding a row to Received Packets.
         const hash = 'AD:' + pubKeyHex;
-        // Preserve uplinkSnr across repeated adverts from same node
         const existing = this.hashData.get(hash);
-        const uplinkSnr = existing?.meta?.uplinkSnr ?? null;
-        const meta = { name: name || null, advType, pubKeyHex, pubKeyFull, uplinkSnr };
-        this.addRxEntry(hash, 'direct', typeName + ' AD', null, null, null, meta, null);
+        if (existing) {
+            existing.meta = { ...existing.meta, name: name || existing.meta?.name || null, advType, pubKeyFull };
+        } else {
+            // Lightweight stub — not shown in the table (no addRxEntry)
+            this.hashData.set(hash, { repeaters: new Map(), firstSeen: Date.now(), lastSeen: Date.now(), insertOrder: 0, type: typeName + ' AD', rawHex: null, meta: { name: name || null, advType, pubKeyHex, pubKeyFull }, packet: null });
+        }
     }
 
     _handleDiscoverResp(payload) {
@@ -1102,32 +1076,30 @@ class MeshCoreMonitor {
         const pubKeyFull = pubKeyLen === 32
             ? Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('')
             : null;
-        const hash = 'AD:' + pubKeyHex;
-        const existing = this.hashData.get(hash);
+        const adHash = 'AD:' + pubKeyHex;
+        const existing = this.hashData.get(adHash);
         const tagKnown = this._discoverTags?.has(tag);
+        const nodeName = existing?.meta?.name ?? null;
         const meta = {
-            name: existing?.meta?.name ?? null,
+            name: nodeName,
             advType,
             pubKeyHex,
             pubKeyFull: pubKeyFull ?? existing?.meta?.pubKeyFull ?? null,
-            uplinkSnr: remoteSnr,
+            remoteSnr,
             tag,
             tagKnown,
         };
 
-        // If the responding node already has an AD entry, put the DSC in the same
-        // repeater column so they appear side-by-side in the table. Fall back to
-        // 'direct' when path_len==0 (no relay hop) or no prior AD exists.
-        let repeaterCol = 'direct';
-        if (existing?.repeaters?.size) {
-            // Use the column key that already exists for this hash
-            repeaterCol = existing.repeaters.keys().next().value;
-        } else if (pathLen > 0) {
-            repeaterCol = 'mesh'; // relayed but origin unknown
-        }
+        // Record uplink SNR in the Sent SNR History chart
+        this._sentSnrHistory.push({ time: Date.now(), snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex });
+        this.scheduleChartRender();
 
+        // Each DSC response → new row in Received Packets (same node can respond to
+        // multiple retries; always use current time so order is correct).
+        // Column = the responding node's pub key prefix so all its DSC responses share one column.
+        const dscHash = 'DSC:' + (++this._dscSeq);
         const rawHex = Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join('');
-        this.addRxEntry(hash, repeaterCol, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null);
+        this.addRxEntry(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null);
     }
 
     _handleTracePush(payload) {
@@ -1141,17 +1113,6 @@ class MeshCoreMonitor {
         for (let i = 0; i <= pathLen; i++) {
             const b = payload[12 + pathLen + i];
             snrs.push((b > 127 ? b - 256 : b) / 4);
-        }
-        // Correlate with a pending path discovery (CMD_SEND_PATH_DISCOVERY_REQ 0x34)
-        // path_snrs[0] = SNR at first hop = how well the target repeater heard us (uplink)
-        if (this._pendingDiscovery && Date.now() - this._pendingDiscovery.time < 10000) {
-            const adData = this.hashData.get(this._pendingDiscovery.hash);
-            if (adData?.meta) {
-                adData.meta.uplinkSnr = snrs[0];
-                this.renderMsgTable();
-            }
-            this._pendingDiscovery = null;
-            return;
         }
         // Last path hash = last repeater before destination
         const lastHash = pathLen > 0 ? payload[12 + pathLen - 1] : null;
@@ -1844,21 +1805,9 @@ class MeshCoreMonitor {
         const typeDisplay = this._useAbbreviatedTypes
             ? this.escHtml(this.abbreviateType(data.type))
             : this.escHtml(data.type || '?');
-        let pathWidget = '';
-        if (data.meta?.pubKeyFull) {
-            const u = data.meta.uplinkSnr;
-            if (u === 'pending') {
-                pathWidget = `<span class="path-pending" title="Waiting for response…">↑…</span>`;
-            } else if (u != null) {
-                const color = this.signalColor(u, 13, -10, 0);
-                pathWidget = `<span class="path-snr" style="color:${color}" title="Uplink SNR (repeater heard you)">↑${u.toFixed(1)}</span>`;
-            } else {
-                pathWidget = `<button class="path-btn" data-hash="${this.escHtml(hash)}" data-pubkey="${data.meta.pubKeyFull}" title="Send path discovery — measure uplink SNR">↑?</button>`;
-            }
-        }
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>${pathWidget}
+                <span class="rx-time">${this.formatTime(data.firstSeen)}</span><span class="rx-type" title="${this.escHtml(data.type || '?')}">${typeDisplay}</span>
             </td>
             ${cells}
         </tr>`;
@@ -1990,10 +1939,10 @@ class MeshCoreMonitor {
         let metaHtml = '';
         if (data.meta?.pubKeyFull) {
             const pk = data.meta.pubKeyFull.toUpperCase().match(/.{1,8}/g).join(' ');
-            const u = data.meta.uplinkSnr;
-            const uplinkStr = (u != null && u !== 'pending')
-                ? ` &nbsp; <b>Uplink SNR: <span style="color:${this.signalColor(u, 13, -10, 0)}">${u.toFixed(1)} dB</span></b>` : '';
-            metaHtml = `<div class="detail-pubkey">Public key: <code>${pk}</code>${uplinkStr}</div>`;
+            const rs = data.meta.remoteSnr;
+            const remoteStr = rs != null
+                ? ` &nbsp; <b>Uplink SNR: <span style="color:${this.signalColor(rs, 13, -10, 0)}">${rs.toFixed(1)} dB</span></b>` : '';
+            metaHtml = `<div class="detail-pubkey">Public key: <code>${pk}</code>${remoteStr}</div>`;
         }
 
         return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${metaHtml}${jsonHtml}</div></td>`;
@@ -2039,6 +1988,7 @@ class MeshCoreMonitor {
         }
         this.renderChart('rssi');
         this.renderChart('snr');
+        this.renderSentSnrChart();
     }
 
     _chartYBounds(type) {
@@ -2314,6 +2264,113 @@ class MeshCoreMonitor {
         }
     }
 
+    renderSentSnrChart() {
+        const svg = this.sentSnrChartSvg;
+        const legend = this.sentSnrChartLegend;
+        if (!svg) return;
+        this.sentSnrChartWrap?.classList.remove('hidden');
+
+        const pts = this._sentSnrHistory;
+        const hasData = pts.length > 0;
+
+        const W = svg.clientWidth || 600;
+        const H = svg.clientHeight || 180;
+        const pl = 36, pr = 8, pt = 6, pb = 24;
+        const cw = W - pl - pr;
+        const ch = H - pt - pb;
+
+        const now = this._chartFrozenAt ?? Date.now();
+        const defaultWindow = 5 * 60000;
+        const tMin = hasData
+            ? (isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : pts.reduce((m, p) => Math.min(m, p.time), Infinity))
+            : now - defaultWindow;
+        const tRange = Math.max(1, now - tMin);
+
+        let vMin = Infinity, vMax = -Infinity;
+        if (hasData) {
+            for (const p of pts) { if (p.snr < vMin) vMin = p.snr; if (p.snr > vMax) vMax = p.snr; }
+        } else { vMin = -20; vMax = 15; }
+        const rawRange = vMax - vMin || 1;
+        const pad = rawRange * 0.15;
+        vMin = Math.floor((vMin - pad) / 5) * 5;
+        vMax = Math.ceil((vMax + pad) / 5) * 5;
+        const yStep = Math.ceil((vMax - vMin) / 6 / 5) * 5 || 5;
+        const yRange = Math.max(1e-9, vMax - vMin);
+
+        const xOf = t => (pl + (t - tMin) / tRange * cw).toFixed(1);
+        const yOf = v => (pt + (1 - (v - vMin) / yRange) * ch).toFixed(1);
+
+        const parts = [];
+
+        for (let y = vMin + yStep / 2; y < vMax; y += yStep)
+            parts.push(`<line x1="${pl}" y1="${yOf(y)}" x2="${pl + cw}" y2="${yOf(y)}" stroke="#f5f5f5" stroke-width="1"/>`);
+        for (let y = vMin; y <= vMax; y += yStep) {
+            const yp = yOf(y);
+            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#e8e8e8" stroke-width="1"/>`);
+            parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${y}</text>`);
+        }
+        const yLabelCy = (pt + ch / 2).toFixed(1);
+        parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="#aaa" transform="rotate(-90,10,${yLabelCy})">dB</text>`);
+
+        const labelStep = this._xLabelStepMs(tRange, cw);
+        const minorStep = labelStep / 2;
+        const useDate = tRange > 12 * 3600000;
+        const fmtOpts = useDate
+            ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+            : (labelStep < 60000 ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
+        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= now; t += minorStep) {
+            if (t % labelStep === 0) continue;
+            parts.push(`<line x1="${xOf(t)}" y1="${pt}" x2="${xOf(t)}" y2="${pt + ch}" stroke="#f5f5f5" stroke-width="1"/>`);
+        }
+        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= now; t += labelStep) {
+            const xp = xOf(t);
+            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#e8e8e8" stroke-width="1"/>`);
+            const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
+            parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="#bbb">${lbl}</text>`);
+        }
+
+        parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
+        parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
+
+        if (hasData) {
+            const groups = new Map();
+            for (const p of pts) {
+                if (!groups.has(p.col)) groups.set(p.col, []);
+                groups.get(p.col).push(p);
+            }
+            for (const [col, colPts] of groups) {
+                colPts.sort((a, b) => a.time - b.time);
+                const color = this.getRepeaterColor(col);
+                if (colPts.length >= 2) {
+                    const pointsStr = colPts.map(p => `${xOf(p.time)},${yOf(p.snr)}`).join(' ');
+                    parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.55"/>`);
+                }
+                for (const p of colPts)
+                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(p.snr)}" r="${this._dotSize}" fill="${color}" fill-opacity="0.85"/>`);
+            }
+
+            if (legend) {
+                const lastByCol = new Map();
+                for (const p of pts)
+                    if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
+                const sorted = [...lastByCol.keys()].sort((a, b) => lastByCol.get(b).snr - lastByCol.get(a).snr);
+                legend.innerHTML = sorted.map(col => {
+                    const last = lastByCol.get(col);
+                    const c = this.getRepeaterColor(col);
+                    const valStr = `${last.snr >= 0 ? '+' : ''}${last.snr.toFixed(1)} dB`;
+                    const displayName = last.label && last.label !== col ? this.escHtml(last.label) : this.escHtml(col);
+                    return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${displayName} <span class="legend-val">(${valStr})</span></span>`;
+                }).join('');
+            }
+        } else {
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="#bbb">Waiting for data…</text>`);
+            if (legend) legend.innerHTML = '';
+        }
+
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.innerHTML = parts.join('');
+    }
+
     _decimateChartPts(colPts, tMin, tMax, pixelWidth, type) {
         const buckets = Math.max(1, Math.floor(pixelWidth));
         if (colPts.length <= buckets * 2) return colPts;
@@ -2415,6 +2472,7 @@ class MeshCoreMonitor {
                 const cutoff = now - this.HASH_LIFETIME;
                 const before = this.chartPoints.length;
                 this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
+                this._sentSnrHistory = this._sentSnrHistory.filter(p => p.time >= cutoff);
                 if (this.chartPoints.length !== before) this._rebuildAfterPrune();
             }
             const prev = this.repeaterColumns.join('|');
@@ -2436,6 +2494,7 @@ class MeshCoreMonitor {
             }
             if (isFinite(this.HASH_LIFETIME)) {
                 this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
+                this._sentSnrHistory = this._sentSnrHistory.filter(p => p.time >= cutoff);
             }
             this.signalMap?.purgeOlderThan(cutoff);
             this._rebuildAfterPrune();
@@ -2528,6 +2587,8 @@ class MeshCoreMonitor {
     _clearAllData() {
         this.hashData.clear();
         this.chartPoints = [];
+        this._sentSnrHistory = [];
+        this._dscSeq = 0;
         this.repeaterColumns = [];
         this.allRepeaters.clear();
         this._chartSelected = null;

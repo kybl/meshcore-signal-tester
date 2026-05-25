@@ -109,6 +109,29 @@
                 </div>
             </div>
 
+            <div class="ping-bar" id="discoverBar">
+                <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ 4× — nearby nodes reply with both uplink and downlink SNR (firmware ≥ v1.10)">Discover nodes</button>
+                <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and both SNR directions.</span>
+            </div>
+
+            <div class="section-wrap" id="sentSnrChartWrap">
+                <div class="section-header">
+                    <span class="section-title">Sent SNR history</span>
+                    <button class="collapse-btn" data-target="sentSnrChartBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="sentSnrChartBody">
+                    <div class="chart-box">
+                        <div class="chart-svg-wrap">
+                            <svg id="sentSnrChart" class="rssi-chart"></svg>
+                        </div>
+                        <div class="chart-legend-wrap" id="sentSnrLegendWrap">
+                            <button class="legend-toggle-btn" data-wrap="sentSnrLegendWrap" data-key="legend-sentsnr">▾ Legend</button>
+                            <div id="sentSnrChartLegend" class="chart-legend"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="section-wrap" id="signalMapWrap">
                 <div class="section-header">
                     <span class="section-title">Signal 3D map<span class="help-icon" data-help="signal3d">?</span></span>
@@ -151,11 +174,6 @@
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <div class="ping-bar" id="pingBar">
-                <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ 4× — nearby nodes reply with both uplink and downlink SNR (firmware ≥ v1.10)">Discover nodes</button>
-                <span class="ping-hint">Sends a zero-hop discovery request — nearby nodes reply with their public key and both directions of SNR.</span>
             </div>
 
             <div class="section-wrap" id="msgTableWrap">
