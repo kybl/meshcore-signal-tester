@@ -1048,7 +1048,7 @@ class MeshCoreMonitor {
             existing.meta = { ...existing.meta, name: name || existing.meta?.name || null, advType, pubKeyFull };
         } else {
             // Lightweight stub — not shown in the table (no addRxEntry)
-            this.hashData.set(hash, { repeaters: new Map(), firstSeen: Date.now(), lastSeen: Date.now(), insertOrder: 0, type: typeName + ' AD', rawHex: null, meta: { name: name || null, advType, pubKeyHex, pubKeyFull }, packet: null });
+            this.hashData.set(hash, { _stub: true, repeaters: new Map(), firstSeen: Date.now(), lastSeen: Date.now(), insertOrder: 0, type: typeName + ' AD', rawHex: null, meta: { name: name || null, advType, pubKeyHex, pubKeyFull }, packet: null });
         }
     }
 
@@ -1700,7 +1700,7 @@ class MeshCoreMonitor {
         const filter = this._msgFilter.toLowerCase().trim();
         const displayCutoff = this._displayCutoffNow();
         const allRows = Array.from(this.hashData.entries())
-            .filter(([, data]) => !displayCutoff || data.lastSeen >= displayCutoff)
+            .filter(([, data]) => !data._stub && (!displayCutoff || data.lastSeen >= displayCutoff))
             .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
 
         // Only include columns that actually appear in the visible rows (respects display cutoff)
