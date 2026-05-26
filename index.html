@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=60">
+    <link rel="stylesheet" href="style.css?v=61">
 </head>
 <body>
     <div class="container">
@@ -111,17 +111,16 @@
                 </div>
             </div>
 
-            <div class="ping-bar" id="discoverBar">
-                <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ 4× — nearby nodes reply with both uplink and downlink SNR (firmware ≥ v1.10)">Discover nodes</button>
-                <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and both SNR directions.</span>
-            </div>
-
             <div class="section-wrap" id="sentSnrChartWrap">
                 <div class="section-header">
-                    <span class="section-title">Sent SNR history</span>
+                    <span class="section-title">Active Ping: Sent SNR History</span>
                     <button class="collapse-btn" data-target="sentSnrChartBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="sentSnrChartBody">
+                    <div class="ping-bar" id="discoverBar">
+                        <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ 4× — nearby nodes reply with both uplink and downlink SNR (firmware ≥ v1.10)">Discover nodes</button>
+                        <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and both SNR directions.</span>
+                    </div>
                     <div class="chart-box">
                         <div class="chart-svg-wrap">
                             <svg id="sentSnrChart" class="rssi-chart"></svg>
@@ -286,6 +285,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=60"></script>
+    <script type="module" src="app.js?v=61"></script>
 </body>
 </html>

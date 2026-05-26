@@ -385,17 +385,22 @@ export class Signal3DMap {
                 const hit = hits[0];
                 const entry = clickableEntries.find(s => s.sprite === hit.object);
                 if (entry) {
-                    // For label sprites, check if click landed in the [x] top-right corner
+                    // For label sprites, check if click landed in the [x] top-right corner.
+                    // Sprites always face the camera, so we must project the hit offset
+                    // onto camera right/up vectors (not world X/Y).
                     if (entry.isLabel) {
                         const sp = entry.sprite;
                         const sw = new THREE.Vector3();
                         sp.getWorldPosition(sw);
                         const ss = new THREE.Vector3();
                         sp.getWorldScale(ss);
-                        // Normalized offset from sprite center (±0.5)
-                        const nx = (hit.point.x - sw.x) / ss.x;
-                        const ny = (hit.point.y - sw.y) / ss.y;
-                        if (nx > 0.28 && ny > 0.28) {
+                        const offset = hit.point.clone().sub(sw);
+                        const camRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+                        const camUp    = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+                        // Normalize to ±0.5 (sprite edge)
+                        const nx = offset.dot(camRight) / ss.x;
+                        const ny = offset.dot(camUp)    / ss.y;
+                        if (nx > 0.27 && ny > 0.27) {
                             this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
                             return;
                         }
@@ -534,7 +539,7 @@ export class Signal3DMap {
         const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
         const sprite = new THREE.Sprite(mat);
         const aspect = W / H;
-        sprite.scale.set(aspect * 2.5, 2.5, 1);
+        sprite.scale.set(aspect * 3.0, 3.0, 1);
         sprite.position.set(0, 8.5, 0);
         return sprite;
     }

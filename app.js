@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=38';
+import { Signal3DMap } from './signal3d.js?v=39';
 
 class MeshCoreMonitor {
     constructor() {
@@ -169,6 +169,7 @@ class MeshCoreMonitor {
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');
         bindChartTooltip(this.snrChartSvg,  'snr');
+        bindChartTooltip(this.sentSnrChartSvg, 'sentsnr');
 
         // Legend click for repeater selection
         const bindLegendClick = legend => {
@@ -2200,9 +2201,11 @@ class MeshCoreMonitor {
     }
 
     _onChartClick(e, type) {
-        const pts = this._visibleChartPoints();
+        const isSentSnr = type === 'sentsnr';
+        const pts = isSentSnr ? this._sentSnrHistory : this._visibleChartPoints();
         if (!pts.length) return;
-        const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
+        const svg = isSentSnr ? this.sentSnrChartSvg
+                  : type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
         if (!svg) return;
         const rect = svg.getBoundingClientRect();
         const mx = e.clientX - rect.left;
@@ -2213,17 +2216,26 @@ class MeshCoreMonitor {
         const cw = W - pl - pr;
         const ch = H - pt - pb;
         const now = this._chartFrozenAt ?? Date.now();
-        const tMin = isFinite(this.HASH_LIFETIME)
-            ? now - this.HASH_LIFETIME
-            : this._earliestTime(pts);
+        let tMin, yMin, yMax;
+        if (isSentSnr) {
+            tMin = pts.length ? (isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts)) : now - 5 * 60000;
+            let vMin = Infinity, vMax = -Infinity;
+            for (const p of pts) { if (p.snr < vMin) vMin = p.snr; if (p.snr > vMax) vMax = p.snr; }
+            const rawRange = vMax - vMin || 1;
+            const pad = rawRange * 0.15;
+            yMin = Math.floor((vMin - pad) / 5) * 5;
+            yMax = Math.ceil((vMax + pad) / 5) * 5;
+        } else {
+            tMin = isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts);
+            ({ yMin, yMax } = this._chartYBounds(type));
+        }
         const tRange = Math.max(1, now - tMin);
-        const { yMin, yMax } = this._chartYBounds(type);
         const yRange = Math.max(1e-9, yMax - yMin);
         const xOf = t => pl + (t - tMin) / tRange * cw;
         const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
-            const v = type === 'rssi' ? p.rssi : p.snr;
+            const v = isSentSnr ? p.snr : (type === 'rssi' ? p.rssi : p.snr);
             if (v == null) continue;
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
@@ -2580,9 +2592,11 @@ class MeshCoreMonitor {
 
     showChartTooltip(e, type) {
         if (!this.tooltip) return;
-        const pts = this._visibleChartPoints();
+        const isSentSnr = type === 'sentsnr';
+        const pts = isSentSnr ? this._sentSnrHistory : this._visibleChartPoints();
         if (!pts.length) return;
-        const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
+        const svg = isSentSnr ? this.sentSnrChartSvg
+                  : type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
         if (!svg) return;
 
         const rect = svg.getBoundingClientRect();
@@ -2595,11 +2609,20 @@ class MeshCoreMonitor {
         const ch = H - pt - pb;
 
         const now = this._chartFrozenAt ?? Date.now();
-        const tMin = isFinite(this.HASH_LIFETIME)
-            ? now - this.HASH_LIFETIME
-            : this._earliestTime(pts);
-
-        const { yMin, yMax } = this._chartYBounds(type);
+        let tMin, yMin, yMax;
+        if (isSentSnr) {
+            const defaultWindow = 5 * 60000;
+            tMin = pts.length ? (isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts)) : now - defaultWindow;
+            let vMin = Infinity, vMax = -Infinity;
+            for (const p of pts) { if (p.snr < vMin) vMin = p.snr; if (p.snr > vMax) vMax = p.snr; }
+            const rawRange = vMax - vMin || 1;
+            const pad = rawRange * 0.15;
+            yMin = Math.floor((vMin - pad) / 5) * 5;
+            yMax = Math.ceil((vMax + pad) / 5) * 5;
+        } else {
+            tMin = isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts);
+            ({ yMin, yMax } = this._chartYBounds(type));
+        }
         const tRange = Math.max(1, now - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
@@ -2608,7 +2631,7 @@ class MeshCoreMonitor {
 
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
-            const v = type === 'rssi' ? p.rssi : p.snr;
+            const v = isSentSnr ? p.snr : (type === 'rssi' ? p.rssi : p.snr);
             if (v == null) continue;
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
@@ -2622,10 +2645,12 @@ class MeshCoreMonitor {
         const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
         const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this.escHtml(cName)}</span>` : '';
+        const valLine = isSentSnr
+            ? `SNR ${nearest.snr?.toFixed(1) ?? '—'} dB`
+            : `RSSI ${nearest.rssi ?? '—'} &nbsp; SNR ${nearest.snr?.toFixed(1) ?? '—'}`;
         this.tooltip.innerHTML =
             `${dot}<b>${this.escHtml(this.displayId(nearest.col))}</b>${nameHtml}<br>` +
-            `${time}<br>` +
-            `RSSI ${nearest.rssi ?? '—'} &nbsp; SNR ${nearest.snr?.toFixed(1) ?? '—'}`;
+            `${time}<br>${valLine}`;
 
         const tx = e.clientX + 14;
         const ty = e.clientY - 10;
