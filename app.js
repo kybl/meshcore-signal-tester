@@ -3379,7 +3379,7 @@ class MeshCoreMonitor {
             return;
         }
 
-        const rows = [];
+        let rows = [];
         for (let i = 1; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) continue;
