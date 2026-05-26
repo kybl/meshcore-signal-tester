@@ -646,9 +646,9 @@ class MeshCoreMonitor {
             'contacts':
                 'Nodes known from the contact list synced from your device (name, public key, GPS position). Used to label repeaters, show their position on the 3D map, and resolve short IDs. Updated automatically on connect and when new adverts arrive.',
             'contact-unknown':
-                'This repeater is not yet in the contact list — its name and position are unknown. To resolve it: make sure your device is connected, then use "Discover nodes" in the Active Ping section. The repeater will appear in the list once it responds to the discovery request or sends an advert.',
+                'This repeater is not in the contact list and hasn\'t responded to discovery yet. If you know roughly where it is, try "Discover nodes" in the Active Ping section — it may respond and reveal its name and position. Connecting your device via Bluetooth and syncing contacts can also help significantly.',
             'contact-no-gps':
-                'This node is in the contact list but has no GPS coordinates. Either it has no GPS module, GPS sharing is disabled in its firmware settings, or it simply hasn\'t sent an advert with coordinates yet.',
+                'The owner of this node hasn\'t configured its position.',
             'sound':
                 'off = silent. short / medium / long play a beep of increasing duration (long is 4× short) on each new packet. Pitch varies with RSSI — stronger signal → higher pitch. Setting is remembered across sessions.',
             'ttl':
