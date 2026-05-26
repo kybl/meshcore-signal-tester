@@ -101,6 +101,7 @@ export class Signal3DMap {
         this.onSelect        = opts.onSelect        || null;
         this.onFilter        = opts.onFilter        || null;
         this.onRemoveMarker  = opts.onRemoveMarker  || null;
+        this.onPinMarker     = opts.onPinMarker     || null;
         // Sprite lists for static marker hit-testing
         this._markerSprites  = [];   // [{sprite, col, pubKeyFullHex, isClose}]
 
@@ -401,7 +402,8 @@ export class Signal3DMap {
                         const nx = offset.dot(camRight) / ss.x;
                         const ny = offset.dot(camUp)    / ss.y;
                         if (nx > 0.27 && ny > 0.27) {
-                            this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
+                            if (entry.isPinned) this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
+                            else               this.onPinMarker?.(entry.col, entry.pubKeyFullHex);
                             return;
                         }
                     }
@@ -494,7 +496,7 @@ export class Signal3DMap {
         return sprite;
     }
 
-    _makeMarkerLabel(idText, nameText, hexColor) {
+    _makeMarkerLabel(idText, nameText, hexColor, isPinned) {
         const W = 220, H = nameText ? 66 : 44;
         const dpr = 2;
         const c = document.createElement('canvas');
@@ -517,12 +519,12 @@ export class Signal3DMap {
         ctx.strokeStyle = hexColor;
         ctx.lineWidth = 3;
         ctx.stroke();
-        // Close button [x] top-right
-        ctx.fillStyle = '#888';
-        ctx.font = 'bold 18px sans-serif';
+        // Top-right action button: [x] if pinned, 📌 if auto-shown
+        ctx.font = isPinned ? 'bold 16px sans-serif' : '15px serif';
+        ctx.fillStyle = isPinned ? '#888' : '#667eea';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'top';
-        ctx.fillText('✕', W - 7, 5);
+        ctx.fillText(isPinned ? '✕' : '📌', W - 7, 5);
         // ID + name text (left-aligned to leave room for x)
         const textW = W - 24;
         ctx.fillStyle = '#1a1a1a';
@@ -555,6 +557,7 @@ export class Signal3DMap {
             const group = new THREE.Group();
             const markerCol = m.col ?? null;
             const pubKeyFullHex = m.pubKeyFullHex ?? null;
+            const isPinned = !!m.isPinned;
 
             // Base shadow circle
             const base = new THREE.Mesh(
@@ -578,10 +581,10 @@ export class Signal3DMap {
             group.add(emojiSprite);
             this._markerSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: false });
 
-            // Text label sprite — click target; [x] region detected by normalized hit coords
-            const labelSprite = this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor);
+            // Text label sprite — click target; corner region detected by normalized hit coords
+            const labelSprite = this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor, isPinned);
             group.add(labelSprite);
-            this._markerSprites.push({ sprite: labelSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: true });
+            this._markerSprites.push({ sprite: labelSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: true, isPinned });
 
             group.position.set(pos.x, 0, pos.z);
             this.scene.add(group);

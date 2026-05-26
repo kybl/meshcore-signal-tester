@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=39';
+import { Signal3DMap } from './signal3d.js?v=40';
 
 class MeshCoreMonitor {
     constructor() {
@@ -539,8 +539,13 @@ class MeshCoreMonitor {
                         this._mapPins.delete(pubKeyFullHex);
                         this._updateMapPins();
                         this._updateCornerNotices();
-                    } else if (col && col === this._chartSelected) {
-                        this._selectRepeater(null);
+                    }
+                },
+                onPinMarker: (col, pubKeyFullHex) => {
+                    if (pubKeyFullHex) {
+                        this._mapPins.add(pubKeyFullHex);
+                        this._updateMapPins();
+                        this._updateCornerNotices();
                     }
                 },
             });
@@ -999,12 +1004,13 @@ class MeshCoreMonitor {
             for (const c of this._contactsForMapButtons(this._chartSelected)) {
                 if (seen.has(c.pubKeyFullHex)) continue;
                 seen.add(c.pubKeyFullHex);
+                const isPinned = this._mapPins.has(c.pubKeyFullHex);
                 markers.push({ lat: c.lat, lon: c.lon, name: c.name,
                     id: this.displayId(this._chartSelected), color: this.getRepeaterColor(this._chartSelected),
-                    col: this._chartSelected, pubKeyFullHex: c.pubKeyFullHex });
+                    col: this._chartSelected, pubKeyFullHex: c.pubKeyFullHex, isPinned });
             }
         }
-        // Permanently pinned contacts
+        // Permanently pinned contacts not already shown via auto-select
         for (const pubKeyFullHex of this._mapPins) {
             if (seen.has(pubKeyFullHex)) continue;
             const contact = this._contacts.get(pubKeyFullHex);
@@ -1013,7 +1019,7 @@ class MeshCoreMonitor {
             const col = pubKeyFullHex.slice(0, 6);
             markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name,
                 id: this.displayId(col), color: this.getRepeaterColor(col),
-                col, pubKeyFullHex });
+                col, pubKeyFullHex, isPinned: true });
         }
         this.signalMap.setStaticMarkers(markers);
     }
@@ -1034,8 +1040,6 @@ class MeshCoreMonitor {
         if (this._discoverActive) return; // prevent double-click overlap
 
         const btn = document.getElementById('discoverBtn');
-        const REPEATS = 4;
-        const INTERVAL_MS = 500;
         this._discoverActive = true;
 
         const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
@@ -1045,13 +1049,10 @@ class MeshCoreMonitor {
         for (const [t, ts] of this._discoverTags)
             if (Date.now() - ts > 30000) this._discoverTags.delete(t);
 
-        for (let i = 0; i < REPEATS; i++) {
-            if (i > 0) await new Promise(r => setTimeout(r, INTERVAL_MS));
-            await this.sendDiscoverRequest(filterMask, tag);
-            if (btn) btn.textContent = `Discovering… (${i + 1}/${REPEATS})`;
-        }
+        await this.sendDiscoverRequest(filterMask, tag);
+        if (btn) btn.textContent = 'Discovering…';
 
-        // Keep button showing "Discovering…" for a further 2 s to collect late responses
+        // Keep button showing "Discovering…" for 2 s to collect responses
         await new Promise(r => setTimeout(r, 2000));
         if (btn) btn.textContent = 'Discover nodes';
         this._discoverActive = false;
