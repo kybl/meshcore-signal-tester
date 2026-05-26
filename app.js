@@ -238,7 +238,7 @@ class MeshCoreMonitor {
         document.getElementById('savedDevices')?.addEventListener('click', e => {
             const quickBtn = e.target.closest('.saved-btn');
             const forgetBtn = e.target.closest('.forget-btn');
-            if (quickBtn) this.quickConnect(quickBtn.dataset.id);
+            if (quickBtn) this.quickConnect(quickBtn.dataset.id).catch(e => console.error('Quick connect failed:', e));
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
@@ -270,7 +270,7 @@ class MeshCoreMonitor {
             this._clearAllData();
         });
 
-        document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F));
+        document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(e => console.error('Discover failed:', e)));
 
         this.soundSelect?.addEventListener('change', () => {
             try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
@@ -371,7 +371,7 @@ class MeshCoreMonitor {
         document.getElementById('importCsvBtn')?.addEventListener('click', () => importCsvInput?.click());
         importCsvInput?.addEventListener('change', () => {
             const file = importCsvInput.files?.[0];
-            if (file) { this._importCsv(file); importCsvInput.value = ''; }
+            if (file) { this._importCsv(file).catch(e => console.error('CSV import failed:', e)); importCsvInput.value = ''; }
         });
 
         const fsBtn = document.getElementById('signalMapFullscreenBtn');
@@ -600,7 +600,7 @@ class MeshCoreMonitor {
                 showMarkerChk.checked = false;
                 this.signalMap?.setShowMarker(false);
             }
-        } catch {}
+        } catch (e) { console.warn('Failed to restore map settings:', e); }
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
     }
@@ -3463,7 +3463,7 @@ class MeshCoreMonitor {
                         meta.pathItemBytes = decoded.pathHashSize ?? (typeof fi === 'string' ? fi.length / 2 : typeof fi === 'number' ? 4 : 0);
                         meta.totalBytes    = decoded.totalBytes;
                     }
-                } catch { /* ignore */ }
+                } catch (e) { console.warn('Hex decode failed for row:', row.rawHex?.slice(0, 20), e.message); }
             }
             if (!meta.text   && row.csvText)   meta.text   = row.csvText;
             if (!meta.sender && row.csvSender)  meta.sender = row.csvSender;
