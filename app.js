@@ -413,10 +413,6 @@ class MeshCoreMonitor {
         }
 
         // Corner notice buttons
-        document.getElementById('filterNoticeHelpBtn')?.addEventListener('click', () => {
-            const hint = document.getElementById('filterNoticeHint');
-            hint?.classList.toggle('hidden');
-        });
         document.getElementById('filterNoticeClear')?.addEventListener('click', () => {
             this._repFilterTerms = [];
             const inp = document.getElementById('repFilter');
@@ -960,10 +956,8 @@ class MeshCoreMonitor {
 
     _contactNameForCol(col) {
         const matches = this._contactsByPrefix(col);
-        if (!matches.length) return null;
-        if (matches.length === 1) return matches[0].name;
-        // Multiple contacts share this prefix — show all names separated by /
-        return matches.map(c => c.name ?? '?').join(' / ');
+        if (matches.length !== 1) return null; // 0 = unknown, 2+ = ambiguous prefix
+        return matches[0].name;
     }
 
     _updateContactsCount() {
@@ -2847,14 +2841,20 @@ class MeshCoreMonitor {
         if (filterNotice) {
             filterNotice.classList.toggle('hidden', !hasFilter);
             if (hasFilter) {
-                const term = this._repFilterTerms.join(', ');
-                document.getElementById('filterNoticeRep').textContent = term;
-                // Try to find a matching column for the dot color
-                const matchCol = this.repeaterColumns.find(c => this._colMatchesRepFilter(c));
+                document.getElementById('filterNoticeRep').textContent = this._repFilterTerms.join(', ');
+                // Only show dot + name when the filter resolves to exactly one specific column
+                const matchingCols = this.repeaterColumns.filter(c => this._colMatchesRepFilter(c));
+                const exactCol = matchingCols.length === 1 && !matchingCols[0].includes('/') ? matchingCols[0] : null;
                 const dot = document.getElementById('filterNoticeDot');
                 if (dot) {
-                    dot.style.background = matchCol ? this.getRepeaterColor(matchCol) : 'transparent';
-                    dot.style.display    = matchCol ? '' : 'none';
+                    dot.style.background = exactCol ? this.getRepeaterColor(exactCol) : '';
+                    dot.style.display    = exactCol ? '' : 'none';
+                }
+                const nameEl = document.getElementById('filterNoticeName');
+                if (nameEl) {
+                    const cName = exactCol ? this._contactNameForCol(exactCol) : null;
+                    nameEl.textContent = cName ?? '';
+                    nameEl.style.display = cName ? '' : 'none';
                 }
             }
         }

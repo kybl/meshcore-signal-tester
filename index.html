@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=54">
+    <link rel="stylesheet" href="style.css?v=55">
 </head>
 <body>
     <div class="container">
@@ -228,9 +228,9 @@
     <div id="filterNotice" class="corner-notice hidden">
         <div class="corner-notice-line1">
             Filtered to <span class="corner-notice-dot" id="filterNoticeDot"></span><span class="corner-notice-id" id="filterNoticeRep"></span>
-            <button class="corner-notice-help-btn" id="filterNoticeHelpBtn" title="About filtering">?</button>
+            <span class="help-icon" data-help="rep-filter">?</span>
         </div>
-        <div class="corner-notice-hint hidden" id="filterNoticeHint">Display &amp; charts show only this repeater. All data is still captured.</div>
+        <div id="filterNoticeName" class="corner-notice-name" style="display:none"></div>
         <button id="filterNoticeClear" class="corner-notice-btn">Clear filter</button>
     </div>
 
@@ -286,6 +286,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=54"></script>
+    <script type="module" src="app.js?v=55"></script>
 </body>
 </html>
