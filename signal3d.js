@@ -412,7 +412,9 @@ export class Signal3DMap {
     setStaticMarkers(markers) {
         this._disposeStaticMarkers();
         this._staticMarkers = markers || [];
+        if (this._staticMarkers.length && this.emptyEl) this.emptyEl.classList.add('hidden');
         this._updateStaticMarkers();
+        this._scheduleMapUpdate();
     }
 
     _disposeStaticMarkers() {
@@ -429,14 +431,32 @@ export class Signal3DMap {
         this._staticMarkerMeshes = [];
     }
 
+    _makeEmojiSprite(emoji, yPos) {
+        const S = 128, dpr = 2;
+        const c = document.createElement('canvas');
+        c.width = S * dpr; c.height = S * dpr;
+        const ctx = c.getContext('2d');
+        ctx.scale(dpr, dpr);
+        ctx.font = `${S * 0.82}px serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(emoji, S / 2, S / 2 + 4);
+        const tex = new THREE.CanvasTexture(c);
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+        const sprite = new THREE.Sprite(mat);
+        sprite.scale.set(3.0, 3.0, 1);
+        sprite.position.set(0, yPos, 0);
+        return sprite;
+    }
+
     _makeMarkerLabel(idText, nameText, hexColor) {
-        const W = 320, H = nameText ? 72 : 48;
+        const W = 320, H = nameText ? 80 : 52;
         const dpr = 2;
         const c = document.createElement('canvas');
         c.width = W * dpr; c.height = H * dpr;
         const ctx = c.getContext('2d');
         ctx.scale(dpr, dpr);
-        const r = 8;
+        const r = 10;
         ctx.beginPath();
         ctx.moveTo(r, 2); ctx.lineTo(W - r, 2);
         ctx.arcTo(W - 2, 2, W - 2, r + 2, r);
@@ -447,27 +467,27 @@ export class Signal3DMap {
         ctx.lineTo(2, r + 2);
         ctx.arcTo(2, 2, r + 2, 2, r);
         ctx.closePath();
-        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.fillStyle = 'rgba(255,255,255,0.94)';
         ctx.fill();
         ctx.strokeStyle = hexColor;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 4;
         ctx.stroke();
         ctx.fillStyle = '#1a1a1a';
-        ctx.font = `bold ${nameText ? 22 : 26}px sans-serif`;
+        ctx.font = `bold ${nameText ? 26 : 32}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(idText, W / 2, nameText ? H / 2 - 13 : H / 2);
+        ctx.fillText(idText, W / 2, nameText ? H / 2 - 16 : H / 2);
         if (nameText) {
-            ctx.fillStyle = '#5588aa';
-            ctx.font = '18px sans-serif';
-            ctx.fillText(nameText, W / 2, H / 2 + 14);
+            ctx.fillStyle = '#4488aa';
+            ctx.font = '22px sans-serif';
+            ctx.fillText(nameText, W / 2, H / 2 + 18);
         }
         const tex = new THREE.CanvasTexture(c);
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, sizeAttenuation: true });
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
         const sprite = new THREE.Sprite(mat);
         const aspect = W / H;
-        sprite.scale.set(aspect * 1.2, 1.2, 1);
-        sprite.position.set(0, 5.2, 0);
+        sprite.scale.set(aspect * 4.0, 4.0, 1);
+        sprite.position.set(0, 8.5, 0);
         return sprite;
     }
 
@@ -490,35 +510,18 @@ export class Signal3DMap {
             base.position.y = 0.06;
             group.add(base);
 
-            // Mast
+            // Thin mast
             const mast = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.09, 0.13, 2.5, 8),
+                new THREE.CylinderGeometry(0.07, 0.1, 2.8, 8),
                 new THREE.MeshBasicMaterial({ color: col })
             );
-            mast.position.y = 1.25;
+            mast.position.y = 1.4;
             group.add(mast);
 
-            // Cross arms (satellite-like)
-            const armMat = new THREE.MeshBasicMaterial({ color: col });
-            const armGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.6, 6);
-            const arm1 = new THREE.Mesh(armGeo, armMat);
-            arm1.rotation.z = Math.PI / 2;
-            arm1.position.y = 2.4;
-            group.add(arm1);
-            const arm2 = new THREE.Mesh(armGeo, armMat);
-            arm2.rotation.x = Math.PI / 2;
-            arm2.position.y = 2.4;
-            group.add(arm2);
+            // 📡 emoji sprite at top of mast
+            group.add(this._makeEmojiSprite('📡', 3.8));
 
-            // Top "dish" body — octahedron
-            const head = new THREE.Mesh(
-                new THREE.OctahedronGeometry(0.6, 0),
-                new THREE.MeshBasicMaterial({ color: col })
-            );
-            head.position.y = 3.0;
-            group.add(head);
-
-            // Text label sprite
+            // Text label sprite above icon
             group.add(this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor));
 
             group.position.set(pos.x, 0, pos.z);
@@ -617,6 +620,7 @@ export class Signal3DMap {
     _bbox() {
         const locs = this.points.map(p => ({ lat: p.lat, lon: p.lon }));
         if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
+        for (const m of this._staticMarkers) locs.push({ lat: m.lat, lon: m.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
         for (const l of locs) {
@@ -1054,7 +1058,7 @@ export class Signal3DMap {
         // Cone local height = 2.8; target 40 CSS pixels tall on screen
         if (this.userMarker) scaleFor(this.userMarker, 2.8);
         for (const g of this._staticMarkerMeshes) {
-            scaleFor(g, 3.0);
+            scaleFor(g, 4.0);
         }
     }
 
