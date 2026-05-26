@@ -120,7 +120,7 @@ class MeshCoreMonitor {
         this.contactsLoadingMsg = document.getElementById('contactsLoadingMsg');
         this.repeaterLogBody = document.getElementById('repeaterLogBody');
         this.soundSelect = document.getElementById('soundSelect');
-        try { const s = localStorage.getItem('sound'); if (s) this.soundSelect.value = s; } catch {}
+        try { const s = localStorage.getItem('sound'); if (s) this.soundSelect.value = s; } catch (e) { console.warn('localStorage error:', e); }
         this.tooltip = document.getElementById('chartTooltip');
 
         document.getElementById('pauseBtn')?.addEventListener('click', () => {
@@ -245,21 +245,21 @@ class MeshCoreMonitor {
         const ttlSelect  = document.getElementById('ttlSelect');
         const hideSelect = document.getElementById('hideSelect');
         if (ttlSelect) {
-            try { const s = localStorage.getItem('ttl'); if (s) ttlSelect.value = s; } catch {}
+            try { const s = localStorage.getItem('ttl'); if (s) ttlSelect.value = s; } catch (e) { console.warn('localStorage error:', e); }
             const v = ttlSelect.value;
             this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
             ttlSelect.addEventListener('change', () => {
                 const v = ttlSelect.value;
                 this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
-                try { localStorage.setItem('ttl', v); } catch {}
+                try { localStorage.setItem('ttl', v); } catch (e) { console.warn('localStorage error:', e); }
                 this._updateHideSelectOptions();
             });
         }
         if (hideSelect) {
-            try { let s = localStorage.getItem('hide'); if (s === 'same') s = 'all'; if (s) hideSelect.value = s; } catch {}
+            try { let s = localStorage.getItem('hide'); if (s === 'same') s = 'all'; if (s) hideSelect.value = s; } catch (e) { console.warn('localStorage error:', e); }
             this._applyHideSelect();
             hideSelect.addEventListener('change', () => {
-                try { localStorage.setItem('hide', hideSelect.value); } catch {}
+                try { localStorage.setItem('hide', hideSelect.value); } catch (e) { console.warn('localStorage error:', e); }
                 this._applyHideSelect();
             });
         }
@@ -273,12 +273,12 @@ class MeshCoreMonitor {
         document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(e => console.error('Discover failed:', e)));
 
         this.soundSelect?.addEventListener('change', () => {
-            try { localStorage.setItem('sound', this.soundSelect.value); } catch {}
+            try { localStorage.setItem('sound', this.soundSelect.value); } catch (e) { console.warn('localStorage error:', e); }
         });
 
         // Point size controls
-        try { this._dotSize = parseFloat(localStorage.getItem('dotSize') || '3.5'); } catch { this._dotSize = 3.5; }
-        try { this._sphereSize = parseFloat(localStorage.getItem('sphereSize') || '1'); } catch { this._sphereSize = 1; }
+        try { this._dotSize = parseFloat(localStorage.getItem('dotSize') || '3.5'); } catch (e) { console.warn('localStorage error:', e); this._dotSize = 3.5; }
+        try { this._sphereSize = parseFloat(localStorage.getItem('sphereSize') || '1'); } catch (e) { console.warn('localStorage error:', e); this._sphereSize = 1; }
 
         const dotSizeInput = document.getElementById('dotSizeInput');
         const dotSizeVal   = document.getElementById('dotSizeVal');
@@ -288,7 +288,7 @@ class MeshCoreMonitor {
             dotSizeInput.addEventListener('input', () => {
                 this._dotSize = parseFloat(dotSizeInput.value);
                 if (dotSizeVal) dotSizeVal.textContent = this._dotSize;
-                try { localStorage.setItem('dotSize', this._dotSize); } catch {}
+                try { localStorage.setItem('dotSize', this._dotSize); } catch (e) { console.warn('localStorage error:', e); }
                 this.scheduleChartRender();
             });
         }
@@ -301,7 +301,7 @@ class MeshCoreMonitor {
             sphereSizeInput.addEventListener('input', () => {
                 this._sphereSize = parseFloat(sphereSizeInput.value);
                 if (sphereSizeVal) sphereSizeVal.textContent = this._sphereSize;
-                try { localStorage.setItem('sphereSize', this._sphereSize); } catch {}
+                try { localStorage.setItem('sphereSize', this._sphereSize); } catch (e) { console.warn('localStorage error:', e); }
                 this.signalMap?.setSphereSize(this._sphereSize);
             });
         }
@@ -313,9 +313,9 @@ class MeshCoreMonitor {
             const applyState = collapsed => {
                 wrap?.classList.toggle('legend-collapsed', collapsed);
                 btn.textContent = (collapsed ? '▸' : '▾') + ' Legend';
-                try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch {}
+                try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch (e) { console.warn('localStorage error:', e); }
             };
-            try { applyState(localStorage.getItem(key) === '1'); } catch { applyState(false); }
+            try { applyState(localStorage.getItem(key) === '1'); } catch (e) { console.warn('localStorage error:', e); applyState(false); }
             btn.addEventListener('click', () => applyState(!wrap?.classList.contains('legend-collapsed')));
         });
 
@@ -501,7 +501,7 @@ class MeshCoreMonitor {
                 const v = localStorage.getItem('mapSource') || '';
                 // Migrate the original single-key 'mapycom' value
                 return v === 'mapycom' ? 'mapycom-basic' : v;
-            } catch { return ''; }
+            } catch (e) { console.warn('localStorage error:', e); return ''; }
         })();
         if (sourceSel && savedSource) sourceSel.value = savedSource;
 
@@ -563,7 +563,7 @@ class MeshCoreMonitor {
 
         sourceSel?.addEventListener('change', () => {
             this.signalMap.setMapSource(sourceSel.value);
-            try { localStorage.setItem('mapSource', sourceSel.value); } catch {}
+            try { localStorage.setItem('mapSource', sourceSel.value); } catch (e) { console.warn('localStorage error:', e); }
         });
 
         // Settings gear panel
@@ -584,11 +584,11 @@ class MeshCoreMonitor {
         const showMarkerChk = document.getElementById('showMarkerChk');
         showLinesChk?.addEventListener('change', () => {
             this.signalMap?.setShowLines(showLinesChk.checked);
-            try { localStorage.setItem('showLines', showLinesChk.checked); } catch {}
+            try { localStorage.setItem('showLines', showLinesChk.checked); } catch (e) { console.warn('localStorage error:', e); }
         });
         showMarkerChk?.addEventListener('change', () => {
             this.signalMap?.setShowMarker(showMarkerChk.checked);
-            try { localStorage.setItem('showMarker', showMarkerChk.checked); } catch {}
+            try { localStorage.setItem('showMarker', showMarkerChk.checked); } catch (e) { console.warn('localStorage error:', e); }
         });
         // Restore saved values
         try {
@@ -2884,7 +2884,7 @@ class MeshCoreMonitor {
         }
         if (!currentValid) {
             hideSelect.value = 'all';
-            try { localStorage.setItem('hide', 'all'); } catch {}
+            try { localStorage.setItem('hide', 'all'); } catch (e) { console.warn('localStorage error:', e); }
             this._applyHideSelect();
         }
     }
@@ -3429,14 +3429,14 @@ class MeshCoreMonitor {
         if (ttlSelect && isFinite(this.HASH_LIFETIME)) {
             ttlSelect.value = 'Infinity';
             this.HASH_LIFETIME = Infinity;
-            try { localStorage.setItem('ttl', 'Infinity'); } catch {}
+            try { localStorage.setItem('ttl', 'Infinity'); } catch (e) { console.warn('localStorage error:', e); }
             this._updateHideSelectOptions();
         }
         // Show all imported data regardless of previous display window setting
         const hideSelect = document.getElementById('hideSelect');
         if (hideSelect && hideSelect.value !== 'all') {
             hideSelect.value = 'all';
-            try { localStorage.setItem('hide', 'all'); } catch {}
+            try { localStorage.setItem('hide', 'all'); } catch (e) { console.warn('localStorage error:', e); }
             this._applyHideSelect();
         }
 
