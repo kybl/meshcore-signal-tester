@@ -904,7 +904,7 @@ class MeshCoreMonitor {
     }
 
     _setContactsLoading(on) {
-        this.contactsLoadingMsg?.classList.toggle('hidden', !on);
+        if (this.contactsLoadingMsg) this.contactsLoadingMsg.style.display = on ? '' : 'none';
     }
 
     _parseContact(payload) {
@@ -1081,7 +1081,9 @@ class MeshCoreMonitor {
                 this._contactsLastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
             console.log(`contacts: done, total=${this._contacts.size}, lastmod=${this._contactsLastmod}`);
             this._updateContactsCount();
+            this._lastColKey = null; // force column header redraw with names
             this.renderMsgTable();
+            this.updateRepeaterTable();
             this.scheduleChartRender();
             return;
         }
@@ -1841,9 +1843,11 @@ class MeshCoreMonitor {
         const colKey = visibleCols.join(',');
         if (colKey !== this._lastColKey) {
             this._lastColKey = colKey;
-            const repHeaders = visibleCols.map(r =>
-                `<th colspan="2" class="msg-col-rep" data-col="${this.escHtml(r)}"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}</th>`
-            ).join('');
+            const repHeaders = visibleCols.map(r => {
+                const cName = r !== 'direct' ? (this._contactByPrefix(r)?.name ?? null) : null;
+                const nameTag = cName ? `<br><span class="col-contact-name">${this.escHtml(cName)}</span>` : '';
+                return `<th colspan="2" class="msg-col-rep" data-col="${this.escHtml(r)}"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
+            }).join('');
             const subHeaders = visibleCols.map(() =>
                 `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
             ).join('');
@@ -2779,8 +2783,10 @@ class MeshCoreMonitor {
             const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
             const isSel = repeater === sel;
             const rowCls = sel ? (isSel ? 'rl-row-sel' : 'rl-row-dim') : '';
+            const cName = repeater !== 'direct' ? (this._contactByPrefix(repeater)?.name ?? null) : null;
+            const nameTag = cName ? `<span class="rl-name">${this.escHtml(cName)}</span>` : '';
             return `<tr data-col="${this.escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
-                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}</td>
+                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
                 <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
