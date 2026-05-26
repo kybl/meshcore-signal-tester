@@ -97,9 +97,12 @@ export class Signal3DMap {
         // Shared hit-test geometry & sphere sprite texture (created once)
         this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
         this._sphereTex   = this._makeSphereTex();
-        this.infoEl       = opts.infoEl   || null;
-        this.onSelect     = opts.onSelect || null;
-        this.onFilter     = opts.onFilter || null;
+        this.infoEl          = opts.infoEl          || null;
+        this.onSelect        = opts.onSelect        || null;
+        this.onFilter        = opts.onFilter        || null;
+        this.onRemoveMarker  = opts.onRemoveMarker  || null;
+        // Sprite lists for static marker hit-testing
+        this._markerSprites  = [];   // [{sprite, col, pubKeyFullHex, isClose}]
 
         this._initScene();
         this._bindButton();
@@ -372,6 +375,30 @@ export class Signal3DMap {
             -((e.clientY - rect.top)  / rect.height) * 2 + 1
         );
         this._raycaster.setFromCamera(mouse, this.camera);
+
+        // Check static marker sprites first (close buttons and icons)
+        if (this._markerSprites.length) {
+            const sprites = this._markerSprites.map(s => s.sprite);
+            const hits = this._raycaster.intersectObjects(sprites);
+            if (hits.length > 0) {
+                const hit = hits[0].object;
+                const entry = this._markerSprites.find(s => s.sprite === hit);
+                if (entry?.isClose) {
+                    this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
+                    return;
+                }
+                if (entry) {
+                    const newCol = entry.col === this._selectedCol ? null : entry.col;
+                    this._selectedCol = newCol;
+                    this._repositionAll();
+                    this.onSelect?.(newCol);
+                    this._infoPanelFromClick = !!newCol;
+                    this._updateInfoPanel();
+                    return;
+                }
+            }
+        }
+
         let newCol = null;
         if (this._iMeshHit) {
             const hits = this._raycaster.intersectObject(this._iMeshHit);
@@ -429,6 +456,7 @@ export class Signal3DMap {
             });
         }
         this._staticMarkerMeshes = [];
+        this._markerSprites = [];
     }
 
     _makeEmojiSprite(emoji, yPos) {
@@ -450,13 +478,13 @@ export class Signal3DMap {
     }
 
     _makeMarkerLabel(idText, nameText, hexColor) {
-        const W = 320, H = nameText ? 80 : 52;
+        const W = 220, H = nameText ? 66 : 44;
         const dpr = 2;
         const c = document.createElement('canvas');
         c.width = W * dpr; c.height = H * dpr;
         const ctx = c.getContext('2d');
         ctx.scale(dpr, dpr);
-        const r = 10;
+        const r = 8;
         ctx.beginPath();
         ctx.moveTo(r, 2); ctx.lineTo(W - r, 2);
         ctx.arcTo(W - 2, 2, W - 2, r + 2, r);
@@ -470,24 +498,46 @@ export class Signal3DMap {
         ctx.fillStyle = 'rgba(255,255,255,0.94)';
         ctx.fill();
         ctx.strokeStyle = hexColor;
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 3;
         ctx.stroke();
+        // Close button [x] top-right
+        ctx.fillStyle = '#888';
+        ctx.font = 'bold 18px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText('✕', W - 7, 5);
+        // ID + name text (left-aligned to leave room for x)
+        const textW = W - 24;
         ctx.fillStyle = '#1a1a1a';
-        ctx.font = `bold ${nameText ? 26 : 32}px sans-serif`;
+        ctx.font = `bold ${nameText ? 22 : 26}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(idText, W / 2, nameText ? H / 2 - 16 : H / 2);
+        ctx.fillText(idText, textW / 2 + 4, nameText ? H / 2 - 13 : H / 2);
         if (nameText) {
             ctx.fillStyle = '#4488aa';
-            ctx.font = '22px sans-serif';
-            ctx.fillText(nameText, W / 2, H / 2 + 18);
+            ctx.font = '18px sans-serif';
+            ctx.fillText(nameText, textW / 2 + 4, H / 2 + 14);
         }
         const tex = new THREE.CanvasTexture(c);
         const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
         const sprite = new THREE.Sprite(mat);
         const aspect = W / H;
-        sprite.scale.set(aspect * 4.0, 4.0, 1);
+        sprite.scale.set(aspect * 2.5, 2.5, 1);
         sprite.position.set(0, 8.5, 0);
+        return sprite;
+    }
+
+    _makeCloseHitSprite() {
+        // Small invisible-ish sprite for hit-testing the [x] area in the top-right of label
+        const c = document.createElement('canvas');
+        c.width = 32; c.height = 32;
+        const tex = new THREE.CanvasTexture(c);
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false });
+        const sprite = new THREE.Sprite(mat);
+        // Place at top-right of label sprite: label is aspect*2.5 wide, 2.5 tall
+        // x offset ≈ half label width − small margin
+        sprite.scale.set(0.9, 0.9, 1);
+        sprite.position.set(0, 8.5, 0);   // exact position set in _updateStaticMarkers
         return sprite;
     }
 
@@ -498,13 +548,15 @@ export class Signal3DMap {
             const pos = this._latLonToWorld(m.lat, m.lon);
             if (!pos) continue;
             const hexColor = m.color || '#ff8800';
-            const col = new THREE.Color(hexColor);
+            const col3 = new THREE.Color(hexColor);
             const group = new THREE.Group();
+            const markerCol = m.col ?? null;
+            const pubKeyFullHex = m.pubKeyFullHex ?? null;
 
             // Base shadow circle
             const base = new THREE.Mesh(
                 new THREE.CircleGeometry(1.3, 24),
-                new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.28, depthWrite: false })
+                new THREE.MeshBasicMaterial({ color: col3, transparent: true, opacity: 0.28, depthWrite: false })
             );
             base.rotation.x = -Math.PI / 2;
             base.position.y = 0.06;
@@ -513,16 +565,31 @@ export class Signal3DMap {
             // Thin mast
             const mast = new THREE.Mesh(
                 new THREE.CylinderGeometry(0.07, 0.1, 2.8, 8),
-                new THREE.MeshBasicMaterial({ color: col })
+                new THREE.MeshBasicMaterial({ color: col3 })
             );
             mast.position.y = 1.4;
             group.add(mast);
 
-            // 📡 emoji sprite at top of mast
-            group.add(this._makeEmojiSprite('📡', 3.8));
+            // 📡 emoji sprite — also used as click target for selection
+            const emojiSprite = this._makeEmojiSprite('📡', 3.8);
+            group.add(emojiSprite);
+            this._markerSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false });
 
-            // Text label sprite above icon
-            group.add(this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor));
+            // Text label sprite with embedded [x] (visual only)
+            const labelSprite = this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor);
+            group.add(labelSprite);
+            this._markerSprites.push({ sprite: labelSprite, col: markerCol, pubKeyFullHex, isClose: false });
+
+            // Invisible hit sprite for the [x] close button (top-right of label)
+            // Label: aspect*2.5 wide, 2.5 tall. W=220,H=(66 or 44); aspect≈220/66≈3.33 or 220/44=5
+            // Label center at y=8.5. x offset to [x] = (aspect*2.5/2 - 0.5)
+            const aspect = 220 / (m.name ? 66 : 44);
+            const closeHit = this._makeCloseHitSprite();
+            const xOff = (aspect * 2.5) / 2 - 0.45;
+            const yOff = 8.5 + 2.5 / 2 - 0.45;
+            closeHit.position.set(xOff, yOff, 0);
+            group.add(closeHit);
+            this._markerSprites.push({ sprite: closeHit, col: markerCol, pubKeyFullHex, isClose: true });
 
             group.position.set(pos.x, 0, pos.z);
             this.scene.add(group);

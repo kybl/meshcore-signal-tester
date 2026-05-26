@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=36';
+import { Signal3DMap } from './signal3d.js?v=37';
 
 class MeshCoreMonitor {
     constructor() {
@@ -533,6 +533,15 @@ class MeshCoreMonitor {
                     document.getElementById('repeaterWrap')
                         ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 },
+                onRemoveMarker: (col, pubKeyFullHex) => {
+                    if (pubKeyFullHex && this._mapPins.has(pubKeyFullHex)) {
+                        this._mapPins.delete(pubKeyFullHex);
+                        this._updateMapPins();
+                        this._updateCornerNotices();
+                    } else if (col && col === this._chartSelected) {
+                        this._selectRepeater(null);
+                    }
+                },
             });
         } catch (err) {
             console.error('Signal3DMap init failed:', err);
@@ -983,11 +992,27 @@ class MeshCoreMonitor {
     _updateMapPins() {
         if (!this.signalMap) return;
         const markers = [];
-        for (const pubKeyHex of this._mapPins) {
-            const contact = this._contacts.get(pubKeyHex);
+        const seen = new Set();
+        // Auto-show currently selected repeater if it has GPS coords
+        if (this._chartSelected) {
+            for (const c of this._contactsForMapButtons(this._chartSelected)) {
+                if (seen.has(c.pubKeyFullHex)) continue;
+                seen.add(c.pubKeyFullHex);
+                markers.push({ lat: c.lat, lon: c.lon, name: c.name,
+                    id: this.displayId(this._chartSelected), color: this.getRepeaterColor(this._chartSelected),
+                    col: this._chartSelected, pubKeyFullHex: c.pubKeyFullHex });
+            }
+        }
+        // Permanently pinned contacts
+        for (const pubKeyFullHex of this._mapPins) {
+            if (seen.has(pubKeyFullHex)) continue;
+            const contact = this._contacts.get(pubKeyFullHex);
             if (!contact?.name || (contact.lat === 0 && contact.lon === 0)) continue;
-            const col = pubKeyHex.slice(0, 6);
-            markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name, id: this.displayId(col), color: this.getRepeaterColor(col) });
+            seen.add(pubKeyFullHex);
+            const col = pubKeyFullHex.slice(0, 6);
+            markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name,
+                id: this.displayId(col), color: this.getRepeaterColor(col),
+                col, pubKeyFullHex });
         }
         this.signalMap.setStaticMarkers(markers);
     }
@@ -2861,6 +2886,7 @@ class MeshCoreMonitor {
     _selectRepeater(col) {
         this._chartSelected = col ?? null;
         this.signalMap?.selectColumn(this._chartSelected);
+        this._updateMapPins();
         this.scheduleChartRender();
         this.updateRepeaterTable();
         this._applyMsgTableSelection();
@@ -2877,15 +2903,23 @@ class MeshCoreMonitor {
             const stats = col ? this._colStats(col) : null;
             const mapBtns = col ? this._contactsForMapButtons(col) : [];
             const multiName = mapBtns.length > 1;
+            const isAutoShown = col && col === this._chartSelected;
             const checkId = `${noticePrefix}ShowMore`;
             let mapHtml = '';
             if (mapBtns.length) {
                 mapHtml += `<div class="cn-map-btns">`;
                 for (const c of mapBtns) {
                     const pinned = this._mapPins.has(c.pubKeyFullHex);
-                    const label = multiName ? (pinned ? `✕ ${this.escHtml(c.name)}` : `📍 ${this.escHtml(c.name)}`)
-                                            : (pinned ? '✕ Map' : '📍 Map');
-                    mapHtml += `<button class="cn-map-btn${pinned ? ' cn-map-btn-active' : ''}" data-pubkey="${this.escHtml(c.pubKeyFullHex)}">${label}</button>`;
+                    const suffix = multiName ? ` ${this.escHtml(c.name)}` : '';
+                    let label, cls;
+                    if (pinned) {
+                        label = `✕${suffix || ' Remove pin'}`; cls = 'cn-map-btn cn-map-btn-active';
+                    } else if (isAutoShown) {
+                        label = `📌${suffix || ' Keep on map'}`; cls = 'cn-map-btn';
+                    } else {
+                        label = `📍${suffix || ' Show on map'}`; cls = 'cn-map-btn';
+                    }
+                    mapHtml += `<button class="${cls}" data-pubkey="${this.escHtml(c.pubKeyFullHex)}">${label}</button>`;
                 }
                 mapHtml += `</div>`;
             }
