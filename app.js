@@ -1033,14 +1033,12 @@ class MeshCoreMonitor {
     // Send DISCOVER_REQ 4 times with 500 ms gaps — LoRa is lossy, repeating improves coverage.
     // All retries share the same tag so every response is correlated correctly.
     async startDiscoverSequence(filterMask) {
+        const btn = document.getElementById('discoverBtn');
         if (!this.bleRxCharacteristic) {
-            this.updateStatus('Not connected — connect to a device first.', 'error');
-            setTimeout(() => { if (this.statusEl?.classList.contains('error')) this.updateStatus('', ''); }, 3000);
+            if (btn) { btn.textContent = '⚠ Not connected'; setTimeout(() => { btn.textContent = 'Discover nodes'; }, 2500); }
             return;
         }
         if (this._discoverActive) return; // prevent double-click overlap
-
-        const btn = document.getElementById('discoverBtn');
         this._discoverActive = true;
 
         const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
