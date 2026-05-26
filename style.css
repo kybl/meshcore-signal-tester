@@ -1655,6 +1655,18 @@ td.col-dim { opacity: 0.25; }
     line-height: 1.4;
 }
 .corner-notice-hint.hidden { display: none; }
+.corner-notice-close {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 13px;
+    color: #aaa;
+    cursor: pointer;
+    padding: 1px 3px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.corner-notice-close:hover { color: #555; }
 .corner-notice-name {
     font-size: 12px;
     font-weight: 600;

@@ -376,18 +376,30 @@ export class Signal3DMap {
         );
         this._raycaster.setFromCamera(mouse, this.camera);
 
-        // Check static marker sprites first (close buttons and icons)
+        // Check static marker sprites first (emoji icons and labels)
         if (this._markerSprites.length) {
-            const sprites = this._markerSprites.map(s => s.sprite);
+            const clickableEntries = this._markerSprites.filter(s => !s.isClose);
+            const sprites = clickableEntries.map(s => s.sprite);
             const hits = this._raycaster.intersectObjects(sprites);
             if (hits.length > 0) {
-                const hit = hits[0].object;
-                const entry = this._markerSprites.find(s => s.sprite === hit);
-                if (entry?.isClose) {
-                    this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
-                    return;
-                }
+                const hit = hits[0];
+                const entry = clickableEntries.find(s => s.sprite === hit.object);
                 if (entry) {
+                    // For label sprites, check if click landed in the [x] top-right corner
+                    if (entry.isLabel) {
+                        const sp = entry.sprite;
+                        const sw = new THREE.Vector3();
+                        sp.getWorldPosition(sw);
+                        const ss = new THREE.Vector3();
+                        sp.getWorldScale(ss);
+                        // Normalized offset from sprite center (±0.5)
+                        const nx = (hit.point.x - sw.x) / ss.x;
+                        const ny = (hit.point.y - sw.y) / ss.y;
+                        if (nx > 0.28 && ny > 0.28) {
+                            this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
+                            return;
+                        }
+                    }
                     const newCol = entry.col === this._selectedCol ? null : entry.col;
                     this._selectedCol = newCol;
                     this._repositionAll();
@@ -514,8 +526,8 @@ export class Signal3DMap {
         ctx.textBaseline = 'middle';
         ctx.fillText(idText, textW / 2 + 4, nameText ? H / 2 - 13 : H / 2);
         if (nameText) {
-            ctx.fillStyle = '#4488aa';
-            ctx.font = '18px sans-serif';
+            ctx.fillStyle = '#0d3a5c';
+            ctx.font = 'bold 18px sans-serif';
             ctx.fillText(nameText, textW / 2 + 4, H / 2 + 14);
         }
         const tex = new THREE.CanvasTexture(c);
@@ -524,20 +536,6 @@ export class Signal3DMap {
         const aspect = W / H;
         sprite.scale.set(aspect * 2.5, 2.5, 1);
         sprite.position.set(0, 8.5, 0);
-        return sprite;
-    }
-
-    _makeCloseHitSprite() {
-        // Small invisible-ish sprite for hit-testing the [x] area in the top-right of label
-        const c = document.createElement('canvas');
-        c.width = 32; c.height = 32;
-        const tex = new THREE.CanvasTexture(c);
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false });
-        const sprite = new THREE.Sprite(mat);
-        // Place at top-right of label sprite: label is aspect*2.5 wide, 2.5 tall
-        // x offset ≈ half label width − small margin
-        sprite.scale.set(0.9, 0.9, 1);
-        sprite.position.set(0, 8.5, 0);   // exact position set in _updateStaticMarkers
         return sprite;
     }
 
@@ -570,26 +568,15 @@ export class Signal3DMap {
             mast.position.y = 1.4;
             group.add(mast);
 
-            // 📡 emoji sprite — also used as click target for selection
+            // 📡 emoji sprite — click target for selection
             const emojiSprite = this._makeEmojiSprite('📡', 3.8);
             group.add(emojiSprite);
-            this._markerSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false });
+            this._markerSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: false });
 
-            // Text label sprite with embedded [x] (visual only)
+            // Text label sprite — click target; [x] region detected by normalized hit coords
             const labelSprite = this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor);
             group.add(labelSprite);
-            this._markerSprites.push({ sprite: labelSprite, col: markerCol, pubKeyFullHex, isClose: false });
-
-            // Invisible hit sprite for the [x] close button (top-right of label)
-            // Label: aspect*2.5 wide, 2.5 tall. W=220,H=(66 or 44); aspect≈220/66≈3.33 or 220/44=5
-            // Label center at y=8.5. x offset to [x] = (aspect*2.5/2 - 0.5)
-            const aspect = 220 / (m.name ? 66 : 44);
-            const closeHit = this._makeCloseHitSprite();
-            const xOff = (aspect * 2.5) / 2 - 0.45;
-            const yOff = 8.5 + 2.5 / 2 - 0.45;
-            closeHit.position.set(xOff, yOff, 0);
-            group.add(closeHit);
-            this._markerSprites.push({ sprite: closeHit, col: markerCol, pubKeyFullHex, isClose: true });
+            this._markerSprites.push({ sprite: labelSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: true });
 
             group.position.set(pos.x, 0, pos.z);
             this.scene.add(group);
