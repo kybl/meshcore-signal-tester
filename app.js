@@ -1026,7 +1026,11 @@ class MeshCoreMonitor {
     // Send DISCOVER_REQ 4 times with 500 ms gaps — LoRa is lossy, repeating improves coverage.
     // All retries share the same tag so every response is correlated correctly.
     async startDiscoverSequence(filterMask) {
-        if (!this.bleRxCharacteristic) return;
+        if (!this.bleRxCharacteristic) {
+            this.updateStatus('Not connected — connect to a device first.', 'error');
+            setTimeout(() => { if (this.statusEl?.classList.contains('error')) this.updateStatus('', ''); }, 3000);
+            return;
+        }
         if (this._discoverActive) return; // prevent double-click overlap
 
         const btn = document.getElementById('discoverBtn');
@@ -2927,25 +2931,23 @@ class MeshCoreMonitor {
         const buildExtra = (col, showMore, noticePrefix) => {
             const stats = col ? this._colStats(col) : null;
             const mapBtns = col ? this._contactsForMapButtons(col) : [];
-            const multiName = mapBtns.length > 1;
             const isAutoShown = col && col === this._chartSelected;
             const checkId = `${noticePrefix}ShowMore`;
             let mapHtml = '';
             if (mapBtns.length) {
                 mapHtml += `<div class="cn-map-btns">`;
-                for (const c of mapBtns) {
-                    const pinned = this._mapPins.has(c.pubKeyFullHex);
-                    const suffix = multiName ? ` ${this.escHtml(c.name)}` : '';
-                    let label, cls;
-                    if (pinned) {
-                        label = `✕${suffix || ' Remove pin'}`; cls = 'cn-map-btn cn-map-btn-active';
-                    } else if (isAutoShown) {
-                        label = `📌${suffix || ' Keep on map'}`; cls = 'cn-map-btn';
-                    } else {
-                        label = `📍${suffix || ' Show on map'}`; cls = 'cn-map-btn';
-                    }
-                    mapHtml += `<button class="${cls}" data-pubkey="${this.escHtml(c.pubKeyFullHex)}">${label}</button>`;
+                // Collapse all contacts into a single button regardless of count
+                const anyPinned = mapBtns.some(c => this._mapPins.has(c.pubKeyFullHex));
+                const allPubkeys = mapBtns.map(c => c.pubKeyFullHex).join('|');
+                let label, cls;
+                if (anyPinned) {
+                    label = '✕ Remove pin'; cls = 'cn-map-btn cn-map-btn-active';
+                } else if (isAutoShown) {
+                    label = '📌 Keep on map'; cls = 'cn-map-btn';
+                } else {
+                    label = '📍 Show on map'; cls = 'cn-map-btn';
                 }
+                mapHtml += `<button class="${cls}" data-pubkeys="${this.escHtml(allPubkeys)}">${label}</button>`;
                 mapHtml += `</div>`;
             }
             let html = `<div class="cn-showmore-row"><label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>${mapHtml}</div>`;
@@ -2970,9 +2972,12 @@ class MeshCoreMonitor {
             }
             document.querySelectorAll(`#${noticePrefix}NoticeExtra .cn-map-btn`).forEach(btn => {
                 btn.addEventListener('click', () => {
-                    const pk = btn.dataset.pubkey;
-                    if (this._mapPins.has(pk)) this._mapPins.delete(pk);
-                    else this._mapPins.add(pk);
+                    const pks = (btn.dataset.pubkeys || '').split('|').filter(Boolean);
+                    const anyPinned = pks.some(pk => this._mapPins.has(pk));
+                    for (const pk of pks) {
+                        if (anyPinned) this._mapPins.delete(pk);
+                        else this._mapPins.add(pk);
+                    }
                     this._updateMapPins();
                     this._updateCornerNotices();
                     document.getElementById('signalMapWrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -3269,6 +3274,23 @@ class MeshCoreMonitor {
             ].map(esc).join(','));
         }
 
+        // Append sent SNR history rows
+        for (const p of this._sentSnrHistory) {
+            lines.push([
+                new Date(p.time).toISOString(),
+                'SentSNR',
+                'SENTSNR',
+                p.col || '',
+                '',
+                p.snr.toFixed(2),
+                '',
+                '',
+                '',
+                p.label || '',
+                '',
+            ].map(esc).join(','));
+        }
+
         const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -3343,7 +3365,11 @@ class MeshCoreMonitor {
                 csvSender: iSnd >= 0 ? c[iSnd]  : '',
             });
         }
-        if (rows.length === 0) return;
+        // Split SentSNR rows from regular rows
+        const sentSnrRows = rows.filter(r => r.type === 'SentSNR');
+        rows = rows.filter(r => r.type !== 'SentSNR');
+
+        if (rows.length === 0 && sentSnrRows.length === 0) return;
 
         const importBtn = document.getElementById('importCsvBtn');
         const prevBtnText = importBtn?.textContent;
@@ -3417,9 +3443,20 @@ class MeshCoreMonitor {
             });
         }
 
+        // Import SentSNR history rows
+        for (const r of sentSnrRows) {
+            this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.repeater, label: r.csvText || r.repeater });
+        }
+        if (sentSnrRows.length) {
+            this._sentSnrHistory.sort((a, b) => a.time - b.time);
+            this.sentSnrChartWrap?.classList.remove('hidden');
+            this.renderSentSnrChart();
+        }
+
         this.sortColumns();
         // Freeze chart at last packet time + 1 min so all imported data is in view
-        if (!this._collecting) this._chartFrozenAt = rows[rows.length - 1].time + 1_000;
+        const lastTime = rows.length ? rows[rows.length - 1].time : 0;
+        if (!this._collecting && lastTime) this._chartFrozenAt = lastTime + 1_000;
         this.renderMsgTable();
         this.updateRepeaterTable();
         this.scheduleChartRender();
