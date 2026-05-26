@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=41';
+import { Signal3DMap } from './signal3d.js?v=42';
 
 class MeshCoreMonitor {
     constructor() {
@@ -601,6 +601,38 @@ class MeshCoreMonitor {
                 this.signalMap?.setShowMarker(false);
             }
         } catch {}
+
+        document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
+    }
+
+    _contactsWithGps() {
+        const out = [];
+        for (const [pubKeyFullHex, c] of this._contacts) {
+            if (c.name && (c.lat !== 0 || c.lon !== 0)) out.push(c);
+        }
+        return out;
+    }
+
+    _allRepeatersShown() {
+        const withGps = this._contactsWithGps();
+        return withGps.length > 0 && withGps.every(c => this._mapPins.has(c.pubKeyFullHex));
+    }
+
+    _toggleAllRepeatersOnMap() {
+        if (this._allRepeatersShown()) {
+            this._mapPins.clear();
+        } else {
+            for (const c of this._contactsWithGps()) this._mapPins.add(c.pubKeyFullHex);
+        }
+        this._updateMapPins();
+        this._updateCornerNotices();
+        this._updateShowAllBtn();
+    }
+
+    _updateShowAllBtn() {
+        const btn = document.getElementById('showAllRepeatersBtn');
+        if (!btn) return;
+        btn.textContent = this._allRepeatersShown() ? 'Hide all repeaters' : 'Show all repeaters';
     }
 
     _initHelpSystem() {
@@ -1023,6 +1055,7 @@ class MeshCoreMonitor {
                 col, pubKeyFullHex, isPinned: true });
         }
         this.signalMap.setStaticMarkers(markers);
+        this._updateShowAllBtn();
     }
 
     _updateContactsCount() {
@@ -1156,6 +1189,7 @@ class MeshCoreMonitor {
             this.renderMsgTable();
             this.updateRepeaterTable();
             this.scheduleChartRender();
+            this._updateShowAllBtn();
             return;
         }
         // PUSH_CODE_NEW_ADVERT = 0x8A — device heard an advert from a node not yet in contacts

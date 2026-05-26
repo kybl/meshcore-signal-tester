@@ -401,7 +401,7 @@ export class Signal3DMap {
                         // Normalize to ±0.5 (sprite edge)
                         const nx = offset.dot(camRight) / ss.x;
                         const ny = offset.dot(camUp)    / ss.y;
-                        if (nx > 0.27 && ny > 0.27) {
+                        if (nx > 0.27 && ny > 0.05) {
                             if (entry.isPinned) this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
                             else               this.onPinMarker?.(entry.col, entry.pubKeyFullHex);
                             return;

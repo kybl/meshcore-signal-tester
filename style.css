@@ -1266,6 +1266,27 @@ header {
     opacity: 0.65;
 }
 
+.location-status-settings {
+    font-size: 11px;
+    color: #aaa;
+    font-style: italic;
+}
+
+.btn-show-all-repeaters {
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.btn-show-all-repeaters:hover {
+    background: rgba(255,255,255,0.28);
+    border-color: rgba(255,255,255,0.7);
+}
+
 .signal-map-hint {
     font-size: 11px;
     opacity: 0.65;
