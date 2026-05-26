@@ -542,7 +542,7 @@ export class Signal3DMap {
         const sprite = new THREE.Sprite(mat);
         const aspect = W / H;
         sprite.scale.set(aspect * 3.0, 3.0, 1);
-        sprite.position.set(0, 8.5, 0);
+        sprite.position.set(0, 6.5, 0);
         return sprite;
     }
 
