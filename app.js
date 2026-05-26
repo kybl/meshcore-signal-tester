@@ -643,6 +643,8 @@ class MeshCoreMonitor {
                 'All packet arrivals this session. The same packet heard via two different repeaters counts as two.',
             'repeaters-count':
                 'Distinct repeaters visible in the current display window. More may be stored but hidden.',
+            'contacts':
+                'Nodes known from the contact list synced from your device (name, public key, GPS position). Used to label repeaters, show their position on the 3D map, and resolve short IDs. Updated automatically on connect and when new adverts arrive.',
             'sound':
                 'off = silent. short / medium / long play a beep of increasing duration (long is 4× short) on each new packet. Pitch varies with RSSI — stronger signal → higher pitch. Setting is remembered across sessions.',
             'ttl':
