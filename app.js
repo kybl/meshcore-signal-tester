@@ -926,9 +926,10 @@ class MeshCoreMonitor {
         const pubKey = payload.slice(1, 33);
         const pubKeyFull = Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('');
         const type = payload[33];
-        let name = '';
-        for (let i = 100; i < Math.min(132, payload.length) && payload[i] !== 0; i++)
-            name += String.fromCharCode(payload[i]);
+        const nameEnd = Math.min(132, payload.length);
+        let nullIdx = payload.indexOf(0, 100);
+        if (nullIdx < 0 || nullIdx > nameEnd) nullIdx = nameEnd;
+        const name = new TextDecoder('utf-8').decode(payload.slice(100, nullIdx)).trim();
         let lastAdvert = 0, lat = 0, lon = 0, lastmod = 0;
         if (payload.length >= 136) lastAdvert = payload[132] | (payload[133] << 8) | (payload[134] << 16) | (payload[135] << 24);
         if (payload.length >= 140) lat = ((payload[136] | (payload[137] << 8) | (payload[138] << 16) | (payload[139] << 24)) | 0) / 1e6;
@@ -944,11 +945,25 @@ class MeshCoreMonitor {
         this._updateContactsCount();
     }
 
-    _contactByPrefix(hexPrefix) {
+    _contactsByPrefix(hexPrefix) {
+        if (!hexPrefix || hexPrefix === 'direct') return [];
         const p = hexPrefix.toLowerCase();
+        const out = [];
         for (const [key, val] of this._contacts)
-            if (key.startsWith(p)) return val;
-        return null;
+            if (key.startsWith(p)) out.push(val);
+        return out;
+    }
+
+    _contactByPrefix(hexPrefix) {
+        return this._contactsByPrefix(hexPrefix)[0] ?? null;
+    }
+
+    _contactNameForCol(col) {
+        const matches = this._contactsByPrefix(col);
+        if (!matches.length) return null;
+        if (matches.length === 1) return matches[0].name;
+        // Multiple contacts share this prefix — show all names separated by /
+        return matches.map(c => c.name ?? '?').join(' / ');
     }
 
     _updateContactsCount() {
@@ -1844,7 +1859,7 @@ class MeshCoreMonitor {
         if (colKey !== this._lastColKey) {
             this._lastColKey = colKey;
             const repHeaders = visibleCols.map(r => {
-                const cName = r !== 'direct' ? (this._contactByPrefix(r)?.name ?? null) : null;
+                const cName = this._contactNameForCol(r);
                 const nameTag = cName ? `<br><span class="col-contact-name">${this.escHtml(cName)}</span>` : '';
                 return `<th colspan="2" class="msg-col-rep" data-col="${this.escHtml(r)}"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
             }).join('');
@@ -2783,7 +2798,7 @@ class MeshCoreMonitor {
             const lsc = this.signalColor(d.lastSnr,  13, -10, 0);
             const isSel = repeater === sel;
             const rowCls = sel ? (isSel ? 'rl-row-sel' : 'rl-row-dim') : '';
-            const cName = repeater !== 'direct' ? (this._contactByPrefix(repeater)?.name ?? null) : null;
+            const cName = this._contactNameForCol(repeater);
             const nameTag = cName ? `<span class="rl-name">${this.escHtml(cName)}</span>` : '';
             return `<tr data-col="${this.escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
                 <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
@@ -2852,6 +2867,12 @@ class MeshCoreMonitor {
                 document.getElementById('selNoticeRep').textContent = this.displayId(this._chartSelected);
                 const dot = document.getElementById('selNoticeDot');
                 if (dot) dot.style.background = this.getRepeaterColor(this._chartSelected);
+                const nameEl = document.getElementById('selNoticeName');
+                if (nameEl) {
+                    const cName = this._contactNameForCol(this._chartSelected);
+                    nameEl.textContent = cName ?? '';
+                    nameEl.style.display = cName ? '' : 'none';
+                }
             }
         }
     }

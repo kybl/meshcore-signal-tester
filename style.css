@@ -1648,6 +1648,12 @@ td.col-dim { opacity: 0.25; }
     line-height: 1.4;
 }
 .corner-notice-hint.hidden { display: none; }
+.corner-notice-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #7ab;
+    margin: 2px 0 4px;
+}
 .corner-notice-btns {
     display: flex;
     gap: 6px;
