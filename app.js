@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=34';
+import { Signal3DMap } from './signal3d.js?v=35';
 
 class MeshCoreMonitor {
     constructor() {
@@ -987,7 +987,7 @@ class MeshCoreMonitor {
             const contact = this._contacts.get(pubKeyHex);
             if (!contact?.name || (contact.lat === 0 && contact.lon === 0)) continue;
             const col = pubKeyHex.slice(0, 6);
-            markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name, color: this.getRepeaterColor(col) });
+            markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name, id: this.displayId(col), color: this.getRepeaterColor(col) });
         }
         this.signalMap.setStaticMarkers(markers);
     }
@@ -2878,23 +2878,24 @@ class MeshCoreMonitor {
             const mapBtns = col ? this._contactsForMapButtons(col) : [];
             const multiName = mapBtns.length > 1;
             const checkId = `${noticePrefix}ShowMore`;
-            let html = `<label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>`;
+            let mapHtml = '';
+            if (mapBtns.length) {
+                mapHtml += `<div class="cn-map-btns">`;
+                for (const c of mapBtns) {
+                    const pinned = this._mapPins.has(c.pubKeyFullHex);
+                    const label = multiName ? (pinned ? `✕ ${this.escHtml(c.name)}` : `📍 ${this.escHtml(c.name)}`)
+                                            : (pinned ? '✕ Map' : '📍 Map');
+                    mapHtml += `<button class="cn-map-btn${pinned ? ' cn-map-btn-active' : ''}" data-pubkey="${this.escHtml(c.pubKeyFullHex)}">${label}</button>`;
+                }
+                mapHtml += `</div>`;
+            }
+            let html = `<div class="cn-showmore-row"><label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>${mapHtml}</div>`;
             if (showMore && stats) {
                 html += `<div class="cn-stats">` +
                     `<div>Packets: <b>${stats.count}</b></div>` +
                     `<div>RSSI: last <b>${stats.lastRssi}</b>, best <b>${stats.maxRssi}</b> dBm</div>` +
                     `<div>SNR: last <b>${fSnr(stats.lastSnr)}</b>, best <b>${fSnr(stats.maxSnr)}</b> dB</div>` +
                     `</div>`;
-            }
-            if (mapBtns.length) {
-                html += `<div class="cn-map-btns">`;
-                for (const c of mapBtns) {
-                    const pinned = this._mapPins.has(c.pubKeyFullHex);
-                    const label = multiName ? (pinned ? `Remove ${this.escHtml(c.name)}` : `Show on map: ${this.escHtml(c.name)}`)
-                                            : (pinned ? 'Remove from map' : 'Show on map');
-                    html += `<button class="cn-map-btn${pinned ? ' cn-map-btn-active' : ''}" data-pubkey="${this.escHtml(c.pubKeyFullHex)}">${label}</button>`;
-                }
-                html += `</div>`;
             }
             return html;
         };

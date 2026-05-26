@@ -416,12 +416,59 @@ export class Signal3DMap {
     }
 
     _disposeStaticMarkers() {
-        for (const m of this._staticMarkerMeshes) {
-            this.scene.remove(m);
-            m.geometry?.dispose();
-            m.material?.dispose();
+        for (const g of this._staticMarkerMeshes) {
+            this.scene.remove(g);
+            g.traverse(obj => {
+                obj.geometry?.dispose();
+                if (obj.material) {
+                    obj.material.map?.dispose();
+                    obj.material.dispose();
+                }
+            });
         }
         this._staticMarkerMeshes = [];
+    }
+
+    _makeMarkerLabel(idText, nameText, hexColor) {
+        const W = 320, H = nameText ? 72 : 48;
+        const dpr = 2;
+        const c = document.createElement('canvas');
+        c.width = W * dpr; c.height = H * dpr;
+        const ctx = c.getContext('2d');
+        ctx.scale(dpr, dpr);
+        const r = 8;
+        ctx.beginPath();
+        ctx.moveTo(r, 2); ctx.lineTo(W - r, 2);
+        ctx.arcTo(W - 2, 2, W - 2, r + 2, r);
+        ctx.lineTo(W - 2, H - r - 2);
+        ctx.arcTo(W - 2, H - 2, W - r - 2, H - 2, r);
+        ctx.lineTo(r + 2, H - 2);
+        ctx.arcTo(2, H - 2, 2, H - r - 2, r);
+        ctx.lineTo(2, r + 2);
+        ctx.arcTo(2, 2, r + 2, 2, r);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(255,255,255,0.92)';
+        ctx.fill();
+        ctx.strokeStyle = hexColor;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.fillStyle = '#1a1a1a';
+        ctx.font = `bold ${nameText ? 22 : 26}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(idText, W / 2, nameText ? H / 2 - 13 : H / 2);
+        if (nameText) {
+            ctx.fillStyle = '#5588aa';
+            ctx.font = '18px sans-serif';
+            ctx.fillText(nameText, W / 2, H / 2 + 14);
+        }
+        const tex = new THREE.CanvasTexture(c);
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, sizeAttenuation: true });
+        const sprite = new THREE.Sprite(mat);
+        const aspect = W / H;
+        sprite.scale.set(aspect * 1.2, 1.2, 1);
+        sprite.position.set(0, 5.2, 0);
+        return sprite;
     }
 
     _updateStaticMarkers() {
@@ -430,21 +477,53 @@ export class Signal3DMap {
         for (const m of this._staticMarkers) {
             const pos = this._latLonToWorld(m.lat, m.lon);
             if (!pos) continue;
-            const col = new THREE.Color(m.color || '#ff8800');
-            const sphere = new THREE.Mesh(
-                new THREE.SphereGeometry(0.55, 8, 6),
+            const hexColor = m.color || '#ff8800';
+            const col = new THREE.Color(hexColor);
+            const group = new THREE.Group();
+
+            // Base shadow circle
+            const base = new THREE.Mesh(
+                new THREE.CircleGeometry(1.3, 24),
+                new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.28, depthWrite: false })
+            );
+            base.rotation.x = -Math.PI / 2;
+            base.position.y = 0.06;
+            group.add(base);
+
+            // Mast
+            const mast = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.09, 0.13, 2.5, 8),
                 new THREE.MeshBasicMaterial({ color: col })
             );
-            sphere.position.set(pos.x, 2.0, pos.z);
-            this.scene.add(sphere);
-            this._staticMarkerMeshes.push(sphere);
-            const lineGeo = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(pos.x, 0.1, pos.z),
-                new THREE.Vector3(pos.x, 2.0, pos.z),
-            ]);
-            const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: col }));
-            this.scene.add(line);
-            this._staticMarkerMeshes.push(line);
+            mast.position.y = 1.25;
+            group.add(mast);
+
+            // Cross arms (satellite-like)
+            const armMat = new THREE.MeshBasicMaterial({ color: col });
+            const armGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.6, 6);
+            const arm1 = new THREE.Mesh(armGeo, armMat);
+            arm1.rotation.z = Math.PI / 2;
+            arm1.position.y = 2.4;
+            group.add(arm1);
+            const arm2 = new THREE.Mesh(armGeo, armMat);
+            arm2.rotation.x = Math.PI / 2;
+            arm2.position.y = 2.4;
+            group.add(arm2);
+
+            // Top "dish" body — octahedron
+            const head = new THREE.Mesh(
+                new THREE.OctahedronGeometry(0.6, 0),
+                new THREE.MeshBasicMaterial({ color: col })
+            );
+            head.position.y = 3.0;
+            group.add(head);
+
+            // Text label sprite
+            group.add(this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor));
+
+            group.position.set(pos.x, 0, pos.z);
+            this.scene.add(group);
+            this._staticMarkerMeshes.push(group);
         }
     }
 
@@ -966,12 +1045,17 @@ export class Signal3DMap {
     }
 
     _scaleMarkerToScreen() {
-        if (!this.userMarker) return;
-        const d = this.camera.position.distanceTo(this.userMarker.position);
         const screenH = this.canvas.clientHeight || 1;
-        // Cone local height = 2.8; target 40 CSS pixels tall on screen
         const fovFactor = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
-        this.userMarker.scale.setScalar(40 * d * fovFactor / (2.8 * screenH));
+        const scaleFor = (group, localH) => {
+            const d = this.camera.position.distanceTo(group.position);
+            group.scale.setScalar(40 * d * fovFactor / (localH * screenH));
+        };
+        // Cone local height = 2.8; target 40 CSS pixels tall on screen
+        if (this.userMarker) scaleFor(this.userMarker, 2.8);
+        for (const g of this._staticMarkerMeshes) {
+            scaleFor(g, 3.0);
+        }
     }
 
     _updateUserMarker() {

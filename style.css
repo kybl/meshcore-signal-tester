@@ -1607,7 +1607,7 @@ td.col-dim { opacity: 0.25; }
     flex-direction: column;
     gap: 7px;
     min-width: 180px;
-    max-width: 260px;
+    max-width: 300px;
     font-size: 12px;
     color: #444;
 }
@@ -1691,9 +1691,16 @@ td.col-dim { opacity: 0.25; }
     border-radius: 5px;
     padding: 5px 7px;
 }
+.cn-showmore-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
 .cn-map-btns {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
     gap: 4px;
 }
 .cn-map-btn {
@@ -1723,6 +1730,7 @@ td.col-dim { opacity: 0.25; }
     color: #444;
     flex: 1;
     text-align: center;
+    white-space: nowrap;
 }
 .corner-notice-btn:hover { background: #eaeaea; border-color: #bbb; }
 .corner-notice-btn-primary {
