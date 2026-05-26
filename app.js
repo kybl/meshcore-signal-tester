@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=40';
+import { Signal3DMap } from './signal3d.js?v=41';
 
 class MeshCoreMonitor {
     constructor() {
@@ -1000,7 +1000,7 @@ class MeshCoreMonitor {
         const markers = [];
         const seen = new Set();
         // Auto-show currently selected repeater if it has GPS coords
-        if (this._chartSelected) {
+        if (this._chartSelected && (!this._repFilterTerms.length || this._colMatchesRepFilter(this._chartSelected))) {
             for (const c of this._contactsForMapButtons(this._chartSelected)) {
                 if (seen.has(c.pubKeyFullHex)) continue;
                 seen.add(c.pubKeyFullHex);
@@ -1015,8 +1015,9 @@ class MeshCoreMonitor {
             if (seen.has(pubKeyFullHex)) continue;
             const contact = this._contacts.get(pubKeyFullHex);
             if (!contact?.name || (contact.lat === 0 && contact.lon === 0)) continue;
-            seen.add(pubKeyFullHex);
             const col = pubKeyFullHex.slice(0, 6);
+            if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
+            seen.add(pubKeyFullHex);
             markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name,
                 id: this.displayId(col), color: this.getRepeaterColor(col),
                 col, pubKeyFullHex, isPinned: true });
@@ -2194,7 +2195,7 @@ class MeshCoreMonitor {
         const rawRange = vMax - vMin || 1;
         const yStep = rawRange <= 5 ? 1 : rawRange <= 10 ? 2 : rawRange <= 25 ? 5 : rawRange <= 50 ? 10 : 20;
         const yPad = Math.max(1, yStep / 2);
-        const yMin = vMin - yPad;
+        const yMin = Math.floor((vMin - yPad) / yStep) * yStep;
         const yMax = Math.ceil((vMax + yPad) / yStep) * yStep;
         return { yMin, yMax, yStep };
     }
@@ -3229,6 +3230,7 @@ class MeshCoreMonitor {
         this.signalMap?.setFilterFn(
             this._repFilterTerms.length ? col => this._colMatchesRepFilter(col) : null
         );
+        this._updateMapPins();
         this._updateCornerNotices();
     }
 
