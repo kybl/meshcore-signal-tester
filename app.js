@@ -112,6 +112,9 @@ class MeshCoreMonitor {
         this.activeHashesEl = document.getElementById('activeHashes');
         this.totalRxEl = document.getElementById('totalRx');
         this.totalRepeatersEl = document.getElementById('totalRepeaters');
+        this.contactsCountEl = document.getElementById('contactsCount');
+        this.contactsHstat = document.getElementById('contactsHstat');
+        this.contactsLoadingMsg = document.getElementById('contactsLoadingMsg');
         this.repeaterLogBody = document.getElementById('repeaterLogBody');
         this.soundSelect = document.getElementById('soundSelect');
         try { const s = localStorage.getItem('sound'); if (s) this.soundSelect.value = s; } catch {}
@@ -892,8 +895,16 @@ class MeshCoreMonitor {
         cmd[0] = 0x04;
         if (this._contactsLastmod > 0)
             new DataView(cmd.buffer).setUint32(1, this._contactsLastmod, true);
+        this._setContactsLoading(true);
         try { await this.bleRxCharacteristic.writeValueWithoutResponse(cmd); }
-        catch (e) { console.error('sendGetContacts:', e); }
+        catch (e) {
+            console.error('sendGetContacts:', e);
+            this._setContactsLoading(false);
+        }
+    }
+
+    _setContactsLoading(on) {
+        this.contactsLoadingMsg?.classList.toggle('hidden', !on);
     }
 
     _parseContact(payload) {
@@ -907,24 +918,30 @@ class MeshCoreMonitor {
         // bytes 136-139 = lat (int32 LE / 1e6)
         // bytes 140-143 = lon (int32 LE / 1e6)
         // bytes 144-147 = lastmod (uint32 LE)
-        if (payload.length < 148) return;
+        console.log(`_parseContact: len=${payload.length} code=0x${payload[0].toString(16)}`);
+        if (payload.length < 132) {
+            console.warn(`_parseContact: too short (${payload.length}), skipping`);
+            return;
+        }
         const pubKey = payload.slice(1, 33);
         const pubKeyFull = Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('');
         const type = payload[33];
         let name = '';
-        for (let i = 100; i < 132 && payload[i] !== 0; i++)
+        for (let i = 100; i < Math.min(132, payload.length) && payload[i] !== 0; i++)
             name += String.fromCharCode(payload[i]);
-        const dv = new DataView(payload.buffer, payload.byteOffset);
-        const lastAdvert = dv.getUint32(132, true);
-        const lat = dv.getInt32(136, true) / 1e6;
-        const lon = dv.getInt32(140, true) / 1e6;
-        const lastmod = dv.getUint32(144, true);
+        let lastAdvert = 0, lat = 0, lon = 0, lastmod = 0;
+        if (payload.length >= 136) lastAdvert = payload[132] | (payload[133] << 8) | (payload[134] << 16) | (payload[135] << 24);
+        if (payload.length >= 140) lat = ((payload[136] | (payload[137] << 8) | (payload[138] << 16) | (payload[139] << 24)) | 0) / 1e6;
+        if (payload.length >= 144) lon = ((payload[140] | (payload[141] << 8) | (payload[142] << 16) | (payload[143] << 24)) | 0) / 1e6;
+        if (payload.length >= 148) lastmod = payload[144] | (payload[145] << 8) | (payload[146] << 16) | (payload[147] << 24);
+        console.log(`_parseContact: key=${pubKeyFull.slice(0,6)} type=${type} name="${name}"`);
         this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod });
         if (lastmod > this._contactsLastmod) this._contactsLastmod = lastmod;
         // Keep the AD stub's name in sync
         const pubKeyHex = pubKeyFull.slice(0, 6).toUpperCase();
         const stub = this.hashData.get('AD:' + pubKeyHex);
         if (stub?._stub && name) stub.meta.name = name;
+        this._updateContactsCount();
     }
 
     _contactByPrefix(hexPrefix) {
@@ -932,6 +949,11 @@ class MeshCoreMonitor {
         for (const [key, val] of this._contacts)
             if (key.startsWith(p)) return val;
         return null;
+    }
+
+    _updateContactsCount() {
+        if (this.contactsCountEl) this.contactsCountEl.textContent = this._contacts.size;
+        if (this.contactsHstat) this.contactsHstat.style.display = this._contacts.size > 0 ? '' : 'none';
     }
 
     // Send DISCOVER_REQ 4 times with 500 ms gaps — LoRa is lossy, repeating improves coverage.
@@ -1043,15 +1065,22 @@ class MeshCoreMonitor {
         }
 
         // Contact list responses (from CMD_GET_CONTACTS = 0x04)
-        if (pushCode === 0x02) { this._contactsReceiving = true; return; }
+        if (pushCode === 0x02) {
+            console.log(`contacts: start, count=${payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24)}`);
+            this._contactsReceiving = true;
+            return;
+        }
         if (pushCode === 0x03) {
             if (this._contactsReceiving) this._parseContact(payload);
             return;
         }
         if (pushCode === 0x04 && this._contactsReceiving) {
             this._contactsReceiving = false;
+            this._setContactsLoading(false);
             if (payload.length >= 5)
-                this._contactsLastmod = new DataView(payload.buffer, payload.byteOffset).getUint32(1, true);
+                this._contactsLastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
+            console.log(`contacts: done, total=${this._contacts.size}, lastmod=${this._contactsLastmod}`);
+            this._updateContactsCount();
             this.renderMsgTable();
             this.scheduleChartRender();
             return;

@@ -1672,6 +1672,12 @@ td.col-dim { opacity: 0.25; }
 }
 .corner-notice-btn-primary:hover { background: #5569d4; border-color: #4457c0; }
 
+.contacts-loading {
+    font-size: 11px;
+    color: #7ab;
+    font-style: italic;
+    margin-left: 12px;
+}
 .ping-bar {
     display: flex;
     align-items: center;
