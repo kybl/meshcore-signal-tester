@@ -645,6 +645,10 @@ class MeshCoreMonitor {
                 'Distinct repeaters visible in the current display window. More may be stored but hidden.',
             'contacts':
                 'Nodes known from the contact list synced from your device (name, public key, GPS position). Used to label repeaters, show their position on the 3D map, and resolve short IDs. Updated automatically on connect and when new adverts arrive.',
+            'contact-unknown':
+                'This repeater is not yet in the contact list — its name and position are unknown. To resolve it: make sure your device is connected, then use "Discover nodes" in the Active Ping section. The repeater will appear in the list once it responds to the discovery request or sends an advert.',
+            'contact-no-gps':
+                'This node is in the contact list but has no GPS coordinates. Either it has no GPS module, GPS sharing is disabled in its firmware settings, or it simply hasn\'t sent an advert with coordinates yet.',
             'sound':
                 'off = silent. short / medium / long play a beep of increasing duration (long is 4× short) on each new packet. Pitch varies with RSSI — stronger signal → higher pitch. Setting is remembered across sessions.',
             'ttl':
@@ -2966,6 +2970,8 @@ class MeshCoreMonitor {
 
         const buildExtra = (col, showMore, noticePrefix) => {
             const stats = col ? this._colStats(col) : null;
+            const contacts = col && col !== 'direct' ? this._contactsByPrefix(col) : [];
+            const contactsWithName = contacts.filter(c => c.name);
             const mapBtns = col ? this._contactsForMapButtons(col) : [];
             const isAutoShown = col && col === this._chartSelected;
             const checkId = `${noticePrefix}ShowMore`;
@@ -2993,6 +2999,13 @@ class MeshCoreMonitor {
                     `<div>RSSI: last <b>${stats.lastRssi}</b>, best <b>${stats.maxRssi}</b> dBm</div>` +
                     `<div>SNR: last <b>${fSnr(stats.lastSnr)}</b>, best <b>${fSnr(stats.maxSnr)}</b> dB</div>` +
                     `</div>`;
+                if (col && col !== 'direct') {
+                    if (contactsWithName.length === 0) {
+                        html += `<div class="cn-contact-note">Name not available <span class="help-icon" data-help="contact-unknown">?</span></div>`;
+                    } else if (mapBtns.length === 0) {
+                        html += `<div class="cn-contact-note">Position not available <span class="help-icon" data-help="contact-no-gps">?</span></div>`;
+                    }
+                }
             }
             return html;
         };

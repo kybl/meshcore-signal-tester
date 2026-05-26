@@ -1724,6 +1724,18 @@ td.col-dim { opacity: 0.25; }
     border-radius: 5px;
     padding: 5px 7px;
 }
+.cn-contact-note {
+    font-size: 11px;
+    color: #888;
+    font-style: italic;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+}
+.cn-contact-note .help-icon {
+    font-style: normal;
+}
 .cn-showmore-row {
     display: flex;
     align-items: center;
