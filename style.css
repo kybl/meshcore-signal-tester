@@ -1451,6 +1451,13 @@ header {
     white-space: nowrap;
 }
 
+.smi-colname {
+    font-size: 11px;
+    font-weight: normal;
+    color: #7ab;
+    margin-left: 5px;
+}
+
 .smi-filter {
     margin-top: 6px;
     display: block;
@@ -1654,6 +1661,54 @@ td.col-dim { opacity: 0.25; }
     color: #7ab;
     margin: 2px 0 4px;
 }
+.corner-notice-name-inline {
+    font-size: 11px;
+    font-weight: 600;
+    color: #7ab;
+    margin-left: 4px;
+}
+.corner-notice-extra {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.cn-showmore-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: #666;
+    cursor: pointer;
+    user-select: none;
+}
+.cn-stats {
+    font-size: 11px;
+    color: #555;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #f9f9f9;
+    border-radius: 5px;
+    padding: 5px 7px;
+}
+.cn-map-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.cn-map-btn {
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid #b8d8e8;
+    background: #e8f4fb;
+    cursor: pointer;
+    font-size: 11px;
+    color: #2a6080;
+    text-align: left;
+}
+.cn-map-btn:hover { background: #d0eaf8; border-color: #80b8d8; }
+.cn-map-btn-active { background: #c8e8c8; border-color: #80b880; color: #206020; }
+.cn-map-btn-active:hover { background: #b8ddb8; }
 .corner-notice-btns {
     display: flex;
     gap: 6px;

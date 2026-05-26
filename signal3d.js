@@ -62,8 +62,11 @@ export class Signal3DMap {
         this.emptyEl   = opts.emptyEl;
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
+        this.nameForCol = opts.nameForCol || null;
 
         this.points       = [];     // { lat, lon, rssi, snr, col, time }
+        this._staticMarkers     = [];   // { lat, lon, name, color }
+        this._staticMarkerMeshes = [];
         this.userLoc      = null;
         this.watchId      = null;
         this.tileBounds   = null;   // { x0, y0, nx, ny, zoom }
@@ -390,22 +393,59 @@ export class Signal3DMap {
         if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
         const pts = this.points.filter(p => p.col === col);
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
-        const maxRssi = Math.max(...pts.map(p => p.rssi));
-        const maxSnr  = Math.max(...pts.map(p => p.snr ?? -Infinity));
-        const last    = pts[pts.length - 1];
         const color   = this.colorFor(col);
         const dot     = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;flex-shrink:0"></span>`;
-        const fSnr    = v => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}` : '—';
+        const name    = this.nameForCol ? this.nameForCol(col) : null;
+        const nameHtml = name ? ` <span class="smi-colname">${this._escHtml(name)}</span>` : '';
         this.infoEl.innerHTML =
             `<button class="smi-close" title="Deselect">✕</button>` +
-            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b><span class="smi-count">${pts.length} pkt${pts.length !== 1 ? 's' : ''}</span></div>` +
-            `<div class="smi-stat">RSSI: best <b>${maxRssi}</b>, last <b>${last.rssi}</b> dBm</div>` +
-            `<div class="smi-stat">SNR: best <b>${fSnr(maxSnr)}</b>, last <b>${fSnr(last.snr)}</b> dB</div>`;
+            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}</div>`;
         this.infoEl.classList.remove('hidden');
     }
 
     _escHtml(s) {
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ---- Static contact markers ----
+
+    setStaticMarkers(markers) {
+        this._disposeStaticMarkers();
+        this._staticMarkers = markers || [];
+        this._updateStaticMarkers();
+    }
+
+    _disposeStaticMarkers() {
+        for (const m of this._staticMarkerMeshes) {
+            this.scene.remove(m);
+            m.geometry?.dispose();
+            m.material?.dispose();
+        }
+        this._staticMarkerMeshes = [];
+    }
+
+    _updateStaticMarkers() {
+        this._disposeStaticMarkers();
+        if (!this._staticMarkers.length || !this.tileBounds) return;
+        for (const m of this._staticMarkers) {
+            const pos = this._latLonToWorld(m.lat, m.lon);
+            if (!pos) continue;
+            const col = new THREE.Color(m.color || '#ff8800');
+            const sphere = new THREE.Mesh(
+                new THREE.SphereGeometry(0.55, 8, 6),
+                new THREE.MeshBasicMaterial({ color: col })
+            );
+            sphere.position.set(pos.x, 2.0, pos.z);
+            this.scene.add(sphere);
+            this._staticMarkerMeshes.push(sphere);
+            const lineGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(pos.x, 0.1, pos.z),
+                new THREE.Vector3(pos.x, 2.0, pos.z),
+            ]);
+            const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: col }));
+            this.scene.add(line);
+            this._staticMarkerMeshes.push(line);
+        }
     }
 
     // ---- Map source ----
@@ -921,6 +961,8 @@ export class Signal3DMap {
         if (this._lineSegs)
             this._lineSegs.geometry.setAttribute('color', new THREE.BufferAttribute(litCol, 3));
         this._lineSegsDim = makeLines(dimPts, dimMat);
+
+        this._updateStaticMarkers();
     }
 
     _scaleMarkerToScreen() {

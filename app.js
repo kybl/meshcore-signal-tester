@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=33';
+import { Signal3DMap } from './signal3d.js?v=34';
 
 class MeshCoreMonitor {
     constructor() {
@@ -27,6 +27,9 @@ class MeshCoreMonitor {
         this._contacts = new Map(); // pubKeyFullHex → {name, type, lat, lon, lastAdvert, lastmod}
         this._contactsLastmod = 0;
         this._contactsReceiving = false;
+        this._selShowMore = false;
+        this._filterShowMore = false;
+        this._mapPins = new Set(); // pubKeyFullHex of contacts pinned to 3D map
         this._batteryCharacteristic = null;
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
@@ -510,6 +513,7 @@ class MeshCoreMonitor {
                 infoEl:        document.getElementById('signalMapInfo'),
                 colorFor:      col => this.getRepeaterColor(col),
                 displayId:     col => this.displayId(col),
+                nameForCol:    col => this._contactNameForCol(col),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
                 onSelect:      col => {
@@ -932,7 +936,7 @@ class MeshCoreMonitor {
         if (payload.length >= 144) lon = ((payload[140] | (payload[141] << 8) | (payload[142] << 16) | (payload[143] << 24)) | 0) / 1e6;
         if (payload.length >= 148) lastmod = payload[144] | (payload[145] << 8) | (payload[146] << 16) | (payload[147] << 24);
         console.log(`_parseContact: key=${pubKeyFull.slice(0,6)} type=${type} name="${name}"`);
-        this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod });
+        this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod, pubKeyFullHex: pubKeyFull });
         if (lastmod > this._contactsLastmod) this._contactsLastmod = lastmod;
         // Keep the AD stub's name in sync
         const pubKeyHex = pubKeyFull.slice(0, 6).toUpperCase();
@@ -956,8 +960,36 @@ class MeshCoreMonitor {
 
     _contactNameForCol(col) {
         const matches = this._contactsByPrefix(col);
-        if (matches.length !== 1) return null; // 0 = unknown, 2+ = ambiguous prefix
-        return matches[0].name;
+        if (!matches.length) return null;
+        if (matches.length === 1) return matches[0].name ?? null;
+        return matches.map(c => c.name ?? '?').join(' / ');
+    }
+
+    _colStats(col) {
+        const pts = this.chartPoints.filter(p => p.col === col);
+        if (!pts.length) return null;
+        const maxRssi = Math.max(...pts.map(p => p.rssi));
+        const snrPts  = pts.filter(p => p.snr != null);
+        const maxSnr  = snrPts.length ? Math.max(...snrPts.map(p => p.snr)) : null;
+        const last    = pts[pts.length - 1];
+        return { count: pts.length, lastRssi: last.rssi, lastSnr: last.snr ?? null, maxRssi, maxSnr };
+    }
+
+    _contactsForMapButtons(col) {
+        const matches = this._contactsByPrefix(col);
+        return matches.filter(c => c.name && (c.lat !== 0 || c.lon !== 0));
+    }
+
+    _updateMapPins() {
+        if (!this.signalMap) return;
+        const markers = [];
+        for (const pubKeyHex of this._mapPins) {
+            const contact = this._contacts.get(pubKeyHex);
+            if (!contact?.name || (contact.lat === 0 && contact.lon === 0)) continue;
+            const col = pubKeyHex.slice(0, 6);
+            markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name, color: this.getRepeaterColor(col) });
+        }
+        this.signalMap.setStaticMarkers(markers);
     }
 
     _updateContactsCount() {
@@ -2563,8 +2595,10 @@ class MeshCoreMonitor {
         const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const color = this.getRepeaterColor(nearest.col);
         const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
+        const cName = this._contactNameForCol(nearest.col);
+        const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this.escHtml(cName)}</span>` : '';
         this.tooltip.innerHTML =
-            `${dot}<b>${this.escHtml(this.displayId(nearest.col))}</b><br>` +
+            `${dot}<b>${this.escHtml(this.displayId(nearest.col))}</b>${nameHtml}<br>` +
             `${time}<br>` +
             `RSSI ${nearest.rssi ?? '—'} &nbsp; SNR ${nearest.snr?.toFixed(1) ?? '—'}`;
 
@@ -2718,6 +2752,7 @@ class MeshCoreMonitor {
         this.repeaterColumns = [];
         this.allRepeaters.clear();
         this._chartSelected = null;
+        this._mapPins.clear();
         this.signalMap?.selectColumn(null);
         this.signalMap?.clearPoints?.();
         if (this.msgTableBody) this.msgTableBody.innerHTML = '';
@@ -2836,13 +2871,61 @@ class MeshCoreMonitor {
         const hasFilter = this._repFilterTerms.length > 0;
         const hasSel    = !!this._chartSelected;
 
+        const fSnr = v => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}` : '—';
+
+        const buildExtra = (col, showMore, noticePrefix) => {
+            const stats = col ? this._colStats(col) : null;
+            const mapBtns = col ? this._contactsForMapButtons(col) : [];
+            const multiName = mapBtns.length > 1;
+            const checkId = `${noticePrefix}ShowMore`;
+            let html = `<label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>`;
+            if (showMore && stats) {
+                html += `<div class="cn-stats">` +
+                    `<div>Packets: <b>${stats.count}</b></div>` +
+                    `<div>RSSI: last <b>${stats.lastRssi}</b>, best <b>${stats.maxRssi}</b> dBm</div>` +
+                    `<div>SNR: last <b>${fSnr(stats.lastSnr)}</b>, best <b>${fSnr(stats.maxSnr)}</b> dB</div>` +
+                    `</div>`;
+            }
+            if (mapBtns.length) {
+                html += `<div class="cn-map-btns">`;
+                for (const c of mapBtns) {
+                    const pinned = this._mapPins.has(c.pubKeyFullHex);
+                    const label = multiName ? (pinned ? `Remove ${this.escHtml(c.name)}` : `Show on map: ${this.escHtml(c.name)}`)
+                                            : (pinned ? 'Remove from map' : 'Show on map');
+                    html += `<button class="cn-map-btn${pinned ? ' cn-map-btn-active' : ''}" data-pubkey="${this.escHtml(c.pubKeyFullHex)}">${label}</button>`;
+                }
+                html += `</div>`;
+            }
+            return html;
+        };
+
+        const wireExtra = (noticePrefix, showMoreFlag) => {
+            const checkEl = document.getElementById(`${noticePrefix}ShowMore`);
+            if (checkEl) {
+                checkEl.addEventListener('change', () => {
+                    if (noticePrefix === 'sel') this._selShowMore = checkEl.checked;
+                    else this._filterShowMore = checkEl.checked;
+                    this._updateCornerNotices();
+                });
+            }
+            document.querySelectorAll(`#${noticePrefix}NoticeExtra .cn-map-btn`).forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const pk = btn.dataset.pubkey;
+                    if (this._mapPins.has(pk)) this._mapPins.delete(pk);
+                    else this._mapPins.add(pk);
+                    this._updateMapPins();
+                    this._updateCornerNotices();
+                    document.getElementById('signalMapWrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                });
+            });
+        };
+
         // --- Filter notice ---
         const filterNotice = document.getElementById('filterNotice');
         if (filterNotice) {
             filterNotice.classList.toggle('hidden', !hasFilter);
             if (hasFilter) {
                 document.getElementById('filterNoticeRep').textContent = this._repFilterTerms.join(', ');
-                // Only show dot + name when the filter resolves to exactly one specific column
                 const matchingCols = this.repeaterColumns.filter(c => this._colMatchesRepFilter(c));
                 const exactCol = matchingCols.length === 1 && !matchingCols[0].includes('/') ? matchingCols[0] : null;
                 const dot = document.getElementById('filterNoticeDot');
@@ -2853,8 +2936,13 @@ class MeshCoreMonitor {
                 const nameEl = document.getElementById('filterNoticeName');
                 if (nameEl) {
                     const cName = exactCol ? this._contactNameForCol(exactCol) : null;
-                    nameEl.textContent = cName ?? '';
+                    nameEl.textContent = cName ? ` ${cName}` : '';
                     nameEl.style.display = cName ? '' : 'none';
+                }
+                const extra = document.getElementById('filterNoticeExtra');
+                if (extra) {
+                    extra.innerHTML = buildExtra(exactCol, this._filterShowMore, 'filter');
+                    wireExtra('filter', this._filterShowMore);
                 }
             }
         }
@@ -2870,8 +2958,13 @@ class MeshCoreMonitor {
                 const nameEl = document.getElementById('selNoticeName');
                 if (nameEl) {
                     const cName = this._contactNameForCol(this._chartSelected);
-                    nameEl.textContent = cName ?? '';
+                    nameEl.textContent = cName ? ` ${cName}` : '';
                     nameEl.style.display = cName ? '' : 'none';
+                }
+                const extra = document.getElementById('selNoticeExtra');
+                if (extra) {
+                    extra.innerHTML = buildExtra(this._chartSelected, this._selShowMore, 'sel');
+                    wireExtra('sel', this._selShowMore);
                 }
             }
         }

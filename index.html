@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=55">
+    <link rel="stylesheet" href="style.css?v=56">
 </head>
 <body>
     <div class="container">
@@ -227,19 +227,19 @@
     <!-- Corner notice: repeater filter active -->
     <div id="filterNotice" class="corner-notice hidden">
         <div class="corner-notice-line1">
-            Filtered to <span class="corner-notice-dot" id="filterNoticeDot"></span><span class="corner-notice-id" id="filterNoticeRep"></span>
+            Filtered to <span class="corner-notice-dot" id="filterNoticeDot"></span><span class="corner-notice-id" id="filterNoticeRep"></span><span id="filterNoticeName" class="corner-notice-name-inline" style="display:none"></span>
             <span class="help-icon" data-help="rep-filter">?</span>
         </div>
-        <div id="filterNoticeName" class="corner-notice-name" style="display:none"></div>
+        <div id="filterNoticeExtra" class="corner-notice-extra"></div>
         <button id="filterNoticeClear" class="corner-notice-btn">Clear filter</button>
     </div>
 
     <!-- Corner notice: repeater selected -->
     <div id="selNotice" class="corner-notice hidden">
         <div class="corner-notice-line1">
-            Selected <span class="corner-notice-dot" id="selNoticeDot"></span><span class="corner-notice-id" id="selNoticeRep"></span>
+            Selected <span class="corner-notice-dot" id="selNoticeDot"></span><span class="corner-notice-id" id="selNoticeRep"></span><span id="selNoticeName" class="corner-notice-name-inline" style="display:none"></span>
         </div>
-        <div id="selNoticeName" class="corner-notice-name" style="display:none"></div>
+        <div id="selNoticeExtra" class="corner-notice-extra"></div>
         <div class="corner-notice-btns">
             <button id="selNoticeClear" class="corner-notice-btn">Deselect</button>
             <button id="selNoticeFilter" class="corner-notice-btn corner-notice-btn-primary">Filter to this only</button>
@@ -286,6 +286,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=55"></script>
+    <script type="module" src="app.js?v=56"></script>
 </body>
 </html>
