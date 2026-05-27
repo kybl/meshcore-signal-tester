@@ -316,6 +316,7 @@ class MeshCoreMonitor {
                 isLight = !isLight;
                 applyTheme(isLight);
                 try { localStorage.setItem('theme', isLight ? 'light' : 'dark'); } catch (e) {}
+                this.renderCharts();
             });
         }
 
@@ -2245,9 +2246,16 @@ class MeshCoreMonitor {
                 h = Math.imul(h, 0x01000193);
             }
             const hue = (h >>> 0) % 360;
-            this.chartColors.set(col, `hsl(${hue}, 72%, 44%)`);
+            this.chartColors.set(col, hue);
         }
-        return this.chartColors.get(col);
+        const hue = this.chartColors.get(col);
+        return `hsl(${hue}, 72%, 44%)`;
+    }
+
+    _chartColor(col) {
+        const hue = this.chartColors.has(col) ? this.chartColors.get(col) : (() => { this.getRepeaterColor(col); return this.chartColors.get(col); })();
+        const isDark = !document.documentElement.classList.contains('light-theme');
+        return isDark ? `hsl(${hue}, 85%, 68%)` : `hsl(${hue}, 72%, 44%)`;
     }
 
     renderCharts() {
@@ -2382,24 +2390,30 @@ class MeshCoreMonitor {
         const yOf = v => (pt + (1 - (v - yMin) / yRange) * ch).toFixed(1);
         const valOf = p => type === 'rssi' ? p.rssi : p.snr;
 
+        const isDark = !document.documentElement.classList.contains('light-theme');
+        const gridMinor = isDark ? 'rgba(255,255,255,0.05)' : '#ebebeb';
+        const gridMajor = isDark ? 'rgba(255,255,255,0.10)' : '#ddd';
+        const gridAxis  = isDark ? 'rgba(255,255,255,0.18)' : '#bbb';
+        const labelFill = isDark ? '#5a6488' : '#999';
+
         const parts = [];
 
         // Y grid + labels (major every yStep, minor every yStep/2)
         const yMinorStep = yStep / 2;
         for (let y = yMin + yMinorStep; y < yMax; y += yStep) {
             const yp = yOf(y);
-            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#f5f5f5" stroke-width="1"/>`);
+            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="${gridMinor}" stroke-width="1"/>`);
         }
         for (let y = yMin; y <= yMax; y += yStep) {
             const yp = yOf(y);
-            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#e8e8e8" stroke-width="1"/>`);
-            parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${y}</text>`);
+            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="${gridMajor}" stroke-width="1"/>`);
+            parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="${labelFill}">${y}</text>`);
         }
 
         // Y axis label
         const yLabel = type === 'rssi' ? 'dBm' : 'dB';
         const yLabelCy = (pt + ch / 2).toFixed(1);
-        parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="#aaa" transform="rotate(-90,10,${yLabelCy})">${yLabel}</text>`);
+        parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="${labelFill}" transform="rotate(-90,10,${yLabelCy})">${yLabel}</text>`);
 
         // X grid + labels — adaptive step based on chart width and visible range
         const labelStep = this._xLabelStepMs(tRange, cw);
@@ -2414,18 +2428,18 @@ class MeshCoreMonitor {
         for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= now; t += minorStep) {
             if (t % labelStep === 0) continue;
             const xp = xOf(t);
-            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#f5f5f5" stroke-width="1"/>`);
+            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMinor}" stroke-width="1"/>`);
         }
         for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= now; t += labelStep) {
             const xp = xOf(t);
-            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#e8e8e8" stroke-width="1"/>`);
+            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMajor}" stroke-width="1"/>`);
             const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
-            parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="#bbb">${lbl}</text>`);
+            parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="${labelFill}">${lbl}</text>`);
         }
 
         // Axes
-        parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
-        parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
+        parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
+        parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
 
         // Noise floor area (RSSI chart only) — drawn behind repeater lines/dots
         if (type === 'rssi' && hasData) {
@@ -2464,10 +2478,10 @@ class MeshCoreMonitor {
         for (const [col, dPts] of decimGroups) {
             const validPts = dPts.filter(p => valOf(p) != null);
             if (validPts.length < 2) continue;
-            const color = this.getRepeaterColor(col);
+            const color = this._chartColor(col);
             const isHighlighted = !selected || selected === col;
             const strokeW = (selected && selected === col) ? 2.5 : 1;
-            const strokeOp = isHighlighted ? 0.55 : 0.12;
+            const strokeOp = isHighlighted ? 0.65 : 0.15;
             const pointsStr = validPts.map(p => `${xOf(p.time)},${yOf(valOf(p))}`).join(' ');
             parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="${strokeW}" stroke-opacity="${strokeOp}"/>`);
         }
@@ -2477,7 +2491,7 @@ class MeshCoreMonitor {
             if (selected && selected === col) continue;
             for (const p of dPts) {
                 if (valOf(p) == null) continue;
-                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="${selected ? 0.07 : 0.85}"/>`);
+                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}"/>`);
             }
         }
         if (selected) {
@@ -2485,13 +2499,13 @@ class MeshCoreMonitor {
             if (selPts) {
                 for (const p of selPts) {
                     if (valOf(p) == null) continue;
-                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize * 1.43}" fill="${this.getRepeaterColor(p.col)}" fill-opacity="0.92"/>`);
+                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize * 1.43}" fill="${this._chartColor(p.col)}" fill-opacity="0.95"/>`);
                 }
             }
         }
 
         if (!hasData) {
-            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="#bbb">Waiting for data…</text>`);
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">Waiting for data…</text>`);
         }
 
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -2579,17 +2593,23 @@ class MeshCoreMonitor {
         const xOf = t => (pl + (t - tMin) / tRange * cw).toFixed(1);
         const yOf = v => (pt + (1 - (v - vMin) / yRange) * ch).toFixed(1);
 
+        const isDark2 = !document.documentElement.classList.contains('light-theme');
+        const gridMinor2 = isDark2 ? 'rgba(255,255,255,0.05)' : '#ebebeb';
+        const gridMajor2 = isDark2 ? 'rgba(255,255,255,0.10)' : '#ddd';
+        const gridAxis2  = isDark2 ? 'rgba(255,255,255,0.18)' : '#bbb';
+        const labelFill2 = isDark2 ? '#5a6488' : '#999';
+
         const parts = [];
 
         for (let y = vMin + yStep / 2; y < vMax; y += yStep)
-            parts.push(`<line x1="${pl}" y1="${yOf(y)}" x2="${pl + cw}" y2="${yOf(y)}" stroke="#f5f5f5" stroke-width="1"/>`);
+            parts.push(`<line x1="${pl}" y1="${yOf(y)}" x2="${pl + cw}" y2="${yOf(y)}" stroke="${gridMinor2}" stroke-width="1"/>`);
         for (let y = vMin; y <= vMax; y += yStep) {
             const yp = yOf(y);
-            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="#e8e8e8" stroke-width="1"/>`);
-            parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#bbb">${y}</text>`);
+            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="${gridMajor2}" stroke-width="1"/>`);
+            parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="${labelFill2}">${y}</text>`);
         }
         const yLabelCy = (pt + ch / 2).toFixed(1);
-        parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="#aaa" transform="rotate(-90,10,${yLabelCy})">dB</text>`);
+        parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="${labelFill2}" transform="rotate(-90,10,${yLabelCy})">dB</text>`);
 
         const labelStep = this._xLabelStepMs(tRange, cw);
         const minorStep = labelStep / 2;
@@ -2599,17 +2619,17 @@ class MeshCoreMonitor {
             : (labelStep < 60000 ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
         for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= now; t += minorStep) {
             if (t % labelStep === 0) continue;
-            parts.push(`<line x1="${xOf(t)}" y1="${pt}" x2="${xOf(t)}" y2="${pt + ch}" stroke="#f5f5f5" stroke-width="1"/>`);
+            parts.push(`<line x1="${xOf(t)}" y1="${pt}" x2="${xOf(t)}" y2="${pt + ch}" stroke="${gridMinor2}" stroke-width="1"/>`);
         }
         for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= now; t += labelStep) {
             const xp = xOf(t);
-            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="#e8e8e8" stroke-width="1"/>`);
+            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMajor2}" stroke-width="1"/>`);
             const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
-            parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="#bbb">${lbl}</text>`);
+            parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="${labelFill2}">${lbl}</text>`);
         }
 
-        parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
-        parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="#ddd" stroke-width="1"/>`);
+        parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="${gridAxis2}" stroke-width="1"/>`);
+        parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="${gridAxis2}" stroke-width="1"/>`);
 
         if (hasData) {
             const groups = new Map();
@@ -2619,13 +2639,13 @@ class MeshCoreMonitor {
             }
             for (const [col, colPts] of groups) {
                 colPts.sort((a, b) => a.time - b.time);
-                const color = this.getRepeaterColor(col);
+                const color = this._chartColor(col);
                 if (colPts.length >= 2) {
                     const pointsStr = colPts.map(p => `${xOf(p.time)},${yOf(p.snr)}`).join(' ');
-                    parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.55"/>`);
+                    parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.65"/>`);
                 }
                 for (const p of colPts)
-                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(p.snr)}" r="${this._dotSize}" fill="${color}" fill-opacity="0.85"/>`);
+                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(p.snr)}" r="${this._dotSize}" fill="${color}" fill-opacity="0.90"/>`);
             }
 
             if (legend) {
@@ -2635,14 +2655,14 @@ class MeshCoreMonitor {
                 const sorted = [...lastByCol.keys()].sort((a, b) => lastByCol.get(b).snr - lastByCol.get(a).snr);
                 legend.innerHTML = sorted.map(col => {
                     const last = lastByCol.get(col);
-                    const c = this.getRepeaterColor(col);
+                    const c = this._chartColor(col);
                     const valStr = `${last.snr >= 0 ? '+' : ''}${last.snr.toFixed(1)} dB`;
                     const displayName = last.label && last.label !== col ? this.escHtml(last.label) : this.escHtml(col);
                     return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${displayName} <span class="legend-val">(${valStr})</span></span>`;
                 }).join('');
             }
         } else {
-            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="#bbb">Waiting for data…</text>`);
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill2}">Waiting for data…</text>`);
             if (legend) legend.innerHTML = '';
         }
 

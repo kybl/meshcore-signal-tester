@@ -5,9 +5,9 @@
 }
 
 :root {
-    --bg-gutter:      #0f0f17;
+    --bg-gutter:      #04101e;
     --bg-content:     #181824;
-    --bg-header:      #0c0c14;
+    --bg-header:      #0a1630;
     --bg-box:         #21212e;
     --bg-input:       #1c1c28;
     --bg-hover:       rgba(255,255,255,0.06);
@@ -24,30 +24,30 @@
     --shadow:         rgba(0,0,0,0.4);
 }
 html.light-theme {
-    --bg-gutter:      #d5dae5;
+    --bg-gutter:      #04101e;
     --bg-content:     #eef0f7;
-    --bg-header:      #e0e5f0;
+    --bg-header:      #b8cce8;
     --bg-box:         #ffffff;
     --bg-input:       #ffffff;
-    --bg-hover:       rgba(0,0,0,0.04);
+    --bg-hover:       rgba(0,0,0,0.06);
     --bg-detail:      #f7f7ff;
     --bg-detail-json: #f5f5ff;
-    --bg-table-head:  #e4e4e4;
+    --bg-table-head:  #dde4f0;
     --bg-sig-hover:   #eaeaff;
     --bg-sig-active:  #d8d8ff;
-    --text-primary:   #1e293b;
-    --text-secondary: #475569;
-    --text-muted:     #94a3b8;
-    --border:         #d0d5e0;
-    --border-light:   #f0f0f0;
-    --shadow:         rgba(0,0,0,0.1);
+    --text-primary:   #0f1a2e;
+    --text-secondary: #1e2d40;
+    --text-muted:     #3a4a60;
+    --border:         #b8c4d8;
+    --border-light:   #dde4f0;
+    --shadow:         rgba(0,0,0,0.15);
 }
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: var(--bg-gutter);
     min-height: 100vh;
-    padding: 0 8px 8px;
+    padding: 0;
     color: var(--text-primary);
     transform-origin: top left;
     transition: transform 0.25s ease, width 0.25s ease;
@@ -74,7 +74,7 @@ html.ui-larger body {
 }
 
 .container {
-    margin: 0 auto;
+    margin: 0 8px 8px;
     background: var(--bg-content);
     padding: 8px;
 }
@@ -96,7 +96,7 @@ header {
 }
 
 .header-row-tools {
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid var(--border);
     padding-top: 6px;
     margin-top: 2px;
 }
@@ -105,7 +105,7 @@ header {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    border-top: 1px solid #f0f0f0;
+    border-top: 1px solid var(--border);
     padding-top: 6px;
     margin-top: 4px;
 }
@@ -113,7 +113,7 @@ header {
 .app-title {
     font-size: 15px;
     font-weight: 700;
-    color: #333;
+    color: var(--text-primary);
     white-space: nowrap;
 }
 
@@ -129,17 +129,17 @@ header {
 
 .hstat {
     font-size: 12px;
-    color: #555;
+    color: var(--text-primary);
     white-space: nowrap;
 }
 
 .hstat-label {
-    color: #aaa;
+    color: var(--text-secondary);
     margin-right: 3px;
 }
 
 .hstat-unit {
-    color: #bbb;
+    color: var(--text-secondary);
     font-size: 10px;
     margin-left: 1px;
 }
