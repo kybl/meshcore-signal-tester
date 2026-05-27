@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=78">
+    <title>MeshCore Signal Tester</title>
+    <link rel="stylesheet" href="style.css?v=79">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="header-row header-row-connect">
-                <span class="app-title">MeshCore RX Monitor</span>
-                <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
-                <span id="status" class="status disconnected">Disconnected</span>
-                <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
-                <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
-                <span id="batteryStatus" class="battery-status hidden"></span>
-                <div id="savedDevices" class="saved-devices hidden"></div>
-            </div>
+    <header>
+        <div class="header-row header-row-connect">
+            <span class="app-title">MeshCore Signal Tester</span>
+            <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
+            <span id="status" class="status disconnected">Disconnected</span>
+            <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
+            <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
+            <span id="batteryStatus" class="battery-status hidden"></span>
+            <div id="savedDevices" class="saved-devices hidden"></div>
+            <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀︎</button>
+        </div>
             <div class="header-row header-row-tools">
                 <button id="exportCsvBtn" class="btn-pause" title="Export visible packets as CSV" disabled>Export CSV</button>
                 <button id="importCsvBtn" class="btn-pause" title="Import CSV file">Import CSV</button>
@@ -39,8 +39,8 @@
                     <span id="contactsLoadingMsg" class="contacts-loading" style="display:none">Fetching contacts…</span>
                 </div>
             </div>
-        </header>
-
+    </header>
+    <div class="container">
         <main>
             <div id="emptyState" class="empty-state">
                 <p>Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.</p>
@@ -222,7 +222,7 @@
                 </div>
             </div>
         </main>
-    </div>
+    </div><!-- .container -->
 
     <div id="chartTooltip" class="chart-tooltip"></div>
     <div id="helpTip" class="chart-tooltip help-tip-float"></div>
@@ -289,6 +289,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=100"></script>
+    <script type="module" src="app.js?v=101"></script>
 </body>
 </html>

@@ -302,6 +302,23 @@ class MeshCoreMonitor {
             });
         }
 
+        // Theme toggle
+        const themeBtn = document.getElementById('themeToggleBtn');
+        if (themeBtn) {
+            const applyTheme = light => {
+                document.documentElement.classList.toggle('light-theme', light);
+                themeBtn.textContent = light ? '🌙' : '☀︎';
+            };
+            let isLight = false;
+            try { isLight = localStorage.getItem('theme') === 'light'; } catch (e) {}
+            applyTheme(isLight);
+            themeBtn.addEventListener('click', () => {
+                isLight = !isLight;
+                applyTheme(isLight);
+                try { localStorage.setItem('theme', isLight ? 'light' : 'dark'); } catch (e) {}
+            });
+        }
+
         // Point size controls
         try { this._dotSize = parseFloat(localStorage.getItem('dotSize') || '3.5'); } catch (e) { console.warn('localStorage error:', e); this._dotSize = 3.5; }
         try { this._sphereSize = parseFloat(localStorage.getItem('sphereSize') || '1'); } catch (e) { console.warn('localStorage error:', e); this._sphereSize = 1; }

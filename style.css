@@ -4,11 +4,51 @@
     box-sizing: border-box;
 }
 
+:root {
+    --bg-gutter:      #0f0f17;
+    --bg-content:     #181824;
+    --bg-header:      #0c0c14;
+    --bg-box:         #21212e;
+    --bg-input:       #1c1c28;
+    --bg-hover:       rgba(255,255,255,0.06);
+    --bg-detail:      #1a1a28;
+    --bg-detail-json: #141420;
+    --bg-table-head:  #282838;
+    --bg-sig-hover:   #28283e;
+    --bg-sig-active:  #32324e;
+    --text-primary:   #d8dcee;
+    --text-secondary: #8890b8;
+    --text-muted:     #55607a;
+    --border:         #2e2e45;
+    --border-light:   #252535;
+    --shadow:         rgba(0,0,0,0.4);
+}
+html.light-theme {
+    --bg-gutter:      #d5dae5;
+    --bg-content:     #eef0f7;
+    --bg-header:      #e0e5f0;
+    --bg-box:         #ffffff;
+    --bg-input:       #ffffff;
+    --bg-hover:       rgba(0,0,0,0.04);
+    --bg-detail:      #f7f7ff;
+    --bg-detail-json: #f5f5ff;
+    --bg-table-head:  #e4e4e4;
+    --bg-sig-hover:   #eaeaff;
+    --bg-sig-active:  #d8d8ff;
+    --text-primary:   #1e293b;
+    --text-secondary: #475569;
+    --text-muted:     #94a3b8;
+    --border:         #d0d5e0;
+    --border-light:   #f0f0f0;
+    --shadow:         rgba(0,0,0,0.1);
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: var(--bg-gutter);
     min-height: 100vh;
-    padding: 12px;
+    padding: 0 8px 8px;
+    color: var(--text-primary);
     transform-origin: top left;
     transition: transform 0.25s ease, width 0.25s ease;
 }
@@ -35,14 +75,14 @@ html.ui-larger body {
 
 .container {
     margin: 0 auto;
+    background: var(--bg-content);
+    padding: 8px;
 }
 
 header {
-    background: white;
+    background: var(--bg-header);
     padding: 8px 16px;
-    border-radius: 10px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    margin-bottom: 8px;
+    margin-bottom: 0;
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -237,7 +277,7 @@ header {
     font-size: 12px;
     border: 1px solid #d0d0d0;
     border-radius: 4px;
-    background: white;
+    background: var(--bg-input);
     color: #333;
     cursor: pointer;
     padding: 1px 3px;
@@ -247,7 +287,7 @@ header {
 .section-title {
     font-size: 10px;
     font-weight: 600;
-    color: rgba(255,255,255,0.75);
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.06em;
 }
@@ -272,7 +312,7 @@ header {
     white-space: nowrap;
 }
 .section-header:hover {
-    background: rgba(255,255,255,0.12);
+    background: var(--bg-hover);
 }
 
 .section-header:hover .section-title {
@@ -340,9 +380,9 @@ header {
 }
 
 .repeater-log-scroll {
-    background: white;
+    background: var(--bg-box);
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 4px var(--shadow);
     max-height: 160px;
     overflow: auto;
 }
@@ -356,12 +396,12 @@ header {
 .repeater-log-table th {
     position: sticky;
     top: 0;
-    background: #e4e4e4;
-    color: #666;
+    background: var(--bg-table-head);
+    color: var(--text-secondary);
     font-weight: 600;
     text-align: left;
     padding: 5px 10px;
-    border-bottom: 1px solid #d0d0d0;
+    border-bottom: 1px solid var(--border);
 }
 
 .repeater-log-table th[data-sort-key] {
@@ -380,8 +420,8 @@ header {
 
 .repeater-log-table td {
     padding: 4px 10px;
-    border-bottom: 1px solid #f5f5f5;
-    color: #444;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-primary);
 }
 
 .repeater-log-table tr:last-child td {
@@ -420,9 +460,9 @@ header {
 }
 
 .chart-box {
-    background: white;
+    background: var(--bg-box);
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 4px var(--shadow);
     padding: 8px 8px 4px;
 }
 
@@ -508,9 +548,9 @@ header {
 .msg-table-empty.hidden { display: none; }
 
 .msg-table-scroll {
-    background: white;
+    background: var(--bg-box);
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 4px var(--shadow);
     overflow-x: auto;
 }
 
@@ -523,14 +563,14 @@ header {
 
 .msg-table th,
 .msg-table td {
-    border: 1px solid #e8e8e8;
+    border: 1px solid var(--border);
 }
 
 .msg-table th {
     position: sticky;
     top: 0;
-    background: #e4e4e4;
-    color: #555;
+    background: var(--bg-table-head);
+    color: var(--text-secondary);
     font-weight: 600;
     text-align: center;
     padding: 3px 6px;
@@ -539,7 +579,7 @@ header {
 
 .msg-table td {
     padding: 1px 5px;
-    color: #444;
+    color: var(--text-primary);
 }
 
 
@@ -567,11 +607,11 @@ header {
 }
 
 .empty-state {
-    background: white;
+    background: var(--bg-box);
     padding: 50px 40px;
     border-radius: 10px;
     text-align: center;
-    color: #888;
+    color: var(--text-muted);
     font-size: 14px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
@@ -648,12 +688,12 @@ header {
 
 .sig-rssi.sig-pair-hover,
 .sig-snr.sig-pair-hover {
-    background: #eaeaff;
+    background: var(--bg-sig-hover);
 }
 
 .sig-rssi.sig-active,
 .sig-snr.sig-active {
-    background: #d8d8ff;
+    background: var(--bg-sig-active);
 }
 
 /* Row animations */
@@ -708,7 +748,7 @@ header {
 
 /* Detail row */
 .detail-row td {
-    background: #f7f7ff;
+    background: var(--bg-detail);
     border-top: none;
 }
 
@@ -748,12 +788,12 @@ header {
 .detail-json {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 10px;
-    background: #f5f5ff;
+    background: var(--bg-detail-json);
     padding: 5px 8px;
     border-radius: 4px;
     white-space: pre-wrap;
     word-break: break-all;
-    color: #333;
+    color: var(--text-primary);
     margin-bottom: 4px;
     line-height: 1.3;
 }
@@ -815,9 +855,9 @@ header {
     font-size: 11px;
     padding: 1px 4px;
     border-radius: 4px;
-    border: 1px solid #ccc;
-    background: #fff;
-    color: #333;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
     cursor: pointer;
 }
 
@@ -848,10 +888,10 @@ header {
 .rep-filter-input {
     font-size: 12px;
     padding: 2px 6px;
-    border: 1px solid rgba(255,255,255,0.3);
+    border: 1px solid var(--border);
     border-radius: 4px;
-    background: rgba(255,255,255,0.92);
-    color: #333;
+    background: var(--bg-input);
+    color: var(--text-primary);
     flex: 1 1 80px;
     min-width: 0;
     max-width: 140px;
@@ -861,8 +901,8 @@ header {
 }
 
 .rep-filter-input:focus {
-    border-color: rgba(255,255,255,0.75);
-    background: white;
+    border-color: var(--text-secondary);
+    background: var(--bg-input);
 }
 
 .rep-filter-input.has-value {
@@ -1866,4 +1906,18 @@ td.col-dim { opacity: 0.25; }
 .ping-hint {
     font-size: 12px;
     color: #888;
+}
+.theme-toggle-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: 5px;
+    padding: 2px 8px;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1.6;
+}
+.theme-toggle-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
 }
