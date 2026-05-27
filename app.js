@@ -1005,10 +1005,10 @@ class MeshCoreMonitor {
         console.log(`_parseContact: key=${pubKeyFull.slice(0,6)} type=${type} name="${name}"`);
         this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod, pubKeyFullHex: pubKeyFull });
         if (lastmod > this._contactsLastmod) this._contactsLastmod = lastmod;
-        // Keep the AD stub's name in sync
+        // Keep the AD entry's name in sync
         const pubKeyHex = pubKeyFull.slice(0, 6).toUpperCase();
-        const stub = this.hashData.get('AD:' + pubKeyHex);
-        if (stub?._stub && name) stub.meta.name = name;
+        const adEntry = this.hashData.get('AD:' + pubKeyHex);
+        if (adEntry && name) adEntry.meta.name = name;
         this._updateContactsCount();
     }
 
@@ -1266,16 +1266,12 @@ class MeshCoreMonitor {
             .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
         const pubKeyFull = Array.from(pubKey)
             .map(b => b.toString(16).padStart(2, '0')).join('');
-        // Store advert metadata for later DSC correlation (name lookup etc.) without
-        // adding a row to Received Packets.
         const hash = 'AD:' + pubKeyHex;
-        const existing = this.hashData.get(hash);
-        if (existing) {
-            existing.meta = { ...existing.meta, name: name || existing.meta?.name || null, advType, pubKeyFull };
-        } else {
-            // Lightweight stub — not shown in the table (no addRxEntry)
-            this.hashData.set(hash, { _stub: true, repeaters: new Map(), firstSeen: Date.now(), lastSeen: Date.now(), insertOrder: 0, type: typeName + ' AD', rawHex: null, meta: { name: name || null, advType, pubKeyHex, pubKeyFull }, packet: null });
-        }
+        const meta = { name: name || null, advType, pubKeyHex, pubKeyFull };
+        this.addRxEntry(hash, pubKeyHex, typeName + ' Advert', null, null, null, meta, null);
+        // addRxEntry only sets meta on first creation; refresh name/pubkey on repeat adverts
+        const entry = this.hashData.get(hash);
+        if (entry) entry.meta = { ...entry.meta, name: name || entry.meta.name, advType, pubKeyFull };
     }
 
     _handleDiscoverResp(payload) {
@@ -3129,6 +3125,7 @@ class MeshCoreMonitor {
     // --- Signal color ---
 
     signalColor(value, greenVal, redVal, yellowVal) {
+        if (value == null) return 'inherit';
         const pivot = yellowVal !== undefined ? yellowVal : (greenVal + redVal) / 2;
         let t;
         if (value >= pivot) {
@@ -3323,8 +3320,8 @@ class MeshCoreMonitor {
                 data.type  || '',
                 hash,
                 rep.rawId  || '',
-                rep.rssi,
-                rep.snr.toFixed(2),
+                rep.rssi ?? '',
+                rep.snr?.toFixed(2) ?? '',
                 rep.rawHex || data.rawHex || '',
                 rep.lat    ?? '',
                 rep.lon    ?? '',
