@@ -466,13 +466,13 @@ class MeshCoreMonitor {
             if (raw.toLowerCase() === 'direct') {
                 repeater = 'direct';
             } else {
-                let hex = raw.replace(/^!/, '').toUpperCase();
-                if (!/^[0-9A-F]+$/.test(hex)) {
+                let hex = raw.replace(/^!/, '').toLowerCase();
+                if (!/^[0-9a-f]+$/.test(hex)) {
                     if (fbk) { fbk.textContent = 'hex digits only'; setTimeout(() => fbk.textContent = '', 1500); }
                     return;
                 }
                 if (hex.length % 2) hex = '0' + hex;
-                repeater = '!' + hex;
+                repeater = hex;
             }
             // Unique payload so each inject creates a fresh row, not a merge
             const fakeHex = 'debug-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
@@ -1369,8 +1369,7 @@ class MeshCoreMonitor {
         const path = packet.path || [];
         const pathLen = path.length;
         const firstItem = pathLen > 0 ? path[0] : null;
-        const firstItemBytes = typeof firstItem === 'string' ? firstItem.length / 2
-            : typeof firstItem === 'number' ? 4 : 0;
+        const firstItemBytes = firstItem != null ? firstItem.length / 2 : 0;
         const pathItemBytes = packet.pathHashSize ?? firstItemBytes;
 
         const p = packet.payload?.decoded;
@@ -1421,13 +1420,6 @@ class MeshCoreMonitor {
     }
 
     formatNodeId(nodeId) {
-        if (typeof nodeId === 'number') {
-            // Round up to byte boundary; don't force 4-byte padding (would clobber
-            // precision info — see idPrecision/idsCompatible).
-            let hex = nodeId.toString(16);
-            if (hex.length % 2 !== 0) hex = '0' + hex;
-            return '!' + hex;
-        }
         return nodeId?.toString() || 'unknown';
     }
 
@@ -1438,14 +1430,12 @@ class MeshCoreMonitor {
 
     idPrecision(id) {
         if (id === 'direct' || id === 'unknown' || id.includes('/')) return 4;
-        const hex = id.startsWith('!') ? id.slice(1) : id;
-        return Math.ceil(hex.length / 2);
+        return Math.ceil(id.length / 2);
     }
 
     idSuffix(id, bytes) {
         // IDs are high-byte-first: '5E' is the high byte of '5E9F', so compare from left
-        const hex = id.startsWith('!') ? id.slice(1) : id;
-        return hex.slice(0, bytes * 2).toUpperCase();
+        return id.slice(0, bytes * 2).toUpperCase();
     }
 
     idsCompatible(id1, id2) {
@@ -1740,8 +1730,7 @@ class MeshCoreMonitor {
     displayId(id) {
         if (id === 'direct' || id === 'unknown') return id;
         if (id.includes('/')) return id.split('/').map(p => this.displayId(p)).join('/');
-        const hex = id.startsWith('!') ? id.slice(1) : id;
-        const num = parseInt(hex, 16);
+        const num = parseInt(id, 16);
         if (isNaN(num)) return id;
         if (num === 0) return '00';
         let h = num.toString(16).toUpperCase();
@@ -3256,11 +3245,7 @@ class MeshCoreMonitor {
 
     _formatPath(packet) {
         if (!packet?.path?.length) return '';
-        return packet.path.map(id =>
-            typeof id === 'number'
-                ? '!' + id.toString(16).padStart(8, '0')
-                : String(id ?? 'unknown')
-        ).join(' > ');
+        return packet.path.map(id => String(id ?? 'unknown')).join(' > ');
     }
 
     _colMatchesRepFilter(col) {
@@ -3520,7 +3505,7 @@ class MeshCoreMonitor {
                         const path = decoded.path || [];
                         const fi = path[0];
                         meta.pathLen       = path.length;
-                        meta.pathItemBytes = decoded.pathHashSize ?? (typeof fi === 'string' ? fi.length / 2 : typeof fi === 'number' ? 4 : 0);
+                        meta.pathItemBytes = decoded.pathHashSize ?? (fi != null ? fi.length / 2 : 0);
                         meta.totalBytes    = decoded.totalBytes;
                     }
                 } catch (e) { console.warn('Hex decode failed for row:', row.rawHex?.slice(0, 20), e.message); }
