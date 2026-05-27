@@ -985,11 +985,7 @@ class MeshCoreMonitor {
         // bytes 136-139 = lat (int32 LE / 1e6)
         // bytes 140-143 = lon (int32 LE / 1e6)
         // bytes 144-147 = lastmod (uint32 LE)
-        console.log(`_parseContact: len=${payload.length} code=0x${payload[0].toString(16)}`);
-        if (payload.length < 132) {
-            console.warn(`_parseContact: too short (${payload.length}), skipping`);
-            return;
-        }
+        if (payload.length < 132) return;
         const pubKey = payload.slice(1, 33);
         const pubKeyFull = Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('');
         const type = payload[33];
@@ -1356,6 +1352,27 @@ class MeshCoreMonitor {
             // public key (advert)
             const lk = p.publicKey ?? p.pubKey ?? p.linkKey ?? p.key ?? null;
             if (lk != null) meta.linkKey = String(lk);
+        }
+
+        // Update contacts from Advert payload (works offline too, not just via BLE 0x8A)
+        if (packet.payloadType === 4 && p?.isValid && p?.publicKey) {
+            const pubKeyFullHex = String(p.publicKey).toLowerCase();
+            const advName = p.appData?.name ?? null;
+            const advType = p.appData?.deviceRole ?? null;
+            const lat = p.appData?.hasLocation ? (p.appData.location?.latitude ?? 0) : 0;
+            const lon = p.appData?.hasLocation ? (p.appData.location?.longitude ?? 0) : 0;
+            const lastAdvert = p.timestamp ? Math.floor(new Date(p.timestamp).getTime() / 1000) : 0;
+            const existing = this._contacts.get(pubKeyFullHex);
+            this._contacts.set(pubKeyFullHex, {
+                name: advName || existing?.name || null,
+                type: advType ?? existing?.type ?? null,
+                lat: lat || existing?.lat || 0,
+                lon: lon || existing?.lon || 0,
+                lastAdvert: lastAdvert || existing?.lastAdvert || 0,
+                lastmod: existing?.lastmod || 0,
+                pubKeyFullHex,
+            });
+            if (!existing) this._updateContactsCount();
         }
 
         if (hash && repeater) {
@@ -2075,9 +2092,7 @@ class MeshCoreMonitor {
         const walk = (obj) => {
             if (!obj || typeof obj !== 'object') return;
             for (const [k, v] of Object.entries(obj)) {
-                if (typeof v === 'string' && /^[0-9A-Fa-f]{33,}$/.test(v)) {
-                    obj[k] = v.slice(0, 32) + '…';
-                } else if ((k === 'timestamp' || k === 'time') && typeof v === 'number' && v > 1_000_000_000 && v < 4_000_000_000) {
+                if ((k === 'timestamp' || k === 'time') && typeof v === 'number' && v > 1_000_000_000 && v < 4_000_000_000) {
                     obj[k] = new Date(v * 1000).toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
                 } else if (typeof v === 'object' && v !== null) {
                     walk(v);
