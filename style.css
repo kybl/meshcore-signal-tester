@@ -814,6 +814,10 @@ header {
     cursor: pointer;
 }
 
+#uiScaleSelect {
+    min-width: 5em;
+}
+
 /* Clear data button (in header, next to auto-remove) */
 
 .btn-clear-data-header {
