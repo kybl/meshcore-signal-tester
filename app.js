@@ -1408,7 +1408,7 @@ class MeshCoreMonitor {
 
     extractRepeater(packet) {
         if (packet.path && packet.path.length > 0) {
-            return this.formatNodeId(packet.path[packet.path.length - 1]);
+            return packet.path[packet.path.length - 1] || 'unknown';
         }
         // Empty path is only meaningful when the route accumulates hops.
         // Flood-routed packets append the forwarder ID at every hop, so an
@@ -1417,10 +1417,6 @@ class MeshCoreMonitor {
         // design and tell us nothing about coverage — drop them.
         const routeName = Utils.getRouteTypeName(packet.routeType) || '';
         return /Flood/i.test(routeName) ? 'direct' : null;
-    }
-
-    formatNodeId(nodeId) {
-        return nodeId?.toString() || 'unknown';
     }
 
     // --- Node ID prefix resolution ---
@@ -3243,11 +3239,6 @@ class MeshCoreMonitor {
         return false;
     }
 
-    _formatPath(packet) {
-        if (!packet?.path?.length) return '';
-        return packet.path.map(id => String(id ?? 'unknown')).join(' > ');
-    }
-
     _colMatchesRepFilter(col) {
         if (!this._repFilterTerms.length) return true;
         // For collision keys like "1234/5678" check each component separately
@@ -3505,7 +3496,7 @@ class MeshCoreMonitor {
                         const path = decoded.path || [];
                         const fi = path[0];
                         meta.pathLen       = path.length;
-                        meta.pathItemBytes = decoded.pathHashSize ?? (fi != null ? fi.length / 2 : 0);
+                        meta.pathItemBytes = decoded.pathHashSize ?? fi?.length / 2 ?? 0;
                         meta.totalBytes    = decoded.totalBytes;
                     }
                 } catch (e) { console.warn('Hex decode failed for row:', row.rawHex?.slice(0, 20), e.message); }
