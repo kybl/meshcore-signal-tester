@@ -2157,15 +2157,6 @@ class MeshCoreMonitor {
             const typeName = contact?.type != null ? (TYPE_NAMES[contact.type] ?? `Type ${contact.type}`) : null;
             const typeStr = typeName ? ` <span style="color:#888">(${this.escHtml(typeName)})</span>` : '';
             metaHtml = `<div class="detail-pubkey">${typeStr ? typeStr + ' &nbsp; ' : ''}Key: <code>${pk}</code></div>`;
-        } else if (col) {
-            // Column header click — try to show name for the repeater column
-            const contact = this._contactByPrefix(col);
-            if (contact?.name) {
-                const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'Room server', 4: 'Sensor' };
-                const typeName = TYPE_NAMES[contact.type] ?? null;
-                metaHtml = `<div class="detail-pubkey"><b>${this.escHtml(contact.name)}</b>` +
-                    (typeName ? ` <span style="color:#888">(${this.escHtml(typeName)})</span>` : '') + `</div>`;
-            }
         }
 
         return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${metaHtml}${jsonHtml}</div></td>`;
@@ -3281,7 +3272,7 @@ class MeshCoreMonitor {
                 ? '"' + s.replace(/"/g, '""') + '"' : s;
         };
 
-        const header = ['time', 'type', 'hash', 'repeater', 'rssi', 'snr', 'raw_hex', 'lat', 'lon', 'text', 'sender'];
+        const header = ['time', 'type', 'hash', 'repeater', 'rssi', 'snr', 'uplink_snr', 'raw_hex', 'lat', 'lon', 'text', 'sender'];
         const lines = [];
 
         // One row per (hash, repeater) pair, sorted chronologically
@@ -3317,6 +3308,7 @@ class MeshCoreMonitor {
                 rep.rawId  || '',
                 rep.rssi ?? '',
                 rep.snr?.toFixed(2) ?? '',
+                rep.remoteSnr?.toFixed(2) ?? '',
                 rep.rawHex || data.rawHex || '',
                 rep.lat    ?? '',
                 rep.lon    ?? '',
@@ -3404,6 +3396,7 @@ class MeshCoreMonitor {
         const idx = name => header.indexOf(name);
         const iTime = idx('time'), iType = idx('type'), iHash = idx('hash');
         const iRep  = idx('repeater'), iRssi = idx('rssi'), iSnr = idx('snr');
+        const iUplinkSnr = idx('uplink_snr');
         const iHex  = idx('raw_hex'), iLat = idx('lat'), iLon = idx('lon');
         const iTxt  = idx('text'), iSnd = idx('sender');
 
@@ -3431,6 +3424,7 @@ class MeshCoreMonitor {
                 rawHex:    iHex  >= 0 ? c[iHex]  : '',
                 lat:       lat != null && !isNaN(lat) ? lat : null,
                 lon:       lon != null && !isNaN(lon) ? lon : null,
+                uplinkSnr: iUplinkSnr >= 0 && c[iUplinkSnr] !== '' ? parseFloat(c[iUplinkSnr]) : null,
                 csvText:   iTxt >= 0 ? c[iTxt]  : '',
                 csvSender: iSnd >= 0 ? c[iSnd]  : '',
             });
@@ -3506,10 +3500,11 @@ class MeshCoreMonitor {
                 : row.type;
 
             this.addRxEntry(row.hash, row.repeater, type, row.rawHex, row.snr, row.rssi, meta, packet, {
-                importing: true,
-                timestamp: row.time,
-                lat:       row.lat,
-                lon:       row.lon,
+                importing:  true,
+                timestamp:  row.time,
+                lat:        row.lat,
+                lon:        row.lon,
+                remoteSnr:  row.uplinkSnr,
             });
         }
 
