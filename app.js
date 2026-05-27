@@ -902,6 +902,7 @@ class MeshCoreMonitor {
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
+        await new Promise(r => setTimeout(r, 300));
         await this.sendGetContacts();
 
         // Try to read BLE device battery (standard Battery Service 0x180F)
@@ -972,6 +973,8 @@ class MeshCoreMonitor {
 
     _setContactsLoading(on) {
         if (this.contactsLoadingMsg) this.contactsLoadingMsg.style.display = on ? '' : 'none';
+        clearTimeout(this._contactsLoadingTimeout);
+        if (on) this._contactsLoadingTimeout = setTimeout(() => this._setContactsLoading(false), 15000);
     }
 
     _parseContact(payload) {
