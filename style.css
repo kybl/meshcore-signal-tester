@@ -146,7 +146,7 @@ header {
 
 .hstat span:not(.hstat-label):not(.help-icon) {
     font-weight: 700;
-    color: #333;
+    color: var(--text-primary);
 }
 
 .status {
@@ -237,7 +237,7 @@ header {
     align-items: center;
     gap: 4px;
     font-size: 12px;
-    color: #666;
+    color: var(--text-primary);
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
@@ -248,7 +248,7 @@ header {
     align-items: center;
     gap: 5px;
     font-size: 12px;
-    color: #999;
+    color: var(--text-primary);
     white-space: nowrap;
     user-select: none;
 }
@@ -266,7 +266,7 @@ header {
 .size-val {
     min-width: 2.2ch;
     text-align: right;
-    color: #888;
+    color: var(--text-primary);
     font-size: 11px;
 }
 
@@ -848,7 +848,7 @@ header {
     align-items: center;
     gap: 4px;
     font-size: 12px;
-    color: #999;
+    color: var(--text-primary);
     white-space: nowrap;
 }
 
@@ -990,9 +990,9 @@ header {
 /* ── Help system ─────────────────────────────────────── */
 
 .help-btn {
-    background: #f0f0ff;
+    background: var(--bg-box);
     color: #667eea;
-    border: 1.5px solid #c8c8f0;
+    border: 1.5px solid var(--border);
     border-radius: 6px;
     font-size: 12px;
     font-weight: 600;
@@ -1017,8 +1017,8 @@ header {
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: rgba(102, 126, 234, 0.13);
-    color: #667eea;
+    background: rgba(102, 126, 234, 0.22);
+    color: #8fa8f0;
     font-size: 9px;
     font-weight: 700;
     cursor: pointer;
@@ -1029,7 +1029,7 @@ header {
     transition: all 0.15s;
     position: relative;
     top: -1px;
-    border: 1px solid rgba(102, 126, 234, 0.22);
+    border: 1px solid rgba(102, 126, 234, 0.35);
 }
 
 .help-icon:hover {
@@ -1042,21 +1042,22 @@ header {
     color: white;
 }
 
-/* The default blue-on-translucent-blue help icon disappears on the
-   purple section backgrounds (.section-header, .rep-filter-bar).
-   Force a white-on-translucent variant in those contexts. The header has a
-   white background, so .hstat / .sound-toggle keep the default style. */
+/* On coloured backgrounds (section headers, filter bar, main header) use
+   white-on-translucent so the ? is always visible. */
 .section-header .help-icon,
-.rep-filter-bar .help-icon {
+.rep-filter-bar .help-icon,
+header .help-icon {
     background: rgba(255, 255, 255, 0.18);
-    color: rgba(255, 255, 255, 0.85);
+    color: rgba(255, 255, 255, 0.90);
     border-color: rgba(255, 255, 255, 0.28);
 }
 
 .section-header .help-icon:hover,
 .section-header .help-icon.active,
 .rep-filter-bar .help-icon:hover,
-.rep-filter-bar .help-icon.active {
+.rep-filter-bar .help-icon.active,
+header .help-icon:hover,
+header .help-icon.active {
     background: rgba(255, 255, 255, 0.32);
     color: white;
     border-color: rgba(255, 255, 255, 0.45);
