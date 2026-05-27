@@ -101,12 +101,18 @@ class MeshCoreMonitor {
         document.querySelectorAll('.section-header').forEach(header => {
             const btn = header.querySelector('.collapse-btn');
             if (!btn) return;
+            const hint = document.createElement('span');
+            hint.className = 'section-hint';
+            header.appendChild(hint);
+            const updateHint = collapsed => { hint.textContent = collapsed ? 'Click to show' : 'Click to hide'; };
+            const body = document.getElementById(btn.dataset.target);
+            updateHint(body?.classList.contains('collapsed') ?? false);
             header.addEventListener('click', e => {
-                if (e.target.closest('.help-icon')) return; // help icon has its own handler
-                const body = document.getElementById(btn.dataset.target);
+                if (e.target.closest('.help-icon')) return;
                 if (!body) return;
                 const collapsed = body.classList.toggle('collapsed');
                 btn.classList.toggle('collapsed', collapsed);
+                updateHint(collapsed);
             });
         });
         this.msgTableHead = document.getElementById('msgTableHead');

@@ -264,6 +264,13 @@ header {
     transition: background 0.15s;
 }
 
+.section-hint {
+    font-size: 10px;
+    color: #aaa;
+    font-weight: normal;
+    margin-left: auto;
+    white-space: nowrap;
+}
 .section-header:hover {
     background: rgba(255,255,255,0.12);
 }
