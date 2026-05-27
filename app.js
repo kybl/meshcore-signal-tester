@@ -2138,7 +2138,7 @@ class MeshCoreMonitor {
             const dotColor = this.getRepeaterColor(col);
             const colContact = this._contactByPrefix(col);
             const colName = colContact?.name ?? null;
-            header = `<div class="detail-sig" title="Click to hide detail">` +
+            header = `<div class="detail-sig">` +
                 `<span class="rl-dot" style="background:${dotColor}"></span>` +
                 `<b>${this.escHtml(this.displayId(col))}</b>` +
                 (colName ? ` <span class="detail-col-name">${this.escHtml(colName)}</span>` : '') +
@@ -2167,7 +2167,7 @@ class MeshCoreMonitor {
             metaHtml = `<div class="detail-pubkey">${typeStr ? typeStr + ' &nbsp; ' : ''}Key: <code>${pk}</code></div>`;
         }
 
-        return `<td colspan="${colspan}" class="detail-cell"><div class="detail-content">${typeHtml}${header}${metaHtml}${jsonHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell" title="Click to hide detail"><div class="detail-content">${typeHtml}${header}${metaHtml}${jsonHtml}</div></td>`;
     }
 
     buildSigCellsHtml(rssi, snr, hash, col) {
