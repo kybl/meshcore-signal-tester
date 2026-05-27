@@ -1383,30 +1383,33 @@ class MeshCoreMonitor {
             if (lk != null) meta.linkKey = String(lk);
         }
 
-        // Update contacts from Advert payload (works offline too, not just via BLE 0x8A)
-        if (packet.payloadType === 4 && p?.isValid && p?.publicKey) {
-            const pubKeyFullHex = String(p.publicKey).toLowerCase();
-            const advName = p.appData?.name ?? null;
-            const advType = p.appData?.deviceRole ?? null;
-            const lat = p.appData?.hasLocation ? (p.appData.location?.latitude ?? 0) : 0;
-            const lon = p.appData?.hasLocation ? (p.appData.location?.longitude ?? 0) : 0;
-            const lastAdvert = p.timestamp ? Math.floor(new Date(p.timestamp).getTime() / 1000) : 0;
-            const existing = this._contacts.get(pubKeyFullHex);
-            this._contacts.set(pubKeyFullHex, {
-                name: advName || existing?.name || null,
-                type: advType ?? existing?.type ?? null,
-                lat: lat || existing?.lat || 0,
-                lon: lon || existing?.lon || 0,
-                lastAdvert: lastAdvert || existing?.lastAdvert || 0,
-                lastmod: existing?.lastmod || 0,
-                pubKeyFullHex,
-            });
-            if (!existing) this._updateContactsCount();
-        }
+        this._ingestContactFromPacket(packet);
 
         if (hash && repeater) {
             this.addRxEntry(hash, repeater, type, rawHex, snr, rssi, meta, packet);
         }
+    }
+
+    _ingestContactFromPacket(packet) {
+        const p = packet?.payload?.decoded;
+        if (packet?.payloadType !== 4 || !p?.isValid || !p?.publicKey) return;
+        const pubKeyFullHex = String(p.publicKey).toLowerCase();
+        const advName = p.appData?.name ?? null;
+        const advType = p.appData?.deviceRole ?? null;
+        const lat = p.appData?.hasLocation ? (p.appData.location?.latitude ?? 0) : 0;
+        const lon = p.appData?.hasLocation ? (p.appData.location?.longitude ?? 0) : 0;
+        const lastAdvert = p.timestamp ? Math.floor(new Date(p.timestamp).getTime() / 1000) : 0;
+        const existing = this._contacts.get(pubKeyFullHex);
+        this._contacts.set(pubKeyFullHex, {
+            name: advName || existing?.name || null,
+            type: advType ?? existing?.type ?? null,
+            lat: lat || existing?.lat || 0,
+            lon: lon || existing?.lon || 0,
+            lastAdvert: lastAdvert || existing?.lastAdvert || 0,
+            lastmod: existing?.lastmod || 0,
+            pubKeyFullHex,
+        });
+        if (!existing) this._updateContactsCount();
     }
 
     escHtml(s) {
@@ -3523,6 +3526,7 @@ class MeshCoreMonitor {
             }
             if (!meta.text   && row.csvText)   meta.text   = row.csvText;
             if (!meta.sender && row.csvSender)  meta.sender = row.csvSender;
+            if (packet) this._ingestContactFromPacket(packet);
 
             const type = packet
                 ? ([Utils.getRouteTypeName(packet.routeType), Utils.getPayloadTypeName(packet.payloadType)].filter(Boolean).join(' ') || row.type)
