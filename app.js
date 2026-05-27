@@ -3300,9 +3300,14 @@ class MeshCoreMonitor {
 
         // Embed contacts that appear in the exported data as comment lines before the header
         const exportedCols = new Set(allRows.map(r => r.col));
+        console.log('[export] contacts in _contacts:', this._contacts.size,
+            [...this._contacts.values()].map(c => `${c.pubKeyFullHex?.slice(0,8)} name=${c.name}`));
+        console.log('[export] exportedCols:', [...exportedCols]);
         const contactsToExport = new Map();
         for (const col of exportedCols) {
-            for (const c of this._contactsByPrefix(col)) {
+            const found = this._contactsByPrefix(col);
+            if (found.length) console.log(`[export] col ${col} → ${found.map(c => c.name).join(', ')}`);
+            for (const c of found) {
                 if (!c.name && c.lat === 0 && c.lon === 0) continue;
                 contactsToExport.set(c.pubKeyFullHex, c);
             }
