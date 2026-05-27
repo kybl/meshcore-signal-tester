@@ -3534,6 +3534,7 @@ class MeshCoreMonitor {
         this._updateMapPins();
         this._updateShowAllBtn();
         this.emptyState?.classList.add('hidden');
+        requestAnimationFrame(() => this._checkTableOverflow(true));
 
         if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
         if (this.statusEl && prevStatus != null) { this.statusEl.textContent = prevStatus; this.statusEl.className = prevClass; }
