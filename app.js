@@ -276,6 +276,21 @@ class MeshCoreMonitor {
             try { localStorage.setItem('sound', this.soundSelect.value); } catch (e) { console.warn('localStorage error:', e); }
         });
 
+        // UI scale
+        const uiScaleSelect = document.getElementById('uiScaleSelect');
+        if (uiScaleSelect) {
+            const applyUiScale = v => {
+                document.documentElement.classList.remove('ui-large', 'ui-larger');
+                if (v === 'large') document.documentElement.classList.add('ui-large');
+                else if (v === 'larger') document.documentElement.classList.add('ui-larger');
+            };
+            try { const s = localStorage.getItem('uiScale'); if (s) { uiScaleSelect.value = s; applyUiScale(s); } } catch (e) { console.warn('localStorage error:', e); }
+            uiScaleSelect.addEventListener('change', () => {
+                applyUiScale(uiScaleSelect.value);
+                try { localStorage.setItem('uiScale', uiScaleSelect.value); } catch (e) { console.warn('localStorage error:', e); }
+            });
+        }
+
         // Point size controls
         try { this._dotSize = parseFloat(localStorage.getItem('dotSize') || '3.5'); } catch (e) { console.warn('localStorage error:', e); this._dotSize = 3.5; }
         try { this._sphereSize = parseFloat(localStorage.getItem('sphereSize') || '1'); } catch (e) { console.warn('localStorage error:', e); this._sphereSize = 1; }

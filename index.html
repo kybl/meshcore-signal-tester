@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=71">
+    <link rel="stylesheet" href="style.css?v=72">
 </head>
 <body>
     <div class="container">
@@ -23,6 +23,7 @@
                 <button id="importCsvBtn" class="btn-pause" title="Import CSV file">Import CSV</button>
                 <input type="file" id="importCsvInput" accept=".csv" style="display:none">
                 <label class="sound-toggle">🔊 Sound<select id="soundSelect" class="sound-select"><option value="off" selected>off</option><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select><span class="help-icon" data-help="sound">?</span></label>
+                <label class="ttl-header-label">Text size<select id="uiScaleSelect" class="ttl-header-select"><option value="normal" selected>Normal</option><option value="large">Large</option><option value="larger">Larger</option></select></label>
                 <label class="size-label">2D graph dots size <input type="range" id="dotSizeInput" class="size-range" min="1" max="8" step="0.5" value="3.5"><span id="dotSizeVal" class="size-val">3.5</span></label>
                 <label class="ttl-header-label">Auto-remove<select id="ttlSelect" class="ttl-header-select"><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">1 h</option><option value="Infinity" selected>Never</option></select><span class="help-icon" data-help="ttl">?</span></label>
                 <button id="clearDataBtn" class="btn-clear-data-header" title="Delete all captured data">Clear data</button>
@@ -288,6 +289,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=95"></script>
+    <script type="module" src="app.js?v=96"></script>
 </body>
 </html>
