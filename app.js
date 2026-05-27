@@ -684,7 +684,7 @@ class MeshCoreMonitor {
             'messages':
                 'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then last RSSI, last SNR, total RX count, then alphabetically.',
             'msg-type':
-                'Type abbreviations — AD: Advert · GT: GroupText · TR: Traceroute · RS: Response · RQ: Request · PN: Ping · TX: TextMessage · PT: Path · CT: Control · PV: Private. Full type is shown in the expanded row.',
+                'Type abbreviations — AD: Advert · GT: GroupText · TR: Traceroute · RS: Response · RQ: Request · PN: Ping · TX: TextMessage · PT: Path · CT: Control · PV: Private · RD: Repeater DSC (discover response, includes uplink SNR). Full type is shown in the expanded row.',
             'signal3d':
                 'Interactive 3D map of received signal strength. Each dot is positioned at your GPS location at reception time; height reflects RSSI (taller = stronger) and scales with camera zoom. Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. Use ⚙ (top right) to change map source, dot size, guide lines, and the location marker. Navigation: drag to pan · scroll/pinch to zoom · right-drag to tilt/rotate.',
         };
@@ -1865,6 +1865,7 @@ class MeshCoreMonitor {
         if (/Flood|FLOOD/.test(type))         return 'FL';
         if (/Direct|DIRECT/.test(type))       return 'DR';
         if (/Broadcast|BROADCAST/.test(type)) return 'BC';
+        if (/DSC/.test(type))                  return 'RD';
         if (/Repeater|REPEATER/.test(type))   return 'RP';
         return type.slice(0, 2).toUpperCase();
     }
@@ -2121,11 +2122,16 @@ class MeshCoreMonitor {
             const hexPart = hex
                 ? ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hex.slice(0, 12))}…</code>`
                 : '';
+            const rs = data.meta?.remoteSnr;
+            const uplinkPart = rs != null
+                ? ` &nbsp; Uplink SNR <span style="color:${this.signalColor(rs, 13, -10, 0)};font-weight:700">${rs.toFixed(1)} dB</span>`
+                : '';
             header = `<div class="detail-sig">` +
                 `<b>${this.escHtml(this.displayId(col))}</b>` +
                 (timeStr ? ` &nbsp; <span class="detail-time">${timeStr}</span>` : '') +
                 ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi ?? '—'}</span>` +
                 ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr?.toFixed(1) ?? '—'}</span>` +
+                uplinkPart +
                 hexPart +
                 `</div>`;
         }
@@ -2144,10 +2150,7 @@ class MeshCoreMonitor {
             const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'Room server', 4: 'Sensor' };
             const typeName = contact?.type != null ? (TYPE_NAMES[contact.type] ?? `Type ${contact.type}`) : null;
             const nameStr = name ? `<b>${this.escHtml(name)}</b>` + (typeName ? ` <span style="color:#888">(${this.escHtml(typeName)})</span>` : '') + ' &nbsp; ' : '';
-            const rs = data.meta.remoteSnr;
-            const remoteStr = rs != null
-                ? `Uplink SNR: <span style="color:${this.signalColor(rs, 13, -10, 0)};font-weight:700">${rs.toFixed(1)} dB</span> &nbsp; ` : '';
-            metaHtml = `<div class="detail-pubkey">${nameStr}${remoteStr}Key: <code>${pk}</code></div>`;
+            metaHtml = `<div class="detail-pubkey">${nameStr}Key: <code>${pk}</code></div>`;
         } else if (col) {
             // Column header click — try to show name for the repeater column
             const contact = this._contactByPrefix(col);
