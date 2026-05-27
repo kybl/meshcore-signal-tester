@@ -1837,7 +1837,12 @@ td.col-dim { opacity: 0.25; }
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 8em;
+    width: 100%;
+}
+
+.ttl-header-select option,
+.sound-select option {
+    font-size: 13px;
 }
 .contacts-loading {
     font-size: 11px;
