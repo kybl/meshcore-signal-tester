@@ -1293,7 +1293,7 @@ class MeshCoreMonitor {
         // Column = the responding node's pub key prefix so all its DSC responses share one column.
         const dscHash = 'DSC:' + (++this._dscSeq);
         const rawHex = Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join('');
-        this.addRxEntry(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null);
+        this.addRxEntry(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null, { remoteSnr });
     }
 
     _handleTracePush(payload) {
@@ -1746,6 +1746,7 @@ class MeshCoreMonitor {
             : (this.signalMap?.currentLocation() ?? null);
         const repEntry = { snr, rssi, packet, rawHex, rawId: repeater, time: now };
         if (loc) { repEntry.lat = loc.lat; repEntry.lon = loc.lon; }
+        if (opts.remoteSnr != null) repEntry.remoteSnr = opts.remoteSnr;
 
         if (isNewHash) {
             this.hashData.set(hash, {
@@ -2122,12 +2123,17 @@ class MeshCoreMonitor {
             const hexPart = hex
                 ? ` &nbsp; <code class="raw-hex" data-hex="${hex}" title="Click to copy raw hex">${this.escHtml(hex.slice(0, 12))}…</code>`
                 : '';
-            const rs = data.meta?.remoteSnr;
+            const rs = repEntry.remoteSnr ?? data.meta?.remoteSnr;
             const uplinkPart = rs != null
                 ? ` &nbsp; Uplink SNR <span style="color:${this.signalColor(rs, 13, -10, 0)};font-weight:700">${rs.toFixed(1)} dB</span>`
                 : '';
-            header = `<div class="detail-sig">` +
+            const dotColor = this.getRepeaterColor(col);
+            const colContact = this._contactByPrefix(col);
+            const colName = colContact?.name ?? null;
+            header = `<div class="detail-sig" title="Click to hide detail">` +
+                `<span class="rl-dot" style="background:${dotColor}"></span>` +
                 `<b>${this.escHtml(this.displayId(col))}</b>` +
+                (colName ? ` <span class="detail-col-name">${this.escHtml(colName)}</span>` : '') +
                 (timeStr ? ` &nbsp; <span class="detail-time">${timeStr}</span>` : '') +
                 ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi ?? '—'}</span>` +
                 ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr?.toFixed(1) ?? '—'}</span>` +
@@ -2149,8 +2155,8 @@ class MeshCoreMonitor {
             const name = contact?.name ?? data.meta.name ?? null;
             const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'Room server', 4: 'Sensor' };
             const typeName = contact?.type != null ? (TYPE_NAMES[contact.type] ?? `Type ${contact.type}`) : null;
-            const nameStr = name ? `<b>${this.escHtml(name)}</b>` + (typeName ? ` <span style="color:#888">(${this.escHtml(typeName)})</span>` : '') + ' &nbsp; ' : '';
-            metaHtml = `<div class="detail-pubkey">${nameStr}Key: <code>${pk}</code></div>`;
+            const typeStr = typeName ? ` <span style="color:#888">(${this.escHtml(typeName)})</span>` : '';
+            metaHtml = `<div class="detail-pubkey">${typeStr ? typeStr + ' &nbsp; ' : ''}Key: <code>${pk}</code></div>`;
         } else if (col) {
             // Column header click — try to show name for the repeater column
             const contact = this._contactByPrefix(col);

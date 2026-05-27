@@ -735,6 +735,13 @@ header {
     margin-bottom: 6px;
     padding-bottom: 5px;
     border-bottom: 1px solid #e8e8f0;
+    cursor: pointer;
+}
+
+.detail-col-name {
+    color: #555;
+    margin-left: 4px;
+    margin-right: 4px;
 }
 
 .detail-time {
