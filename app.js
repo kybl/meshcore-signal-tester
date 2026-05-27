@@ -614,10 +614,15 @@ class MeshCoreMonitor {
     }
 
     _contactsWithGps() {
-        const seenCols = this._seenCols();
         const out = [];
-        for (const [pubKeyFullHex, c] of this._contacts) {
-            if (c.name && (c.lat !== 0 || c.lon !== 0) && seenCols.has(pubKeyFullHex.slice(0, 6))) out.push(c);
+        const seen = new Set();
+        for (const col of this._seenCols()) {
+            for (const c of this._contactsByPrefix(col)) {
+                if (!seen.has(c.pubKeyFullHex) && c.name && (c.lat !== 0 || c.lon !== 0)) {
+                    seen.add(c.pubKeyFullHex);
+                    out.push(c);
+                }
+            }
         }
         return out;
     }
@@ -3319,10 +3324,15 @@ class MeshCoreMonitor {
 
         // Embed contacts that appear in the exported data as comment lines before the header
         const exportedCols = new Set(allRows.map(r => r.col));
-        for (const [pubKeyFullHex, c] of this._contacts) {
-            if (!exportedCols.has(pubKeyFullHex.slice(0, 6))) continue;
-            if (!c.name && c.lat === 0 && c.lon === 0) continue;
-            lines.push('# CONTACT,' + [pubKeyFullHex, c.name || '', c.lat ?? 0, c.lon ?? 0].map(esc).join(','));
+        const contactsToExport = new Map();
+        for (const col of exportedCols) {
+            for (const c of this._contactsByPrefix(col)) {
+                if (!c.name && c.lat === 0 && c.lon === 0) continue;
+                contactsToExport.set(c.pubKeyFullHex, c);
+            }
+        }
+        for (const c of contactsToExport.values()) {
+            lines.push('# CONTACT,' + [c.pubKeyFullHex, c.name || '', c.lat ?? 0, c.lon ?? 0].map(esc).join(','));
         }
         lines.push(header.join(','));
 
