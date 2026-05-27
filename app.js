@@ -605,10 +605,19 @@ class MeshCoreMonitor {
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
     }
 
+    _seenCols() {
+        const cols = new Set();
+        for (const [, data] of this.hashData) {
+            for (const col of data.repeaters.keys()) cols.add(col);
+        }
+        return cols;
+    }
+
     _contactsWithGps() {
+        const seenCols = this._seenCols();
         const out = [];
         for (const [pubKeyFullHex, c] of this._contacts) {
-            if (c.name && (c.lat !== 0 || c.lon !== 0)) out.push(c);
+            if (c.name && (c.lat !== 0 || c.lon !== 0) && seenCols.has(pubKeyFullHex.slice(0, 6))) out.push(c);
         }
         return out;
     }
@@ -3295,7 +3304,7 @@ class MeshCoreMonitor {
         };
 
         const header = ['time', 'type', 'hash', 'repeater', 'rssi', 'snr', 'raw_hex', 'lat', 'lon', 'text', 'sender'];
-        const lines = [header.join(',')];
+        const lines = [];
 
         // One row per (hash, repeater) pair, sorted chronologically
         const allRows = [];
@@ -3307,6 +3316,15 @@ class MeshCoreMonitor {
             }
         }
         allRows.sort((a, b) => (a.rep.time ?? 0) - (b.rep.time ?? 0));
+
+        // Embed contacts that appear in the exported data as comment lines before the header
+        const exportedCols = new Set(allRows.map(r => r.col));
+        for (const [pubKeyFullHex, c] of this._contacts) {
+            if (!exportedCols.has(pubKeyFullHex.slice(0, 6))) continue;
+            if (!c.name && c.lat === 0 && c.lon === 0) continue;
+            lines.push('# CONTACT,' + [pubKeyFullHex, c.name || '', c.lat ?? 0, c.lon ?? 0].map(esc).join(','));
+        }
+        lines.push(header.join(','));
 
         for (const { hash, data, rep } of allRows) {
             lines.push([
@@ -3380,7 +3398,26 @@ class MeshCoreMonitor {
         const lines = text.split(/\r?\n/);
         if (lines.length < 2) return;
 
-        const header = this._parseCsvLine(lines[0]);
+        // Parse embedded contact metadata and find real header line
+        let headerLineIdx = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            if (line.startsWith('# CONTACT,')) {
+                const parts = this._parseCsvLine(line.slice('# CONTACT,'.length));
+                const [pubKeyFullHex, name, latStr, lonStr] = parts;
+                if (pubKeyFullHex && !this._contacts.has(pubKeyFullHex)) {
+                    const lat = parseFloat(latStr) || 0;
+                    const lon = parseFloat(lonStr) || 0;
+                    this._contacts.set(pubKeyFullHex, { name: name || null, type: null, lat, lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex });
+                }
+                continue;
+            }
+            headerLineIdx = i;
+            break;
+        }
+
+        const header = this._parseCsvLine(lines[headerLineIdx]);
         const idx = name => header.indexOf(name);
         const iTime = idx('time'), iType = idx('type'), iHash = idx('hash');
         const iRep  = idx('repeater'), iRssi = idx('rssi'), iSnr = idx('snr');
@@ -3393,7 +3430,7 @@ class MeshCoreMonitor {
         }
 
         let rows = [];
-        for (let i = 1; i < lines.length; i++) {
+        for (let i = headerLineIdx + 1; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) continue;
             const c = this._parseCsvLine(line);
@@ -3511,6 +3548,8 @@ class MeshCoreMonitor {
         this.updateRepeaterTable();
         this.scheduleChartRender();
         this.updateStats();
+        this._updateMapPins();
+        this._updateShowAllBtn();
         this.emptyState?.classList.add('hidden');
 
         if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
