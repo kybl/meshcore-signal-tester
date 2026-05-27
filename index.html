@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore RX Monitor</title>
-    <link rel="stylesheet" href="style.css?v=70">
+    <link rel="stylesheet" href="style.css?v=71">
 </head>
 <body>
     <div class="container">
@@ -13,6 +13,7 @@
                 <span class="app-title">MeshCore RX Monitor</span>
                 <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
                 <span id="status" class="status disconnected">Disconnected</span>
+                <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
                 <span id="batteryStatus" class="battery-status hidden"></span>
                 <div id="savedDevices" class="saved-devices hidden"></div>
@@ -21,12 +22,11 @@
                 <button id="exportCsvBtn" class="btn-pause" title="Export visible packets as CSV" disabled>Export CSV</button>
                 <button id="importCsvBtn" class="btn-pause" title="Import CSV file">Import CSV</button>
                 <input type="file" id="importCsvInput" accept=".csv" style="display:none">
-                <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <label class="sound-toggle">🔊 Sound<select id="soundSelect" class="sound-select"><option value="off" selected>off</option><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select><span class="help-icon" data-help="sound">?</span></label>
-                <label class="size-label">Dots <input type="range" id="dotSizeInput" class="size-range" min="1" max="8" step="0.5" value="3.5"><span id="dotSizeVal" class="size-val">3.5</span></label>
+                <label class="size-label">2D graph dots size <input type="range" id="dotSizeInput" class="size-range" min="1" max="8" step="0.5" value="3.5"><span id="dotSizeVal" class="size-val">3.5</span></label>
                 <label class="ttl-header-label">Auto-remove<select id="ttlSelect" class="ttl-header-select"><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">1 h</option><option value="Infinity" selected>Never</option></select><span class="help-icon" data-help="ttl">?</span></label>
-                <label class="ttl-header-label">Display<select id="hideSelect" class="ttl-header-select"><option value="all">All</option><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="600">10 min</option><option value="900" selected>15 min</option><option value="1800">30 min</option><option value="3600">1 h</option></select><span class="help-icon" data-help="display">?</span></label>
                 <button id="clearDataBtn" class="btn-clear-data-header" title="Delete all captured data">Clear data</button>
+                <label class="ttl-header-label">Display<select id="hideSelect" class="ttl-header-select"><option value="all">All</option><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="600">10 min</option><option value="900" selected>15 min</option><option value="1800">30 min</option><option value="3600">1 h</option></select><span class="help-icon" data-help="display">?</span></label>
             </div>
             <div class="header-stats-row">
                 <div class="header-stats">
@@ -255,7 +255,7 @@
             <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Ping</b> button sends a zero-hop self-advertisement so nearby repeaters announce themselves; everything else is passive listening.</p>
 
             <div class="help-section-title">Getting started</div>
-            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏸ Pause / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
+            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -288,6 +288,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=91"></script>
+    <script type="module" src="app.js?v=92"></script>
 </body>
 </html>

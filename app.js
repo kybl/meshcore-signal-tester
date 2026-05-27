@@ -54,7 +54,7 @@ class MeshCoreMonitor {
         const connected = !!this.device;
         btn.disabled = !connected;
         if (this._collecting) {
-            btn.textContent = '⏸ Pause';
+            btn.textContent = '⏹ Stop';
             btn.classList.add('collecting');
             this._chartFrozenAt = null;
         } else {
