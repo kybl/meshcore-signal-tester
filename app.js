@@ -972,9 +972,14 @@ class MeshCoreMonitor {
     }
 
     _setContactsLoading(on) {
-        if (this.contactsLoadingMsg) this.contactsLoadingMsg.style.display = on ? '' : 'none';
+        if (this.contactsLoadingMsg) {
+            this.contactsLoadingMsg.style.display = on ? '' : 'none';
+            if (on) this.contactsLoadingMsg.textContent = 'Fetching contacts…';
+        }
         clearTimeout(this._contactsLoadingTimeout);
-        if (on) this._contactsLoadingTimeout = setTimeout(() => this._setContactsLoading(false), 15000);
+        if (on) this._contactsLoadingTimeout = setTimeout(() => {
+            if (this.contactsLoadingMsg) this.contactsLoadingMsg.textContent = 'Contact fetch failed — try reconnecting.';
+        }, 15000);
     }
 
     _parseContact(payload) {
