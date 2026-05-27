@@ -24,9 +24,9 @@
     --shadow:         rgba(0,0,0,0.4);
 }
 html.light-theme {
-    --bg-gutter:      #04101e;
+    --bg-gutter:      #1a3a6a;
     --bg-content:     #eef0f7;
-    --bg-header:      #b8cce8;
+    --bg-header:      #6a9ad4;
     --bg-box:         #ffffff;
     --bg-input:       #ffffff;
     --bg-hover:       rgba(0,0,0,0.06);
@@ -191,14 +191,15 @@ header {
 }
 
 .btn-primary:disabled {
-    background: #ccc;
+    background: var(--bg-table-head);
+    color: var(--text-muted);
     cursor: not-allowed;
 }
 
 .btn-pause {
-    background: #f0f4ff;
+    background: var(--bg-box);
     color: #667eea;
-    border: 1.5px solid #c8c8f0;
+    border: 1.5px solid var(--border);
     padding: 5px 12px;
     border-radius: 6px;
     font-size: 13px;
@@ -220,9 +221,9 @@ header {
 }
 
 .btn-pause.collecting {
-    background: #fff7ed;
-    color: #c2410c;
-    border-color: #fbd38d;
+    background: var(--bg-box);
+    color: #e05a20;
+    border-color: #c2410c;
 }
 
 .btn-pause.collecting:hover {
@@ -275,10 +276,10 @@ header {
 
 .sound-select {
     font-size: 12px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--bg-input);
-    color: #333;
+    color: var(--text-primary);
     cursor: pointer;
     padding: 1px 3px;
     accent-color: #667eea;
@@ -869,9 +870,9 @@ header {
 
 .btn-clear-data-header {
     background: none;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 4px;
-    color: #666;
+    color: var(--text-secondary);
     font-size: 11px;
     padding: 1px 8px;
     cursor: pointer;
@@ -879,9 +880,9 @@ header {
 }
 
 .btn-clear-data-header:hover {
-    background: #fee;
+    background: rgba(200, 40, 40, 0.12);
     border-color: #c66;
-    color: #c33;
+    color: #e05050;
 }
 
 
@@ -906,8 +907,8 @@ header {
 }
 
 .rep-filter-input.has-value {
-    background: white;
-    border-color: #a8b8f8;
+    background: var(--bg-input);
+    border-color: #667eea;
 }
 
 .chart-tooltip {
@@ -1281,7 +1282,7 @@ header {
 }
 
 .rep-filter-label {
-    color: rgba(255,255,255,0.65);
+    color: var(--text-secondary);
     font-size: 12px;
     white-space: nowrap;
 }
@@ -1908,9 +1909,9 @@ td.col-dim { opacity: 0.25; }
     color: #888;
 }
 .theme-toggle-btn {
-    background: none;
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #c8d8f0;
     border-radius: 5px;
     padding: 2px 8px;
     font-size: 13px;
@@ -1918,6 +1919,6 @@ td.col-dim { opacity: 0.25; }
     line-height: 1.6;
 }
 .theme-toggle-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
+    background: rgba(0,0,0,0.55);
+    color: #fff;
 }

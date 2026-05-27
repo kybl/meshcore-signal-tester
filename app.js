@@ -2002,7 +2002,7 @@ class MeshCoreMonitor {
             const repHeaders = visibleCols.map(r => {
                 const cName = this._contactNameForCol(r);
                 const nameTag = cName ? `<br><span class="col-contact-name">${this.escHtml(cName)}</span>` : '';
-                return `<th colspan="2" class="msg-col-rep" data-col="${this.escHtml(r)}"><span class="rl-dot" style="background:${this.getRepeaterColor(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
+                return `<th colspan="2" class="msg-col-rep" data-col="${this.escHtml(r)}"><span class="rl-dot" style="background:${this._chartColor(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
             }).join('');
             const subHeaders = visibleCols.map(() =>
                 `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
@@ -2182,7 +2182,7 @@ class MeshCoreMonitor {
             const uplinkPart = rs != null
                 ? ` &nbsp; Uplink SNR <span style="color:${this.signalColor(rs, 13, -10, 0)};font-weight:700">${rs.toFixed(1)} dB</span>`
                 : '';
-            const dotColor = this.getRepeaterColor(col);
+            const dotColor = this._chartColor(col);
             const colContact = this._contactByPrefix(col);
             const colName = colContact?.name ?? null;
             header = `<div class="detail-sig">` +
@@ -2528,7 +2528,7 @@ class MeshCoreMonitor {
 
         if (legend) {
             const entries = visible.map(col => {
-                const c = this.getRepeaterColor(col);
+                const c = this._chartColor(col);
                 const last = lastByCol.get(col);
                 const val = type === 'rssi' ? last.rssi : last.snr;
                 const valStr = val == null ? '—'
@@ -2745,7 +2745,7 @@ class MeshCoreMonitor {
         if (!nearest || minDist > 1600) { this.hideChartTooltip(); return; }
 
         const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const color = this.getRepeaterColor(nearest.col);
+        const color = this._chartColor(nearest.col);
         const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
         const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this.escHtml(cName)}</span>` : '';
@@ -2984,7 +2984,7 @@ class MeshCoreMonitor {
             const cName = this._contactNameForCol(repeater);
             const nameTag = cName ? `<span class="rl-name">${this.escHtml(cName)}</span>` : '';
             return `<tr data-col="${this.escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
-                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this.getRepeaterColor(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
+                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this._chartColor(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
                 <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
@@ -3104,7 +3104,7 @@ class MeshCoreMonitor {
                 const exactCol = matchingCols.length === 1 && !matchingCols[0].includes('/') ? matchingCols[0] : null;
                 const dot = document.getElementById('filterNoticeDot');
                 if (dot) {
-                    dot.style.background = exactCol ? this.getRepeaterColor(exactCol) : '';
+                    dot.style.background = exactCol ? this._chartColor(exactCol) : '';
                     dot.style.display    = exactCol ? '' : 'none';
                 }
                 const nameEl = document.getElementById('filterNoticeName');
@@ -3128,7 +3128,7 @@ class MeshCoreMonitor {
             if (hasSel && !hasFilter) {
                 document.getElementById('selNoticeRep').textContent = this.displayId(this._chartSelected);
                 const dot = document.getElementById('selNoticeDot');
-                if (dot) dot.style.background = this.getRepeaterColor(this._chartSelected);
+                if (dot) dot.style.background = this._chartColor(this._chartSelected);
                 const nameEl = document.getElementById('selNoticeName');
                 if (nameEl) {
                     const cName = this._contactNameForCol(this._chartSelected);
