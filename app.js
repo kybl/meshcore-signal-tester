@@ -1002,13 +1002,8 @@ class MeshCoreMonitor {
         if (payload.length >= 140) lat = ((payload[136] | (payload[137] << 8) | (payload[138] << 16) | (payload[139] << 24)) | 0) / 1e6;
         if (payload.length >= 144) lon = ((payload[140] | (payload[141] << 8) | (payload[142] << 16) | (payload[143] << 24)) | 0) / 1e6;
         if (payload.length >= 148) lastmod = payload[144] | (payload[145] << 8) | (payload[146] << 16) | (payload[147] << 24);
-        console.log(`_parseContact: key=${pubKeyFull.slice(0,6)} type=${type} name="${name}"`);
         this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod, pubKeyFullHex: pubKeyFull });
         if (lastmod > this._contactsLastmod) this._contactsLastmod = lastmod;
-        // Keep the AD entry's name in sync
-        const pubKeyHex = pubKeyFull.slice(0, 6).toUpperCase();
-        const adEntry = this.hashData.get('AD:' + pubKeyHex);
-        if (adEntry && name) adEntry.meta.name = name;
         this._updateContactsCount();
     }
 
@@ -1251,27 +1246,8 @@ class MeshCoreMonitor {
         }
     }
 
-    _handleAdvertPush(payload) {
-        // Format: byte 0 = push code, bytes 1-32 = pub_key (32 B),
-        // optional byte 33 = adv_type, optional bytes 34+ = name (null-term)
-        if (payload.length < 33) return;
-        const pubKey = payload.slice(1, 33);
-        const advType = payload.length > 33 ? payload[33] : null;
-        const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'RoomSrv', 4: 'Sensor' };
-        const typeName = advType != null ? (TYPE_NAMES[advType] ?? `Adv${advType}`) : 'Node';
-        let name = '';
-        for (let i = 34; i < payload.length && payload[i] !== 0; i++)
-            name += String.fromCharCode(payload[i]);
-        const pubKeyHex = Array.from(pubKey.slice(0, 3))
-            .map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
-        const pubKeyFull = Array.from(pubKey)
-            .map(b => b.toString(16).padStart(2, '0')).join('');
-        const hash = 'AD:' + pubKeyHex;
-        const meta = { name: name || null, advType, pubKeyHex, pubKeyFull };
-        this.addRxEntry(hash, pubKeyHex, typeName + ' Advert', null, null, null, meta, null);
-        // addRxEntry only sets meta on first creation; refresh name/pubkey on repeat adverts
-        const entry = this.hashData.get(hash);
-        if (entry) entry.meta = { ...entry.meta, name: name || entry.meta.name, advType, pubKeyFull };
+    _handleAdvertPush(_payload) {
+        // 0x80: existing contact re-heard — redundant with the 0x88 Flood Advert that fires alongside it
     }
 
     _handleDiscoverResp(payload) {
