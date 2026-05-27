@@ -285,10 +285,9 @@ class MeshCoreMonitor {
                 if (v === 'large')  document.documentElement.classList.add('ui-large');
                 if (v === 'larger') document.documentElement.classList.add('ui-larger');
             };
-            const desktopDefault = window.matchMedia('(min-width: 1024px)').matches ? 'large' : 'normal';
             let stored = null;
             try { stored = localStorage.getItem('uiScale'); } catch (e) { console.warn('localStorage error:', e); }
-            const initial = stored || desktopDefault;
+            const initial = stored || 'normal';
             uiScaleSelect.value = initial;
             applyUiScale(initial);
             uiScaleSelect.addEventListener('change', () => {

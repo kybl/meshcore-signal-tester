@@ -25,6 +25,14 @@ html.ui-larger body {
     width: calc(100% / 2.0);
 }
 
+/* Desktop: all variants boosted by ×1.3 */
+@media (min-width: 1024px) {
+    body                { transform: scale(1.3);  width: calc(100% / 1.3);  }
+    html.ui-small body  { transform: scale(1.04); width: calc(100% / 1.04); }
+    html.ui-large body  { transform: scale(1.69); width: calc(100% / 1.69); }
+    html.ui-larger body { transform: scale(2.6);  width: calc(100% / 2.6);  }
+}
+
 .container {
     margin: 0 auto;
 }
