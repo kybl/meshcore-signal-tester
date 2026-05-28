@@ -499,7 +499,6 @@ export class Signal3DMap {
         this._staticMarkers = markers || [];
         if (this._staticMarkers.length && this.emptyEl) this.emptyEl.classList.add('hidden');
         this._updateStaticMarkers();
-        this._scheduleMapUpdate();
     }
 
     _disposeStaticMarkers() {
@@ -768,7 +767,6 @@ export class Signal3DMap {
             .filter(p => (!cutoff || p.time >= cutoff) && (!this.filterFn || this.filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
         if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
-        for (const m of this._staticMarkers) locs.push({ lat: m.lat, lon: m.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
         for (const l of locs) {
