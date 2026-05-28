@@ -889,12 +889,11 @@ export class Signal3DMap {
             return;
         }
         if (this._heightMode === 'tile') {
-            // Height locked to tile zoom level: deep tile zoom (zoomed-in data) → short
-            // spires; shallow tile zoom (city-scale data) → tall spires.
-            // refZoom=17 ≈ street level where scale=2 looks natural.
-            const z = this.tileBounds?.zoom ?? 17;
-            const scale = Math.max(0.2, Math.min(8, 2 * Math.pow(2, 17 - z)));
-            this.pointsGroup.scale.y = scale;
+            // Aggressive zoom-adaptive: shrink spires fast as camera approaches so
+            // a tall spire never extends out of the viewport when you get close.
+            // ratio^1.7 vs the regular linear ratio.
+            const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
+            this.pointsGroup.scale.y = Math.pow(ratio, 1.7) * 2;
             return;
         }
         const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
