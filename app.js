@@ -498,6 +498,18 @@ class MeshCoreMonitor {
             });
         }
 
+        const repExpandCb   = document.getElementById('repExpandTable');
+        const repLogScroll  = document.getElementById('repeaterLogScroll');
+        const applyRepExpand = expanded => {
+            repLogScroll?.classList.toggle('expanded', expanded);
+            if (repExpandCb) repExpandCb.checked = expanded;
+            try { localStorage.setItem('repExpand', expanded ? '1' : '0'); } catch (e) { console.warn('localStorage error:', e); }
+        };
+        if (repExpandCb) {
+            repExpandCb.addEventListener('change', () => applyRepExpand(repExpandCb.checked));
+            try { applyRepExpand(localStorage.getItem('repExpand') === '1'); } catch (e) { console.warn('localStorage error:', e); applyRepExpand(false); }
+        }
+
         // Corner notice buttons
         document.getElementById('filterNoticeClear')?.addEventListener('click', () => {
             this._repFilterTerms = [];

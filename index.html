@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
-    <link rel="stylesheet" href="style.css?v=95">
+    <link rel="stylesheet" href="style.css?v=96">
 </head>
 <body>
     <header>
@@ -173,19 +173,26 @@
                     <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="repeaterBody">
-                    <div class="repeater-log-scroll">
-                        <table class="repeater-log-table">
-                            <thead><tr>
-                                <th data-sort-key="id">Repeater<span class="help-icon" data-help="repeater">?</span></th>
-                                <th data-sort-key="count">RX</th>
-                                <th data-sort-key="maxRssi">Max RSSI<span class="help-icon" data-help="rssi">?</span></th>
-                                <th data-sort-key="lastRssi">Last RSSI</th>
-                                <th data-sort-key="maxSnr">Max SNR<span class="help-icon" data-help="snr">?</span></th>
-                                <th data-sort-key="lastSnr">Last SNR</th>
-                                <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
-                            </tr></thead>
-                            <tbody id="repeaterLogBody"></tbody>
-                        </table>
+                    <div class="section-body-inner">
+                        <div class="repeater-log-scroll" id="repeaterLogScroll">
+                            <table class="repeater-log-table">
+                                <thead><tr>
+                                    <th data-sort-key="id">Repeater<span class="help-icon" data-help="repeater">?</span></th>
+                                    <th data-sort-key="count">RX</th>
+                                    <th data-sort-key="maxRssi">Max RSSI<span class="help-icon" data-help="rssi">?</span></th>
+                                    <th data-sort-key="lastRssi">Last RSSI</th>
+                                    <th data-sort-key="maxSnr">Max SNR<span class="help-icon" data-help="snr">?</span></th>
+                                    <th data-sort-key="lastSnr">Last SNR</th>
+                                    <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
+                                </tr></thead>
+                                <tbody id="repeaterLogBody"></tbody>
+                            </table>
+                        </div>
+                        <div class="rep-expand-bar">
+                            <label class="rep-expand-label">
+                                <input type="checkbox" id="repExpandTable"> Show full table
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -298,6 +305,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=134"></script>
+    <script type="module" src="app.js?v=135"></script>
 </body>
 </html>

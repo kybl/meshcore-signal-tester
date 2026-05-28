@@ -448,6 +448,24 @@ html.light-theme .status.importing {
     overflow: auto;
 }
 
+.repeater-log-scroll.expanded {
+    max-height: none;
+}
+
+.rep-expand-bar {
+    padding: 5px 10px 6px;
+}
+
+.rep-expand-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
 .repeater-log-table {
     width: 100%;
     border-collapse: collapse;
