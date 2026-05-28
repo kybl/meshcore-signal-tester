@@ -5,6 +5,7 @@
 }
 
 :root {
+    color-scheme: dark;
     --bg-gutter:      #071428;
     --bg-content:     #181824;
     --bg-header:      #0e1e3a;
@@ -24,6 +25,7 @@
     --shadow:         rgba(0,0,0,0.4);
 }
 html.light-theme {
+    color-scheme: light;
     --bg-gutter:      #3560a0;
     --bg-content:     #eef0f7;
     --bg-header:      #80b0e0;
