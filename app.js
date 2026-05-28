@@ -2351,7 +2351,7 @@ class MeshCoreMonitor {
     }
 
     _chartYBounds(type) {
-        const pts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
+        const pts = this._visibleChartPoints();
         // Avoid spread on potentially large arrays (Math.min(...arr) has an arg-count limit)
         let vMin = Infinity, vMax = -Infinity;
         for (const p of pts) {
@@ -2360,7 +2360,7 @@ class MeshCoreMonitor {
             if (v < vMin) vMin = v;
             if (v > vMax) vMax = v;
         }
-        if (type === 'snr' && this._snrShowOutgoing) {
+        if (type === 'snr') {
             for (const p of this._visibleSentSnrPts()) {
                 if (p.snr < vMin) vMin = p.snr;
                 if (p.snr > vMax) vMax = p.snr;
