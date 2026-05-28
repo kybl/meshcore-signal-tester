@@ -519,7 +519,7 @@ class MeshCoreMonitor {
         });
 
         window.addEventListener('beforeunload', e => {
-            if (this.device || this._unsavedRxCount > 0) {
+            if (this._unsavedRxCount > 0) {
                 e.preventDefault();
                 e.returnValue = '';
             }
