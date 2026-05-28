@@ -1090,6 +1090,7 @@ export class Signal3DMap {
     _repositionAll() {
         this._disposeInstanced();
         if (!this.tileBounds) return;
+        this._updateHeightScale();
 
         const sel     = this._selectedCol;
         const cutoff  = this._displayCutoff;
