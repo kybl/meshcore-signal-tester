@@ -165,6 +165,15 @@
                                         </select>
                                     </label>
                                     <label class="size-label">Dot size <input type="range" id="sphereSizeInput" class="size-range" min="0.2" max="3" step="0.1" value="1"><span id="sphereSizeVal" class="size-val">1</span></label>
+                                    <label class="map-setting-toggle">Height/size mode
+                                        <select id="heightModeSelect" class="ttl-header-select">
+                                            <option value="spires" selected>Spires (zoom-adaptive)</option>
+                                            <option value="fixed">Spires (fixed scale)</option>
+                                            <option value="log">Log spires</option>
+                                            <option value="bubbles">Bubbles (size = RSSI)</option>
+                                            <option value="dual">Combined (height + size)</option>
+                                        </select>
+                                    </label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showLinesChk" checked> Guide lines</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showMarkerChk" checked> My location</label>
                                     <label class="map-setting-toggle">Cluster radius
@@ -299,6 +308,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=109"></script>
+    <script type="module" src="app.js?v=110"></script>
 </body>
 </html>

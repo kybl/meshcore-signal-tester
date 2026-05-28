@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=49';
+import { Signal3DMap } from './signal3d.js?v=50';
 
 class MeshCoreMonitor {
     constructor() {
@@ -562,6 +562,7 @@ class MeshCoreMonitor {
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
                 initialClusterRadius: (() => { try { const v = localStorage.getItem('clusterRadius'); return v != null ? parseFloat(v) : 0; } catch { return 0; } })(),
+                initialHeightMode: (() => { try { return localStorage.getItem('heightMode') || 'spires'; } catch { return 'spires'; } })(),
                 onSelect:      col => {
                     this._selectRepeater(col);
                 },
@@ -641,6 +642,11 @@ class MeshCoreMonitor {
             this.signalMap?.setClusterRadius(r);
             try { localStorage.setItem('clusterRadius', clusterSel.value); } catch (e) { console.warn('localStorage error:', e); }
         });
+        const heightModeSel = document.getElementById('heightModeSelect');
+        heightModeSel?.addEventListener('change', () => {
+            this.signalMap?.setHeightMode(heightModeSel.value);
+            try { localStorage.setItem('heightMode', heightModeSel.value); } catch (e) { console.warn('localStorage error:', e); }
+        });
         // Restore saved values
         try {
             if (localStorage.getItem('showLines') === 'false' && showLinesChk) {
@@ -656,6 +662,8 @@ class MeshCoreMonitor {
                 clusterSel.value = savedCluster;
                 this.signalMap?.setClusterRadius(parseFloat(savedCluster));
             }
+            const savedHeightMode = localStorage.getItem('heightMode');
+            if (savedHeightMode && heightModeSel) heightModeSel.value = savedHeightMode;
         } catch (e) { console.warn('Failed to restore map settings:', e); }
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());

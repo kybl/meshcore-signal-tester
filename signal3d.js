@@ -88,9 +88,9 @@ export class Signal3DMap {
         this._showMarker  = opts.showMarker !== false;
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
+        this._heightMode  = opts.initialHeightMode || 'spires';
         // Points / mesh handles — replaced per _repositionAll call
-        this._ptsMeshLit  = null;   // THREE.Points for lit spheres (sprite texture)
-        this._ptsMeshDim  = null;   // THREE.Points for dim spheres
+        this._ptsMeshes   = [];     // THREE.Points for spheres (sprite texture), one or more per call
         this._iMeshHit    = null;   // invisible InstancedMesh for raycasting only
         this._lineSegs    = null;   // vertical lines for lit (selected/all) points
         this._lineSegsDim = null;   // vertical lines for dim (unselected) points
@@ -650,6 +650,13 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
+    setHeightMode(mode) {
+        if (mode === this._heightMode) return;
+        this._heightMode = mode;
+        this._updateHeightScale();
+        this._repositionAll();
+    }
+
     setShowLines(v) {
         this._showLines = !!v;
         if (this._lineSegs)    this._lineSegs.visible    = this._showLines;
@@ -864,8 +871,12 @@ export class Signal3DMap {
 
     _updateHeightScale() {
         if (!this._refCamDist) return;
-        // Same metric as _scaleMarkerToScreen: getDistance() gives stable zoom level
-        // unaffected by camera tilt. At initial fit distance scale = 1; closer → shorter.
+        if (this._heightMode === 'fixed') {
+            // world-space fixed: spires stay at true proportions regardless of zoom
+            this.pointsGroup.scale.y = 2;
+            return;
+        }
+        // zoom-adaptive: getDistance() unaffected by camera tilt; closer → shorter
         const scale = Math.max(0.05, this.controls.getDistance() / this._refCamDist) * 2;
         this.pointsGroup.scale.y = scale;
     }
@@ -1014,19 +1025,24 @@ export class Signal3DMap {
     }
 
     _rssiToHeight(rssi) {
-        const t = (rssi - RSSI_BAD) / (RSSI_GOOD - RSSI_BAD);
-        return MIN_HEIGHT + Math.max(0, Math.min(1, t)) * (MAX_HEIGHT - MIN_HEIGHT);
+        if (this._heightMode === 'bubbles') return 1.5;
+        const t = Math.max(0, Math.min(1, (rssi - RSSI_BAD) / (RSSI_GOOD - RSSI_BAD)));
+        if (this._heightMode === 'log') {
+            // log10(1 + 9t): maps 0→0, 1→1 but spreads weak signals, compresses strong
+            const tlog = Math.log1p(t * 9) / Math.LN10;
+            return MIN_HEIGHT + tlog * (MAX_HEIGHT - MIN_HEIGHT);
+        }
+        return MIN_HEIGHT + t * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
     _disposeInstanced() {
-        for (const obj of [this._ptsMeshLit, this._ptsMeshDim, this._iMeshHit, this._lineSegs, this._lineSegsDim]) {
+        for (const obj of [...this._ptsMeshes, this._iMeshHit, this._lineSegs, this._lineSegsDim]) {
             if (!obj) continue;
             this.pointsGroup.remove(obj);
             obj.material?.dispose();
             if (obj !== this._iMeshHit) obj.geometry?.dispose();
         }
-        this._ptsMeshLit  = null;
-        this._ptsMeshDim  = null;
+        this._ptsMeshes   = [];
         this._iMeshHit    = null;
         this._lineSegs    = null;
         this._lineSegsDim = null;
@@ -1112,13 +1128,28 @@ export class Signal3DMap {
             }));
         };
 
-        if (litPts.length) {
-            this._ptsMeshLit = makePoints(litPts, 1.0, 2.0);
-            this.pointsGroup.add(this._ptsMeshLit);
-        }
-        if (dimPts.length) {
-            this._ptsMeshDim = makePoints(dimPts, 0.07, 2.0);
-            this.pointsGroup.add(this._ptsMeshDim);
+        const addPoints = (pts, opacity, sizeMult) => {
+            if (!pts.length) return;
+            const m = makePoints(pts, opacity, sizeMult);
+            this._ptsMeshes.push(m);
+            this.pointsGroup.add(m);
+        };
+
+        // For modes where size encodes RSSI, split into 3 size buckets
+        const sizeByRssi = this._heightMode === 'bubbles' || this._heightMode === 'dual';
+        if (sizeByRssi) {
+            const buckets = [
+                { test: p => p.rssi >= -70,                    mult: 3.0 },
+                { test: p => p.rssi < -70 && p.rssi >= -95,   mult: 1.8 },
+                { test: p => p.rssi < -95,                     mult: 1.0 },
+            ];
+            for (const { test, mult } of buckets) {
+                addPoints(litPts.filter(test), 1.0,  mult * 2.0);
+                addPoints(dimPts.filter(test), 0.07, mult * 2.0);
+            }
+        } else {
+            addPoints(litPts, 1.0,  2.0);
+            addPoints(dimPts, 0.07, 2.0);
         }
 
         // Invisible InstancedMesh for raycasting (stays separate from visual rendering)
