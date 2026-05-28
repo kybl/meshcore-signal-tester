@@ -355,28 +355,29 @@ html.light-theme .status.importing {
     margin-bottom: 4px;
     cursor: pointer;
     border-radius: 5px;
-    padding: 3px 5px;
+    padding: 3px 8px;
     margin-left: -5px;
+    background: var(--bg-table-head);
     transition: background 0.15s;
 }
 
 .section-hint {
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-muted);
     font-weight: normal;
     margin-left: auto;
     white-space: nowrap;
 }
 .section-header:hover {
-    background: var(--bg-hover);
+    background: var(--bg-sig-hover);
 }
 
 .section-header:hover .section-title {
-    color: rgba(255,255,255,1);
+    color: var(--text-primary);
 }
 
 .section-header:hover .collapse-btn {
-    color: rgba(255,255,255,0.9);
+    color: var(--text-primary);
 }
 
 .section-wrap {
