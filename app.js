@@ -2394,7 +2394,7 @@ class MeshCoreMonitor {
         const gridMinor = isDark ? 'rgba(255,255,255,0.05)' : '#ebebeb';
         const gridMajor = isDark ? 'rgba(255,255,255,0.10)' : '#ddd';
         const gridAxis  = isDark ? 'rgba(255,255,255,0.18)' : '#bbb';
-        const labelFill = isDark ? '#5a6488' : '#999';
+        const labelFill = isDark ? '#8892b8' : '#888';
 
         const parts = [];
 
@@ -2597,7 +2597,7 @@ class MeshCoreMonitor {
         const gridMinor2 = isDark2 ? 'rgba(255,255,255,0.05)' : '#ebebeb';
         const gridMajor2 = isDark2 ? 'rgba(255,255,255,0.10)' : '#ddd';
         const gridAxis2  = isDark2 ? 'rgba(255,255,255,0.18)' : '#bbb';
-        const labelFill2 = isDark2 ? '#5a6488' : '#999';
+        const labelFill2 = isDark2 ? '#8892b8' : '#888';
 
         const parts = [];
 
