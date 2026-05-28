@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=45';
+import { Signal3DMap } from './signal3d.js?v=46';
 
 class MeshCoreMonitor {
     constructor() {
@@ -561,7 +561,7 @@ class MeshCoreMonitor {
                 nameForCol:    col => this._contactNameForCol(col),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
-                initialClusterRadius: (() => { try { const v = localStorage.getItem('clusterRadius'); return v != null ? parseFloat(v) : 10; } catch { return 10; } })(),
+                initialClusterRadius: (() => { try { const v = localStorage.getItem('clusterRadius'); return v != null ? parseFloat(v) : 0; } catch { return 0; } })(),
                 onSelect:      col => {
                     this._selectRepeater(col);
                 },

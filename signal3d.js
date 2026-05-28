@@ -86,7 +86,7 @@ export class Signal3DMap {
         this.sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
         this._showLines   = opts.showLines !== false;
         this._showMarker  = opts.showMarker !== false;
-        this._clusterRadius = (opts.initialClusterRadius >= 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
+        this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
         // Points / mesh handles — replaced per _repositionAll call
         this._ptsMeshLit  = null;   // THREE.Points for lit spheres (sprite texture)
@@ -154,14 +154,13 @@ export class Signal3DMap {
         this.controls.target.set(0, 0, 0);
         this.controls.enableDamping      = true;
         this.controls.dampingFactor      = 0.08;
-        this.controls.maxPolarAngle      = Math.PI / 2 - 0.08; // ~85° — prevents near-horizontal gimbal issues
-        this.controls.screenSpacePanning = true;
+        this.controls.maxPolarAngle      = Math.PI / 2 - 0.08;
+        this.controls.screenSpacePanning = false;  // always pan in world XZ plane, no tilt-fight
         this.controls.minDistance        = 0.5;
         this.controls.maxDistance        = 300;
-        // Single finger = always pan; two fingers = pinch-zoom + rotate/tilt
-        this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+        // Single finger = always pan; two fingers = pinch-zoom + azimuth rotate
+        this.controls.touches = { ONE: 1 /* PAN */, TWO: 3 /* DOLLY_ROTATE */ };
         this.controls.update();
-        // Keep target on the floor plane — prevents camera going above or below the map
         this.controls.addEventListener('change', () => {
             this.controls.target.y = 0;
             this._updateHeightScale();
@@ -170,6 +169,34 @@ export class Signal3DMap {
             clearTimeout(this._viewUpdateTimer);
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
         });
+
+        // Two-finger twist (rotation around midpoint between fingers).
+        // DOLLY_ROTATE handles centroid-movement rotation; we add angle-delta rotation
+        // so a pure twist-in-place also rotates the camera azimuth.
+        let _twistAngle = null;
+        canvas.addEventListener('touchstart', e => {
+            if (e.touches.length === 2) {
+                const t0 = e.touches[0], t1 = e.touches[1];
+                _twistAngle = Math.atan2(t1.clientY - t0.clientY, t1.clientX - t0.clientX);
+            } else {
+                _twistAngle = null;
+            }
+        }, { passive: true });
+        canvas.addEventListener('touchmove', e => {
+            if (e.touches.length !== 2 || _twistAngle === null) return;
+            const t0 = e.touches[0], t1 = e.touches[1];
+            const newAngle = Math.atan2(t1.clientY - t0.clientY, t1.clientX - t0.clientX);
+            let delta = newAngle - _twistAngle;
+            if (delta >  Math.PI) delta -= 2 * Math.PI;
+            if (delta < -Math.PI) delta += 2 * Math.PI;
+            if (Math.abs(delta) > 0.002) {
+                this.controls.rotateLeft(delta);
+                this.controls.update();
+            }
+            _twistAngle = newAngle;
+        }, { passive: true });
+        canvas.addEventListener('touchend',   () => { _twistAngle = null; }, { passive: true });
+        canvas.addEventListener('touchcancel',() => { _twistAngle = null; }, { passive: true });
 
         this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
         const dl = new THREE.DirectionalLight(0xffffff, 0.45);
