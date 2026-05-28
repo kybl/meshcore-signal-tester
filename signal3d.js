@@ -1191,6 +1191,9 @@ export class Signal3DMap {
                 };
             }
             const mesh = new THREE.Points(geo, mat);
+            // Render order: lit dots (renderOrder 2) paint over lines (renderOrder 1)
+            // so the ball is always visually in front of its own guide line.
+            mesh.renderOrder = isLit ? 2 : 0;
             mesh.userData.baseDotSize = dotSize;
             return mesh;
         };
@@ -1240,6 +1243,7 @@ export class Signal3DMap {
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             const seg = new THREE.LineSegments(geo, mat);
+            seg.renderOrder = 1;  // after dim dots (0), before lit balls (2)
             seg.visible = this._showLines;
             this.pointsGroup.add(seg);
             return seg;
