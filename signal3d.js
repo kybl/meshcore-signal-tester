@@ -86,6 +86,7 @@ export class Signal3DMap {
         this.sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
         this._showLines   = opts.showLines !== false;
         this._showMarker  = opts.showMarker !== false;
+        this._clusterRadius = (opts.initialClusterRadius >= 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
         // Points / mesh handles — replaced per _repositionAll call
         this._ptsMeshLit  = null;   // THREE.Points for lit spheres (sprite texture)
@@ -153,10 +154,12 @@ export class Signal3DMap {
         this.controls.target.set(0, 0, 0);
         this.controls.enableDamping      = true;
         this.controls.dampingFactor      = 0.08;
-        this.controls.maxPolarAngle      = Math.PI / 2 - 0.02;
+        this.controls.maxPolarAngle      = Math.PI / 2 - 0.08; // ~85° — prevents near-horizontal gimbal issues
         this.controls.screenSpacePanning = true;
         this.controls.minDistance        = 0.5;
         this.controls.maxDistance        = 300;
+        // Single finger = always pan; two fingers = pinch-zoom + rotate/tilt
+        this.controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
         this.controls.update();
         // Keep target on the floor plane — prevents camera going above or below the map
         this.controls.addEventListener('change', () => {
@@ -624,6 +627,12 @@ export class Signal3DMap {
         if (this.userMarker) this.userMarker.visible = this._showMarker;
     }
 
+    setClusterRadius(r) {
+        if (r === this._clusterRadius) return;
+        this._clusterRadius = r;
+        this._repositionAll();
+    }
+
     setMapSource(source) {
         if (!TILE_SOURCES[source] || source === this.mapSource) return;
         this.mapSource = source;
@@ -996,11 +1005,43 @@ export class Signal3DMap {
 
         const sel     = this._selectedCol;
         const cutoff  = this._displayCutoff;
-        const visible = this.points.filter(p =>
+        let visible = this.points.filter(p =>
             (!this.filterFn || this.filterFn(p.col)) &&
             (!cutoff || p.time >= cutoff)
         );
         if (!visible.length) return;
+
+        // Clustering: for each repeater, merge points within _clusterRadius metres
+        if (this._clusterRadius > 0) {
+            // 1° latitude ≈ 111 320 m; 1° longitude ≈ 111 320 * cos(lat) m
+            const latDeg = this._clusterRadius / 111320;
+            const byCols = new Map();
+            for (const p of visible) {
+                if (!byCols.has(p.col)) byCols.set(p.col, []);
+                byCols.get(p.col).push(p);
+            }
+            const clustered = [];
+            for (const pts of byCols.values()) {
+                const used = new Uint8Array(pts.length);
+                const refLat = pts[0].lat;
+                const lonDeg = this._clusterRadius / (111320 * Math.cos(refLat * Math.PI / 180) || 1);
+                for (let i = 0; i < pts.length; i++) {
+                    if (used[i]) continue;
+                    let best = pts[i];
+                    used[i] = 1;
+                    for (let j = i + 1; j < pts.length; j++) {
+                        if (used[j]) continue;
+                        if (Math.abs(pts[j].lat - pts[i].lat) < latDeg &&
+                            Math.abs(pts[j].lon - pts[i].lon) < lonDeg) {
+                            used[j] = 1;
+                            if (pts[j].rssi > best.rssi) best = pts[j];
+                        }
+                    }
+                    clustered.push(best);
+                }
+            }
+            visible = clustered;
+        }
 
         const litPts = sel ? visible.filter(p => p.col === sel) : visible;
         const dimPts = sel ? visible.filter(p => p.col !== sel) : [];

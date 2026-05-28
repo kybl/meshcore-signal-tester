@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=44';
+import { Signal3DMap } from './signal3d.js?v=45';
 
 class MeshCoreMonitor {
     constructor() {
@@ -561,6 +561,7 @@ class MeshCoreMonitor {
                 nameForCol:    col => this._contactNameForCol(col),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
+                initialClusterRadius: (() => { try { const v = localStorage.getItem('clusterRadius'); return v != null ? parseFloat(v) : 10; } catch { return 10; } })(),
                 onSelect:      col => {
                     this._selectRepeater(col);
                 },
@@ -634,6 +635,12 @@ class MeshCoreMonitor {
             this.signalMap?.setShowMarker(showMarkerChk.checked);
             try { localStorage.setItem('showMarker', showMarkerChk.checked); } catch (e) { console.warn('localStorage error:', e); }
         });
+        const clusterSel = document.getElementById('clusterRadiusSelect');
+        clusterSel?.addEventListener('change', () => {
+            const r = parseFloat(clusterSel.value);
+            this.signalMap?.setClusterRadius(r);
+            try { localStorage.setItem('clusterRadius', clusterSel.value); } catch (e) { console.warn('localStorage error:', e); }
+        });
         // Restore saved values
         try {
             if (localStorage.getItem('showLines') === 'false' && showLinesChk) {
@@ -643,6 +650,11 @@ class MeshCoreMonitor {
             if (localStorage.getItem('showMarker') === 'false' && showMarkerChk) {
                 showMarkerChk.checked = false;
                 this.signalMap?.setShowMarker(false);
+            }
+            const savedCluster = localStorage.getItem('clusterRadius');
+            if (savedCluster != null && clusterSel) {
+                clusterSel.value = savedCluster;
+                this.signalMap?.setClusterRadius(parseFloat(savedCluster));
             }
         } catch (e) { console.warn('Failed to restore map settings:', e); }
 

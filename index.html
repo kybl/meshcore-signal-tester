@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
-    <link rel="stylesheet" href="style.css?v=87">
+    <link rel="stylesheet" href="style.css?v=88">
 </head>
 <body>
     <header>
@@ -146,7 +146,7 @@
                         <div class="signal-map-controls">
                             <button id="enableLocationBtn" class="btn-primary">Enable location</button>
                             <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
-                            <span class="signal-map-hint">Drag to pan · scroll/pinch to zoom · right-drag to tilt/rotate</span>
+                            <span class="signal-map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
                             <div class="map-settings-wrap">
                                 <button id="mapSettingsBtn" class="map-settings-btn" title="Map settings">⚙</button>
                                 <div id="mapSettingsPanel" class="map-settings-panel hidden">
@@ -167,6 +167,16 @@
                                     <label class="size-label">Dot size <input type="range" id="sphereSizeInput" class="size-range" min="0.2" max="3" step="0.1" value="1"><span id="sphereSizeVal" class="size-val">1</span></label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showLinesChk" checked> Guide lines</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showMarkerChk" checked> My location</label>
+                                    <label class="map-setting-toggle">Cluster radius
+                                        <select id="clusterRadiusSelect" class="ttl-header-select">
+                                            <option value="0">Off</option>
+                                            <option value="5">5 m</option>
+                                            <option value="10" selected>10 m</option>
+                                            <option value="20">20 m</option>
+                                            <option value="50">50 m</option>
+                                            <option value="100">100 m</option>
+                                        </select>
+                                    </label>
                                     <span id="locationStatus" class="location-status-settings">Location not enabled.</span>
                                 </div>
                             </div>
@@ -289,6 +299,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=104"></script>
+    <script type="module" src="app.js?v=105"></script>
 </body>
 </html>
