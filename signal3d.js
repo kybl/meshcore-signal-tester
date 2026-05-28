@@ -14,6 +14,11 @@ const RSSI_GOOD      = -50;
 const RSSI_BAD       = -125;
 const MAX_TILES_AXIS = 4;
 const TILE_PX        = 256;
+// Reference camera distance: distance from origin when camera is at the initial
+// fit position (0.4r, 0.55r, 0.6r) with r = PLANE_SIZE.  Derived once so that
+// height/size scales are purely a function of current camera distance and never
+// depend on when the first tile load happened.
+const CAMERA_REF_DIST = PLANE_SIZE * Math.sqrt(0.4*0.4 + 0.55*0.55 + 0.6*0.6); // ≈ 90.7
 
 // Mapy.com tile API: path includes tile size (256) before z/x/y.
 // Reference: https://developer.mapy.com/rest-api/maptiles/
@@ -899,21 +904,17 @@ export class Signal3DMap {
         this.controls.target.set(0, 0, 0);
         this.controls.update();
         this._cameraFit = true;
-        this._refCamDist = this.controls.getDistance();
         this._updateHeightScale();
     }
 
     _updateHeightScale() {
-        if (!this._refCamDist) return;
         if (this._heightMode === 'fixed') {
             this.pointsGroup.scale.y = 2;
         } else if (this._heightMode === 'tile') {
-            // Aggressive zoom-adaptive: shrink spires fast as camera approaches so
-            // a tall spire never extends out of the viewport when you get close.
-            const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
+            const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
             this.pointsGroup.scale.y = Math.pow(ratio, 1.7) * 2;
         } else {
-            const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
+            const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
             this.pointsGroup.scale.y = this._heightMode === 'damped'
                 ? Math.sqrt(ratio) * 2
                 : ratio * 2;
@@ -1164,11 +1165,8 @@ export class Signal3DMap {
         const _s  = new THREE.Vector3(), _q = new THREE.Quaternion();
         const _col = new THREE.Color();
 
-        // Calibrate world-space dot size for perspective mode: at _refCamDist the dot
-        // should appear the same size as in screen-pixel mode.
         const fovFactor  = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
         const screenH    = this.canvas.clientHeight || 600;
-        const refDist    = this._refCamDist || 80;
 
         // Build a THREE.Points object for a set of data points
         const makePoints = (pts, opacity, sizeMult) => {
@@ -1206,7 +1204,7 @@ export class Signal3DMap {
             // size difference between near and far dots in log space.
             if (this._perspSize) {
                 mat.onBeforeCompile = shader => {
-                    shader.uniforms.uRefDist = { value: refDist };
+                    shader.uniforms.uRefDist = { value: CAMERA_REF_DIST };
                     shader.vertexShader = shader.vertexShader
                         .replace('#include <common>',
                                  '#include <common>\nuniform float uRefDist;')
