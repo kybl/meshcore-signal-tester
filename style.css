@@ -5,9 +5,9 @@
 }
 
 :root {
-    --bg-gutter:      #04101e;
+    --bg-gutter:      #071428;
     --bg-content:     #181824;
-    --bg-header:      #0a1630;
+    --bg-header:      #0e1e3a;
     --bg-box:         #21212e;
     --bg-input:       #1c1c28;
     --bg-hover:       rgba(255,255,255,0.06);
@@ -24,9 +24,9 @@
     --shadow:         rgba(0,0,0,0.4);
 }
 html.light-theme {
-    --bg-gutter:      #1a3a6a;
+    --bg-gutter:      #3560a0;
     --bg-content:     #eef0f7;
-    --bg-header:      #6a9ad4;
+    --bg-header:      #80b0e0;
     --bg-box:         #ffffff;
     --bg-input:       #ffffff;
     --bg-hover:       rgba(0,0,0,0.06);
@@ -158,18 +158,39 @@ header {
 }
 
 .status.disconnected {
-    background: #fee;
-    color: #c33;
+    background: rgba(200, 40, 40, 0.18);
+    color: #e05050;
+    border: 1px solid rgba(200, 40, 40, 0.35);
 }
 
 .status.connected {
-    background: #efe;
-    color: #3c3;
+    background: rgba(40, 180, 80, 0.18);
+    color: #3db060;
+    border: 1px solid rgba(40, 180, 80, 0.35);
 }
 
 .status.importing {
+    background: rgba(180, 130, 0, 0.18);
+    color: #c89820;
+    border: 1px solid rgba(180, 130, 0, 0.35);
+}
+
+html.light-theme .status.disconnected {
+    background: #fee;
+    color: #c33;
+    border-color: #f8c0c0;
+}
+
+html.light-theme .status.connected {
+    background: #efe;
+    color: #2a9a2a;
+    border-color: #b0e8b0;
+}
+
+html.light-theme .status.importing {
     background: #fff8e1;
-    color: #b07800;
+    color: #9a6800;
+    border-color: #f0d890;
 }
 
 .btn-primary {
@@ -636,7 +657,7 @@ header {
 
 .saved-label {
     font-size: 10px;
-    color: #aaa;
+    color: var(--text-secondary);
     white-space: nowrap;
 }
 
@@ -646,9 +667,9 @@ header {
 }
 
 .saved-btn {
-    background: #f0f0ff;
+    background: var(--bg-box);
     color: #667eea;
-    border: 1px solid #c8c8f0;
+    border: 1px solid var(--border);
     border-right: none;
     border-radius: 5px 0 0 5px;
     padding: 3px 10px;
@@ -664,9 +685,9 @@ header {
 }
 
 .forget-btn {
-    background: #fff5f5;
-    color: #c33;
-    border: 1px solid #e8c0c0;
+    background: var(--bg-box);
+    color: #c05050;
+    border: 1px solid var(--border);
     border-radius: 0 5px 5px 0;
     padding: 3px 7px;
     font-size: 11px;
@@ -933,10 +954,10 @@ header {
 #ttlSelect {
     font-size: 12px;
     padding: 2px 4px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     border-radius: 4px;
-    background: white;
-    color: #333;
+    background: var(--bg-input);
+    color: var(--text-primary);
     cursor: pointer;
     accent-color: #667eea;
 }
