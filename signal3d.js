@@ -777,6 +777,7 @@ export class Signal3DMap {
         }
         this._selectedCol = col ?? null;
         this._repositionAll();
+        this._scheduleMapUpdate();   // re-fit tiles to include the newly selected repeater
         this._updateInfoPanel();
     }
 
@@ -807,6 +808,11 @@ export class Signal3DMap {
         const locs = this.points
             .filter(p => (!cutoff || p.time >= cutoff) && (!this.filterFn || this.filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
+        // Always include the selected repeater's points even if outside the display window or filter
+        if (this._selectedCol) {
+            for (const p of this.points)
+                if (p.col === this._selectedCol) locs.push({ lat: p.lat, lon: p.lon });
+        }
         if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
