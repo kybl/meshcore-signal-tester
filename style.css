@@ -515,6 +515,25 @@ html.light-theme .status.importing {
     text-align: right;
 }
 
+.snr-toggle-bar {
+    display: flex;
+    gap: 14px;
+    padding: 3px 2px 5px;
+}
+.snr-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+.snr-toggle-label input[type="checkbox"] {
+    accent-color: #667eea;
+    cursor: pointer;
+}
+
 .chart-box {
     background: var(--bg-box);
     border-radius: 8px;

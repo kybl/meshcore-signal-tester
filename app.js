@@ -34,6 +34,8 @@ class MeshCoreMonitor {
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
         this._chartSelected = null;
+        this._snrShowIncoming = true;
+        this._snrShowOutgoing = true;
         this._rxTimestamps = [];
         this._msgFilter = '';
         this._repFilterTerms = [];
@@ -202,6 +204,11 @@ class MeshCoreMonitor {
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');
         bindChartTooltip(this.snrChartSvg,  'snr');
+
+        const snrInCb  = document.getElementById('snrShowIncoming');
+        const snrOutCb = document.getElementById('snrShowOutgoing');
+        if (snrInCb)  snrInCb.addEventListener('change',  () => { this._snrShowIncoming = snrInCb.checked;  this.scheduleChartRender(); });
+        if (snrOutCb) snrOutCb.addEventListener('change', () => { this._snrShowOutgoing = snrOutCb.checked; this.scheduleChartRender(); });
 
         // Legend click for repeater selection
         const bindLegendClick = legend => {
@@ -2339,7 +2346,7 @@ class MeshCoreMonitor {
     }
 
     _chartYBounds(type) {
-        const pts = this._visibleChartPoints();
+        const pts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
         // Avoid spread on potentially large arrays (Math.min(...arr) has an arg-count limit)
         let vMin = Infinity, vMax = -Infinity;
         for (const p of pts) {
@@ -2348,7 +2355,7 @@ class MeshCoreMonitor {
             if (v < vMin) vMin = v;
             if (v > vMax) vMax = v;
         }
-        if (type === 'snr') {
+        if (type === 'snr' && this._snrShowOutgoing) {
             for (const p of this._visibleSentSnrPts()) {
                 if (p.snr < vMin) vMin = p.snr;
                 if (p.snr > vMax) vMax = p.snr;
@@ -2370,8 +2377,8 @@ class MeshCoreMonitor {
     }
 
     _onChartClick(e, type) {
-        const incomingPts = this._visibleChartPoints();
-        const sentPts = type === 'snr' ? this._visibleSentSnrPts() : [];
+        const incomingPts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
+        const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
         if (!pts.length) return;
         const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
@@ -2432,8 +2439,8 @@ class MeshCoreMonitor {
         if (!svg) return;
         wrap?.classList.remove('hidden');
 
-        const pts = this._visibleChartPoints();
-        const sentPts = type === 'snr' ? this._visibleSentSnrPts() : [];
+        const pts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
+        const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
         const hasData = pts.length > 0 || sentPts.length > 0;
 
         const W = svg.clientWidth || 600;
@@ -2702,8 +2709,8 @@ class MeshCoreMonitor {
 
     showChartTooltip(e, type) {
         if (!this.tooltip) return;
-        const incomingPts = this._visibleChartPoints();
-        const sentPts = type === 'snr' ? this._visibleSentSnrPts() : [];
+        const incomingPts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
+        const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
         if (!pts.length) return;
         const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
