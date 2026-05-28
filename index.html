@@ -76,9 +76,13 @@
                 </div>
             </div>
 
+            <div class="ping-bar" id="discoverBar">
+                <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ 4× — nearby nodes reply with both uplink and downlink SNR (firmware ≥ v1.10)">Discover nodes</button>
+                <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and both SNR directions.</span>
+            </div>
             <div class="section-wrap" id="snrChartWrap">
                 <div class="section-header">
-                    <span class="section-title">Repeaters SNR history<span class="help-icon" data-help="chart-interact">?</span></span>
+                    <span class="section-title">SNR history<span class="help-icon" data-help="chart-interact">?</span></span>
                     <button class="collapse-btn" data-target="snrChartBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="snrChartBody">
@@ -89,30 +93,6 @@
                         <div class="chart-legend-wrap" id="snrLegendWrap">
                             <button class="legend-toggle-btn" data-wrap="snrLegendWrap" data-key="legend-snr">▾ Legend</button>
                             <div id="snrChartLegend" class="chart-legend"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="section-wrap" id="sentSnrChartWrap">
-                <div class="section-header">
-                    <span class="section-title">Active Ping: Sent SNR History</span>
-                    <button class="collapse-btn" data-target="sentSnrChartBody" title="Toggle section">▾</button>
-                </div>
-                <div class="section-body" id="sentSnrChartBody">
-                    <div>
-                        <div class="ping-bar" id="discoverBar">
-                            <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ 4× — nearby nodes reply with both uplink and downlink SNR (firmware ≥ v1.10)">Discover nodes</button>
-                            <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and both SNR directions.</span>
-                        </div>
-                        <div class="chart-box">
-                            <div class="chart-svg-wrap">
-                                <svg id="sentSnrChart" class="rssi-chart"></svg>
-                            </div>
-                            <div class="chart-legend-wrap" id="sentSnrLegendWrap">
-                                <button class="legend-toggle-btn" data-wrap="sentSnrLegendWrap" data-key="legend-sentsnr">▾ Legend</button>
-                                <div id="sentSnrChartLegend" class="chart-legend"></div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -312,6 +292,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=123"></script>
+    <script type="module" src="app.js?v=124"></script>
 </body>
 </html>

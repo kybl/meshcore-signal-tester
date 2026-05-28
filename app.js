@@ -80,9 +80,6 @@ class MeshCoreMonitor {
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
         this.snrChartLegend = document.getElementById('snrChartLegend');
-        this.sentSnrChartWrap  = document.getElementById('sentSnrChartWrap');
-        this.sentSnrChartSvg   = document.getElementById('sentSnrChart');
-        this.sentSnrChartLegend = document.getElementById('sentSnrChartLegend');
         if (typeof ResizeObserver !== 'undefined') {
             const obs = new ResizeObserver(() => this.scheduleChartRender());
             document.querySelectorAll('.chart-svg-wrap').forEach(el => obs.observe(el));
@@ -175,7 +172,6 @@ class MeshCoreMonitor {
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');
         bindChartTooltip(this.snrChartSvg,  'snr');
-        bindChartTooltip(this.sentSnrChartSvg, 'sentsnr');
 
         // Legend click for repeater selection
         const bindLegendClick = legend => {
@@ -2307,7 +2303,6 @@ class MeshCoreMonitor {
             this._selectRepeater(null);
         }
         this.renderChart('snr');
-        this.renderSentSnrChart();
         this.renderChart('rssi');
     }
 
@@ -2320,6 +2315,12 @@ class MeshCoreMonitor {
             if (v == null) continue;
             if (v < vMin) vMin = v;
             if (v > vMax) vMax = v;
+        }
+        if (type === 'snr') {
+            for (const p of this._sentSnrHistory) {
+                if (p.snr < vMin) vMin = p.snr;
+                if (p.snr > vMax) vMax = p.snr;
+            }
         }
         if (vMin === Infinity) { vMin = 0; vMax = 1; }
         const rawRange = vMax - vMin || 1;
@@ -2337,11 +2338,11 @@ class MeshCoreMonitor {
     }
 
     _onChartClick(e, type) {
-        const isSentSnr = type === 'sentsnr';
-        const pts = isSentSnr ? this._sentSnrHistory : this._visibleChartPoints();
+        const incomingPts = this._visibleChartPoints();
+        const sentPts = type === 'snr' ? this._sentSnrHistory : [];
+        const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
         if (!pts.length) return;
-        const svg = isSentSnr ? this.sentSnrChartSvg
-                  : type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
+        const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
         if (!svg) return;
         const rect = svg.getBoundingClientRect();
         const mx = e.clientX - rect.left;
@@ -2352,26 +2353,21 @@ class MeshCoreMonitor {
         const cw = W - pl - pr;
         const ch = H - pt - pb;
         const now = this._chartFrozenAt ?? Date.now();
-        let tMin, yMin, yMax;
-        if (isSentSnr) {
-            tMin = pts.length ? (isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts)) : now - 5 * 60000;
-            let vMin = Infinity, vMax = -Infinity;
-            for (const p of pts) { if (p.snr < vMin) vMin = p.snr; if (p.snr > vMax) vMax = p.snr; }
-            const rawRange = vMax - vMin || 1;
-            const pad = rawRange * 0.15;
-            yMin = Math.floor((vMin - pad) / 5) * 5;
-            yMax = Math.ceil((vMax + pad) / 5) * 5;
-        } else {
-            tMin = isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts);
-            ({ yMin, yMax } = this._chartYBounds(type));
+        let tMin;
+        if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
+        else {
+            tMin = incomingPts.length ? this._earliestTime(incomingPts) : Infinity;
+            if (sentPts.length) tMin = Math.min(tMin, this._earliestTime(sentPts));
+            if (!isFinite(tMin)) tMin = now - 5 * 60000;
         }
+        const { yMin, yMax } = this._chartYBounds(type);
         const tRange = Math.max(1, now - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
         const xOf = t => pl + (t - tMin) / tRange * cw;
         const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
-            const v = isSentSnr ? p.snr : (type === 'rssi' ? p.rssi : p.snr);
+            const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
@@ -2405,7 +2401,8 @@ class MeshCoreMonitor {
         wrap?.classList.remove('hidden');
 
         const pts = this._visibleChartPoints();
-        const hasData = pts.length > 0;
+        const sentPts = type === 'snr' ? this._sentSnrHistory : [];
+        const hasData = pts.length > 0 || sentPts.length > 0;
 
         const W = svg.clientWidth || 600;
         const H = svg.clientHeight || 180;
@@ -2418,7 +2415,10 @@ class MeshCoreMonitor {
         let tMin;
         if (!hasData) tMin = now - defaultWindow;
         else if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
-        else tMin = this._earliestTime(pts);
+        else {
+            tMin = pts.length ? this._earliestTime(pts) : Infinity;
+            if (sentPts.length) tMin = Math.min(tMin, this._earliestTime(sentPts));
+        }
 
         let yMin, yMax, yStep;
         if (!hasData) {
@@ -2548,6 +2548,26 @@ class MeshCoreMonitor {
             }
         }
 
+        // Render sent SNR as squares (SNR chart only)
+        if (sentPts.length) {
+            const sq = this._dotSize * 2;
+            const half = sq / 2;
+            const sqSel = sq * 1.43;
+            const halfSel = sqSel / 2;
+            for (const p of sentPts) {
+                if (selected && selected === p.col) continue;
+                const cx = +xOf(p.time), cy = +yOf(p.snr);
+                parts.push(`<rect x="${(cx - half).toFixed(1)}" y="${(cy - half).toFixed(1)}" width="${sq}" height="${sq}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" rx="1.5"/>`);
+            }
+            if (selected) {
+                for (const p of sentPts) {
+                    if (p.col !== selected) continue;
+                    const cx = +xOf(p.time), cy = +yOf(p.snr);
+                    parts.push(`<rect x="${(cx - halfSel).toFixed(1)}" y="${(cy - halfSel).toFixed(1)}" width="${sqSel.toFixed(1)}" height="${sqSel.toFixed(1)}" fill="${this._chartColor(p.col)}" fill-opacity="0.95" rx="2"/>`);
+                }
+            }
+        }
+
         if (!hasData) {
             parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">Waiting for data…</text>`);
         }
@@ -2597,121 +2617,24 @@ class MeshCoreMonitor {
                 }
                 entries.sort((a, b) => b.val - a.val);
             }
-            legend.innerHTML = entries.map(e => e.html).join('');
-        }
-    }
-
-    renderSentSnrChart() {
-        const svg = this.sentSnrChartSvg;
-        const legend = this.sentSnrChartLegend;
-        if (!svg) return;
-        this.sentSnrChartWrap?.classList.remove('hidden');
-
-        const pts = this._sentSnrHistory;
-        const hasData = pts.length > 0;
-
-        const W = svg.clientWidth || 600;
-        const H = svg.clientHeight || 180;
-        const pl = 36, pr = 8, pt = 6, pb = 24;
-        const cw = W - pl - pr;
-        const ch = H - pt - pb;
-
-        const now = this._chartFrozenAt ?? Date.now();
-        const defaultWindow = 5 * 60000;
-        const tMin = hasData
-            ? (isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : pts.reduce((m, p) => Math.min(m, p.time), Infinity))
-            : now - defaultWindow;
-        const tRange = Math.max(1, now - tMin);
-
-        let vMin = Infinity, vMax = -Infinity;
-        if (hasData) {
-            for (const p of pts) { if (p.snr < vMin) vMin = p.snr; if (p.snr > vMax) vMax = p.snr; }
-        } else { vMin = -20; vMax = 15; }
-        const rawRange = vMax - vMin || 1;
-        const pad = rawRange * 0.15;
-        vMin = Math.floor((vMin - pad) / 5) * 5;
-        vMax = Math.ceil((vMax + pad) / 5) * 5;
-        const yStep = Math.ceil((vMax - vMin) / 6 / 5) * 5 || 5;
-        const yRange = Math.max(1e-9, vMax - vMin);
-
-        const xOf = t => (pl + (t - tMin) / tRange * cw).toFixed(1);
-        const yOf = v => (pt + (1 - (v - vMin) / yRange) * ch).toFixed(1);
-
-        const isDark2 = !document.documentElement.classList.contains('light-theme');
-        const gridMinor2 = isDark2 ? 'rgba(255,255,255,0.05)' : '#ebebeb';
-        const gridMajor2 = isDark2 ? 'rgba(255,255,255,0.10)' : '#ddd';
-        const gridAxis2  = isDark2 ? 'rgba(255,255,255,0.18)' : '#bbb';
-        const labelFill2 = isDark2 ? '#8892b8' : '#888';
-
-        const parts = [];
-
-        for (let y = vMin + yStep / 2; y < vMax; y += yStep)
-            parts.push(`<line x1="${pl}" y1="${yOf(y)}" x2="${pl + cw}" y2="${yOf(y)}" stroke="${gridMinor2}" stroke-width="1"/>`);
-        for (let y = vMin; y <= vMax; y += yStep) {
-            const yp = yOf(y);
-            parts.push(`<line x1="${pl}" y1="${yp}" x2="${pl + cw}" y2="${yp}" stroke="${gridMajor2}" stroke-width="1"/>`);
-            parts.push(`<text x="${pl - 3}" y="${(+yp + 3).toFixed(1)}" text-anchor="end" font-size="9" fill="${labelFill2}">${y}</text>`);
-        }
-        const yLabelCy = (pt + ch / 2).toFixed(1);
-        parts.push(`<text x="10" y="${yLabelCy}" text-anchor="middle" font-size="9" fill="${labelFill2}" transform="rotate(-90,10,${yLabelCy})">dB</text>`);
-
-        const labelStep = this._xLabelStepMs(tRange, cw);
-        const minorStep = labelStep / 2;
-        const useDate = tRange > 12 * 3600000;
-        const fmtOpts = useDate
-            ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
-            : (labelStep < 60000 ? { hour: '2-digit', minute: '2-digit', second: '2-digit' } : { hour: '2-digit', minute: '2-digit' });
-        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= now; t += minorStep) {
-            if (t % labelStep === 0) continue;
-            parts.push(`<line x1="${xOf(t)}" y1="${pt}" x2="${xOf(t)}" y2="${pt + ch}" stroke="${gridMinor2}" stroke-width="1"/>`);
-        }
-        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= now; t += labelStep) {
-            const xp = xOf(t);
-            parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMajor2}" stroke-width="1"/>`);
-            const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
-            parts.push(`<text x="${xp}" y="${pt + ch + 14}" text-anchor="middle" font-size="9" fill="${labelFill2}">${lbl}</text>`);
-        }
-
-        parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="${gridAxis2}" stroke-width="1"/>`);
-        parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="${gridAxis2}" stroke-width="1"/>`);
-
-        if (hasData) {
-            const groups = new Map();
-            for (const p of pts) {
-                if (!groups.has(p.col)) groups.set(p.col, []);
-                groups.get(p.col).push(p);
-            }
-            for (const [col, colPts] of groups) {
-                colPts.sort((a, b) => a.time - b.time);
-                const color = this._chartColor(col);
-                if (colPts.length >= 2) {
-                    const pointsStr = colPts.map(p => `${xOf(p.time)},${yOf(p.snr)}`).join(' ');
-                    parts.push(`<polyline points="${pointsStr}" fill="none" stroke="${color}" stroke-width="1" stroke-opacity="0.65"/>`);
-                }
-                for (const p of colPts)
-                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(p.snr)}" r="${this._dotSize}" fill="${color}" fill-opacity="0.90"/>`);
-            }
-
-            if (legend) {
-                const lastByCol = new Map();
-                for (const p of pts)
-                    if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
-                const sorted = [...lastByCol.keys()].sort((a, b) => lastByCol.get(b).snr - lastByCol.get(a).snr);
-                legend.innerHTML = sorted.map(col => {
-                    const last = lastByCol.get(col);
+            if (type === 'snr' && sentPts.length) {
+                const lastSentByCol = new Map();
+                for (const p of sentPts)
+                    if (!lastSentByCol.has(p.col) || p.time > lastSentByCol.get(p.col).time) lastSentByCol.set(p.col, p);
+                for (const [col, last] of lastSentByCol) {
                     const c = this._chartColor(col);
                     const valStr = `${last.snr >= 0 ? '+' : ''}${last.snr.toFixed(1)} dB`;
-                    const displayName = last.label && last.label !== col ? this.escHtml(last.label) : this.escHtml(col);
-                    return `<span class="legend-item"><span class="legend-dot" style="background:${c}"></span>${displayName} <span class="legend-val">(${valStr})</span></span>`;
-                }).join('');
+                    const displayName = last.label && last.label !== col ? this.escHtml(last.label) : this.escHtml(this.displayId(col));
+                    const selClass = !selected ? '' : (selected === col ? ' legend-item-selected' : ' legend-item-dimmed');
+                    entries.push({
+                        val: last.snr,
+                        html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span class="legend-dot" style="background:${c};border-radius:2px"></span>${displayName} ↗ <span class="legend-val">(${valStr})</span></span>`,
+                    });
+                }
+                entries.sort((a, b) => b.val - a.val);
             }
-        } else {
-            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill2}">Waiting for data…</text>`);
-            if (legend) legend.innerHTML = '';
+            legend.innerHTML = entries.map(e => e.html).join('');
         }
-
-        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-        svg.innerHTML = parts.join('');
     }
 
     _decimateChartPts(colPts, tMin, tMax, pixelWidth, type) {
@@ -2740,11 +2663,11 @@ class MeshCoreMonitor {
 
     showChartTooltip(e, type) {
         if (!this.tooltip) return;
-        const isSentSnr = type === 'sentsnr';
-        const pts = isSentSnr ? this._sentSnrHistory : this._visibleChartPoints();
+        const incomingPts = this._visibleChartPoints();
+        const sentPts = type === 'snr' ? this._sentSnrHistory : [];
+        const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
         if (!pts.length) return;
-        const svg = isSentSnr ? this.sentSnrChartSvg
-                  : type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
+        const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
         if (!svg) return;
 
         const rect = svg.getBoundingClientRect();
@@ -2757,20 +2680,14 @@ class MeshCoreMonitor {
         const ch = H - pt - pb;
 
         const now = this._chartFrozenAt ?? Date.now();
-        let tMin, yMin, yMax;
-        if (isSentSnr) {
-            const defaultWindow = 5 * 60000;
-            tMin = pts.length ? (isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts)) : now - defaultWindow;
-            let vMin = Infinity, vMax = -Infinity;
-            for (const p of pts) { if (p.snr < vMin) vMin = p.snr; if (p.snr > vMax) vMax = p.snr; }
-            const rawRange = vMax - vMin || 1;
-            const pad = rawRange * 0.15;
-            yMin = Math.floor((vMin - pad) / 5) * 5;
-            yMax = Math.ceil((vMax + pad) / 5) * 5;
-        } else {
-            tMin = isFinite(this.HASH_LIFETIME) ? now - this.HASH_LIFETIME : this._earliestTime(pts);
-            ({ yMin, yMax } = this._chartYBounds(type));
+        let tMin;
+        if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
+        else {
+            tMin = incomingPts.length ? this._earliestTime(incomingPts) : Infinity;
+            if (sentPts.length) tMin = Math.min(tMin, this._earliestTime(sentPts));
+            if (!isFinite(tMin)) tMin = now - 5 * 60000;
         }
+        const { yMin, yMax } = this._chartYBounds(type);
         const tRange = Math.max(1, now - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
@@ -2779,7 +2696,7 @@ class MeshCoreMonitor {
 
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
-            const v = isSentSnr ? p.snr : (type === 'rssi' ? p.rssi : p.snr);
+            const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
@@ -2788,16 +2705,19 @@ class MeshCoreMonitor {
         }
         if (!nearest || minDist > 1600) { this.hideChartTooltip(); return; }
 
+        const isSent = sentPts.includes(nearest);
         const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const color = this._chartColor(nearest.col);
-        const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
+        const dotShape = isSent
+            ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`
+            : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
         const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this.escHtml(cName)}</span>` : '';
-        const valLine = isSentSnr
-            ? `SNR ${nearest.snr?.toFixed(1) ?? '—'} dB`
+        const valLine = isSent
+            ? `Sent SNR ${nearest.snr?.toFixed(1) ?? '—'} dB ↗`
             : `RSSI ${nearest.rssi ?? '—'} &nbsp; SNR ${nearest.snr?.toFixed(1) ?? '—'}`;
         this.tooltip.innerHTML =
-            `${dot}<b>${this.escHtml(this.displayId(nearest.col))}</b>${nameHtml}<br>` +
+            `${dotShape}<b>${this.escHtml(this.displayId(nearest.col))}</b>${nameHtml}<br>` +
             `${time}<br>${valLine}`;
 
         const tx = e.clientX + 14;
@@ -3633,8 +3553,7 @@ class MeshCoreMonitor {
         }
         if (sentSnrRows.length) {
             this._sentSnrHistory.sort((a, b) => a.time - b.time);
-            this.sentSnrChartWrap?.classList.remove('hidden');
-            this.renderSentSnrChart();
+            this.renderChart('snr');
         }
 
         this.sortColumns();
