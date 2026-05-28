@@ -1424,6 +1424,14 @@ header .help-icon.active {
     background: rgba(255,255,255,0.28);
     border-color: rgba(255,255,255,0.7);
 }
+html.light-theme .btn-show-all-repeaters {
+    border-color: rgba(0,0,0,0.35);
+    background: rgba(0,0,0,0.12);
+    color: #0f1a2e;
+}
+html.light-theme .btn-show-all-repeaters:hover {
+    background: rgba(0,0,0,0.22);
+}
 
 .signal-map-hint {
     font-size: 11px;
@@ -1707,6 +1715,12 @@ header .help-icon.active {
     line-height: 1;
 }
 .map-settings-btn:hover { background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
+html.light-theme .map-settings-btn {
+    background: rgba(0,0,0,0.12);
+    border-color: rgba(0,0,0,0.35);
+    color: #0f1a2e;
+}
+html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-color: rgba(0,0,0,0.6); }
 
 .map-settings-panel {
     position: absolute;
