@@ -21,7 +21,7 @@
             <div class="header-row header-row-tools">
                 <button id="exportCsvBtn" class="btn-pause" title="Export visible packets as CSV" disabled>Export CSV</button>
                 <button id="importCsvBtn" class="btn-pause" title="Import CSV file">Import CSV</button>
-                <input type="file" id="importCsvInput" accept=".csv" style="display:none">
+                <input type="file" id="importCsvInput" accept=".csv,text/csv,text/plain,application/csv" style="display:none">
                 <label class="sound-toggle">🔊 Sound<select id="soundSelect" class="sound-select"><option value="off" selected>off</option><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select><span class="help-icon" data-help="sound">?</span></label>
                 <label class="ttl-header-label">Text size<select id="uiScaleSelect" class="ttl-header-select"><option value="small" style="font-size:10px">Small</option><option value="normal" selected style="font-size:13px">Normal</option><option value="large" style="font-size:17px">Large</option><option value="larger" style="font-size:24px">Larger</option></select></label>
                 <label class="size-label">2D graphs dot size<input type="range" id="dotSizeInput" class="size-range" min="1" max="8" step="0.5" value="3.5"><span id="dotSizeVal" class="size-val">3.5</span></label>
