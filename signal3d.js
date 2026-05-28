@@ -1172,9 +1172,12 @@ export class Signal3DMap {
                 size:            dotSize,
                 sizeAttenuation: false,  // we apply our own dampened perspective below
                 vertexColors:    true,
-                transparent:     !isLit,
+                // Keep everything in the transparent pass so renderOrder controls draw
+                // order within the same pass (opaque pass always renders before
+                // transparent regardless of renderOrder, breaking our layering).
+                transparent:     true,
                 opacity,
-                depthWrite:      isLit,
+                depthWrite:      isLit,  // lit balls write depth → occlude each other
                 alphaTest:       isLit ? 0.5 : 0.02,
             });
             // Dampened perspective: gl_PointSize = size * (refDist / -mvz)^0.5
