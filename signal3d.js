@@ -537,52 +537,75 @@ export class Signal3DMap {
     }
 
     _makeMarkerLabel(idText, nameText, hexColor, isPinned) {
-        const W = 220, H = nameText ? 66 : 44;
-        const dpr = 2;
-        const c = document.createElement('canvas');
-        c.width = W * dpr; c.height = H * dpr;
+        const dpr   = 2;
+        const fId   = nameText ? 20 : 24;
+        const fName = 17;
+        const fBtn  = 15;
+        const pad   = 6;
+
+        // Measure text widths to build a tight canvas
+        const mc = document.createElement('canvas');
+        const mctx = mc.getContext('2d');
+        mctx.font = `bold ${fId}px sans-serif`;
+        const idW   = mctx.measureText(idText).width;
+        mctx.font = `bold ${fName}px sans-serif`;
+        const nmW   = nameText ? mctx.measureText(nameText).width : 0;
+        mctx.font   = `${fBtn}px sans-serif`;
+        const btnW  = mctx.measureText(isPinned ? '✕' : '📌').width + 6;
+
+        const lineH  = nameText ? fId + fName + 6 : fId;
+        const W      = Math.max(idW, nmW) + btnW + pad * 2 + 4;
+        const H      = lineH + pad * 2;
+
+        const c   = document.createElement('canvas');
+        c.width   = Math.ceil(W * dpr);
+        c.height  = Math.ceil(H * dpr);
         const ctx = c.getContext('2d');
         ctx.scale(dpr, dpr);
-        const r = 8;
-        ctx.beginPath();
-        ctx.moveTo(r, 2); ctx.lineTo(W - r, 2);
-        ctx.arcTo(W - 2, 2, W - 2, r + 2, r);
-        ctx.lineTo(W - 2, H - r - 2);
-        ctx.arcTo(W - 2, H - 2, W - r - 2, H - 2, r);
-        ctx.lineTo(r + 2, H - 2);
-        ctx.arcTo(2, H - 2, 2, H - r - 2, r);
-        ctx.lineTo(2, r + 2);
-        ctx.arcTo(2, 2, r + 2, 2, r);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(255,255,255,0.94)';
-        ctx.fill();
-        ctx.strokeStyle = hexColor;
-        ctx.lineWidth = 3;
-        ctx.stroke();
-        // Top-right action button: [x] if pinned, 📌 if auto-shown
-        ctx.font = isPinned ? 'bold 16px sans-serif' : '15px serif';
-        ctx.fillStyle = isPinned ? '#888' : '#667eea';
-        ctx.textAlign = 'right';
+
+        const stroke = (fn) => {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+            ctx.lineWidth   = 4;
+            ctx.lineJoin    = 'round';
+            ctx.miterLimit  = 2;
+            fn();
+            ctx.stroke();
+            ctx.restore();
+        };
+
+        // Action button (✕ or 📌) — top-right
+        ctx.font = `${fBtn}px sans-serif`;
+        ctx.textAlign   = 'right';
         ctx.textBaseline = 'top';
-        ctx.fillText(isPinned ? '✕' : '📌', W - 7, 5);
-        // ID + name text (left-aligned to leave room for x)
-        const textW = W - 24;
-        ctx.fillStyle = '#1a1a1a';
-        ctx.font = `bold ${nameText ? 22 : 26}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(idText, textW / 2 + 4, nameText ? H / 2 - 13 : H / 2);
+        stroke(() => ctx.strokeText(isPinned ? '✕' : '📌', W - pad, pad));
+        ctx.fillStyle = isPinned ? '#e0e0e0' : '#c8d8ff';
+        ctx.fillText(isPinned ? '✕' : '📌', W - pad, pad);
+
+        // ID line
+        ctx.font = `bold ${fId}px sans-serif`;
+        ctx.textAlign    = 'left';
+        ctx.textBaseline = 'top';
+        const ty = nameText ? pad : pad + (lineH - fId) / 2;
+        stroke(() => ctx.strokeText(idText, pad, ty));
+        ctx.fillStyle = hexColor;
+        ctx.fillText(idText, pad, ty);
+
+        // Name line
         if (nameText) {
-            ctx.fillStyle = '#0d3a5c';
-            ctx.font = 'bold 18px sans-serif';
-            ctx.fillText(nameText, textW / 2 + 4, H / 2 + 14);
+            ctx.font = `bold ${fName}px sans-serif`;
+            const ty2 = pad + fId + 6;
+            stroke(() => ctx.strokeText(nameText, pad, ty2));
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(nameText, pad, ty2);
         }
+
         const tex = new THREE.CanvasTexture(c);
         const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
         const sprite = new THREE.Sprite(mat);
         sprite.renderOrder = 10;
-        const aspect = W / H;
-        sprite.scale.set(aspect * 3.0, 3.0, 1);
+        const aspect = c.width / c.height;
+        sprite.scale.set(aspect * 2.4, 2.4, 1);
         sprite.position.set(0, 7.0, 0);
         return sprite;
     }
