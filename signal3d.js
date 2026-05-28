@@ -482,6 +482,7 @@ export class Signal3DMap {
                     this._clickedPoint = null;
                     this._selectedCol = newCol;
                     this._repositionAll();
+                    this._scheduleMapUpdate();   // re-fit tiles to include the selected repeater
                     this.onSelect?.(newCol);
                     this._infoPanelFromClick = !!newCol;
                     this._updateInfoPanel();
@@ -502,6 +503,7 @@ export class Signal3DMap {
         this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
         this._repositionAll();
+        this._scheduleMapUpdate();   // re-fit tiles to include the selected repeater
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
         this._infoPanelFromClick = !!newCol;   // set after the feedback loop so panel stays visible
         this._updateInfoPanel();
