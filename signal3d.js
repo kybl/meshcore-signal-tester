@@ -93,6 +93,7 @@ export class Signal3DMap {
         this._showMarker  = opts.showMarker !== false;
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
+        this._pendingSelectionFit = false;
         this._heightMode  = opts.initialHeightMode || 'spires';
         this._perspSize   = opts.initialPerspSize !== false; // default on
         // Points / mesh handles — replaced per _repositionAll call
@@ -502,6 +503,7 @@ export class Signal3DMap {
         }
         this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
+        if (newCol) this._pendingSelectionFit = true;
         this._repositionAll();
         this._scheduleMapUpdate();   // re-fit tiles to include the selected repeater
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
@@ -793,6 +795,7 @@ export class Signal3DMap {
             return;
         }
         this._selectedCol = col ?? null;
+        if (col) this._pendingSelectionFit = true;
         this._repositionAll();
         this._scheduleMapUpdate();   // re-fit tiles to include the newly selected repeater
         this._updateInfoPanel();
@@ -813,6 +816,18 @@ export class Signal3DMap {
             this.onSelect?.(null);
         }
         this._repositionAll();
+    }
+
+    _panToSelected() {
+        const col = this._selectedCol;
+        if (!col) return;
+        const pts = this.points.filter(p => p.col === col);
+        if (!pts.length) return;
+        const recent = pts.reduce((best, p) => p.time > best.time ? p : best, pts[0]);
+        const wp = this._latLonToWorld(recent.lat, recent.lon);
+        if (!wp) return;
+        this.controls.target.set(wp.x, 0, wp.z);
+        this.controls.update();
     }
 
     _scheduleMapUpdate() {
@@ -885,6 +900,10 @@ export class Signal3DMap {
         const key = `${sourceId}/${zoom}/${x0}/${y0}/${x1}/${y1}`;
         if (key === this.lastBboxKey) {
             this._updateUserMarker();  // tiles unchanged — just move the user pin
+            if (this._pendingSelectionFit) {
+                this._panToSelected();
+                this._pendingSelectionFit = false;
+            }
             return;
         }
 
@@ -950,6 +969,10 @@ export class Signal3DMap {
             this._repositionAll();
             this._updateUserMarker();
             this._fitCameraOnce();
+            if (this._pendingSelectionFit) {
+                this._panToSelected();
+                this._pendingSelectionFit = false;
+            }
         } finally {
             this._mapBusy = false;
         }
