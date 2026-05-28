@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=50';
+import { Signal3DMap } from './signal3d.js?v=51';
 
 class MeshCoreMonitor {
     constructor() {
@@ -563,6 +563,7 @@ class MeshCoreMonitor {
                 initialSphereSize: this._sphereSize,
                 initialClusterRadius: (() => { try { const v = localStorage.getItem('clusterRadius'); return v != null ? parseFloat(v) : 0; } catch { return 0; } })(),
                 initialHeightMode: (() => { try { return localStorage.getItem('heightMode') || 'spires'; } catch { return 'spires'; } })(),
+                initialPerspSize: (() => { try { const v = localStorage.getItem('perspSize'); return v === null ? true : v !== 'false'; } catch { return true; } })(),
                 onSelect:      col => {
                     this._selectRepeater(col);
                 },
@@ -647,6 +648,11 @@ class MeshCoreMonitor {
             this.signalMap?.setHeightMode(heightModeSel.value);
             try { localStorage.setItem('heightMode', heightModeSel.value); } catch (e) { console.warn('localStorage error:', e); }
         });
+        const perspSizeChk = document.getElementById('perspSizeChk');
+        perspSizeChk?.addEventListener('change', () => {
+            this.signalMap?.setPerspSize(perspSizeChk.checked);
+            try { localStorage.setItem('perspSize', perspSizeChk.checked); } catch (e) { console.warn('localStorage error:', e); }
+        });
         // Restore saved values
         try {
             if (localStorage.getItem('showLines') === 'false' && showLinesChk) {
@@ -664,6 +670,8 @@ class MeshCoreMonitor {
             }
             const savedHeightMode = localStorage.getItem('heightMode');
             if (savedHeightMode && heightModeSel) heightModeSel.value = savedHeightMode;
+            const savedPerspSize = localStorage.getItem('perspSize');
+            if (savedPerspSize !== null && perspSizeChk) perspSizeChk.checked = savedPerspSize !== 'false';
         } catch (e) { console.warn('Failed to restore map settings:', e); }
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());

@@ -89,6 +89,7 @@ export class Signal3DMap {
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
         this._heightMode  = opts.initialHeightMode || 'spires';
+        this._perspSize   = opts.initialPerspSize !== false; // default on
         // Points / mesh handles — replaced per _repositionAll call
         this._ptsMeshes   = [];     // THREE.Points for spheres (sprite texture), one or more per call
         this._iMeshHit    = null;   // invisible InstancedMesh for raycasting only
@@ -657,6 +658,12 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
+    setPerspSize(v) {
+        if (!!v === this._perspSize) return;
+        this._perspSize = !!v;
+        this._repositionAll();
+    }
+
     setShowLines(v) {
         this._showLines = !!v;
         if (this._lineSegs)    this._lineSegs.visible    = this._showLines;
@@ -1025,14 +1032,26 @@ export class Signal3DMap {
     }
 
     _rssiToHeight(rssi) {
-        if (this._heightMode === 'bubbles') return 1.5;
         const t = Math.max(0, Math.min(1, (rssi - RSSI_BAD) / (RSSI_GOOD - RSSI_BAD)));
-        if (this._heightMode === 'log') {
-            // log10(1 + 9t): maps 0→0, 1→1 but spreads weak signals, compresses strong
-            const tlog = Math.log1p(t * 9) / Math.LN10;
-            return MIN_HEIGHT + tlog * (MAX_HEIGHT - MIN_HEIGHT);
+        const range = MAX_HEIGHT - MIN_HEIGHT;
+        switch (this._heightMode) {
+            case 'log':
+                // log10(1+9t): spreads weak end apart, compresses strong end
+                return MIN_HEIGHT + (Math.log1p(t * 9) / Math.LN10) * range;
+            case 'sqrt':
+                // gentler curve than log, natural "perceived signal" feel
+                return MIN_HEIGHT + Math.sqrt(t) * range;
+            case 'inverted':
+                // weak signal = tall spire; highlights dead zones
+                return MIN_HEIGHT + (1 - t) * range;
+            case 'steps': {
+                // 4 discrete levels at meaningful dBm thresholds
+                const level = rssi >= -80 ? 1.0 : rssi >= -95 ? 0.66 : rssi >= -110 ? 0.33 : 0.0;
+                return MIN_HEIGHT + level * range;
+            }
+            default:  // 'spires', 'fixed'
+                return MIN_HEIGHT + t * range;
         }
-        return MIN_HEIGHT + t * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
     _disposeInstanced() {
@@ -1100,6 +1119,12 @@ export class Signal3DMap {
         const _s  = new THREE.Vector3(), _q = new THREE.Quaternion();
         const _col = new THREE.Color();
 
+        // Calibrate world-space dot size for perspective mode: at _refCamDist the dot
+        // should appear the same size as in screen-pixel mode.
+        const fovFactor  = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
+        const screenH    = this.canvas.clientHeight || 600;
+        const refDist    = this._refCamDist || 80;
+
         // Build a THREE.Points object for a set of data points
         const makePoints = (pts, opacity, sizeMult) => {
             const pos = new Float32Array(pts.length * 3);
@@ -1116,15 +1141,22 @@ export class Signal3DMap {
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+            // Perspective size: convert target pixel size at refDist → world units
+            const targetPx  = this.sphereSize * sizeMult * 7;
+            const dotSize   = this._perspSize
+                ? targetPx * refDist * fovFactor / screenH
+                : targetPx;
+            const isLit = opacity >= 1.0;
             return new THREE.Points(geo, new THREE.PointsMaterial({
                 map:             this._sphereTex,
-                size:            this.sphereSize * sizeMult * 7,
-                sizeAttenuation: false,
+                size:            dotSize,
+                sizeAttenuation: this._perspSize,
                 vertexColors:    true,
-                transparent:     true,
+                // Lit dots: write to depth buffer so closer dots occlude farther ones
+                transparent:     !isLit,
                 opacity,
-                depthWrite:      false,
-                alphaTest:       0.02,
+                depthWrite:      isLit,
+                alphaTest:       isLit ? 0.5 : 0.02,
             }));
         };
 
@@ -1135,22 +1167,8 @@ export class Signal3DMap {
             this.pointsGroup.add(m);
         };
 
-        // For modes where size encodes RSSI, split into 3 size buckets
-        const sizeByRssi = this._heightMode === 'bubbles' || this._heightMode === 'dual';
-        if (sizeByRssi) {
-            const buckets = [
-                { test: p => p.rssi >= -70,                    mult: 3.0 },
-                { test: p => p.rssi < -70 && p.rssi >= -95,   mult: 1.8 },
-                { test: p => p.rssi < -95,                     mult: 1.0 },
-            ];
-            for (const { test, mult } of buckets) {
-                addPoints(litPts.filter(test), 1.0,  mult * 2.0);
-                addPoints(dimPts.filter(test), 0.07, mult * 2.0);
-            }
-        } else {
-            addPoints(litPts, 1.0,  2.0);
-            addPoints(dimPts, 0.07, 2.0);
-        }
+        addPoints(litPts, 1.0,  2.0);
+        addPoints(dimPts, 0.07, 2.0);
 
         // Invisible InstancedMesh for raycasting (stays separate from visual rendering)
         this._iHitClusters = visible;
