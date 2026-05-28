@@ -2471,6 +2471,7 @@ class MeshCoreMonitor {
         const gridMajor = isDark ? 'rgba(255,255,255,0.10)' : '#ddd';
         const gridAxis  = isDark ? 'rgba(255,255,255,0.18)' : '#bbb';
         const labelFill = isDark ? '#8892b8' : '#888';
+        const dotStroke = isDark ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.28)';
 
         const parts = [];
 
@@ -2567,7 +2568,7 @@ class MeshCoreMonitor {
             if (selected && selected === col) continue;
             for (const p of dPts) {
                 if (valOf(p) == null) continue;
-                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}"/>`);
+                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" stroke="${dotStroke}" stroke-width="0.8"/>`);
             }
         }
         if (selected) {
@@ -2575,7 +2576,7 @@ class MeshCoreMonitor {
             if (selPts) {
                 for (const p of selPts) {
                     if (valOf(p) == null) continue;
-                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize * 1.43}" fill="${this._chartColor(p.col)}" fill-opacity="0.95"/>`);
+                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize * 1.43}" fill="${this._chartColor(p.col)}" fill-opacity="0.95" stroke="${dotStroke}" stroke-width="1"/>`);
                 }
             }
         }
@@ -2596,12 +2597,12 @@ class MeshCoreMonitor {
             const rSel  = rNorm * 1.43;
             for (const p of sentPts) {
                 if (selected && selected === p.col) continue;
-                parts.push(`<polygon points="${starPts(+xOf(p.time), +yOf(p.snr), rNorm)}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}"/>`);
+                parts.push(`<polygon points="${starPts(+xOf(p.time), +yOf(p.snr), rNorm)}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" stroke="${dotStroke}" stroke-width="0.8"/>`);
             }
             if (selected) {
                 for (const p of sentPts) {
                     if (p.col !== selected) continue;
-                    parts.push(`<polygon points="${starPts(+xOf(p.time), +yOf(p.snr), rSel)}" fill="${this._chartColor(p.col)}" fill-opacity="0.95"/>`);
+                    parts.push(`<polygon points="${starPts(+xOf(p.time), +yOf(p.snr), rSel)}" fill="${this._chartColor(p.col)}" fill-opacity="0.95" stroke="${dotStroke}" stroke-width="1"/>`);
                 }
             }
         }
