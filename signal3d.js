@@ -885,8 +885,16 @@ export class Signal3DMap {
     _updateHeightScale() {
         if (!this._refCamDist) return;
         if (this._heightMode === 'fixed') {
-            // world-space fixed: spires stay at true proportions regardless of zoom
             this.pointsGroup.scale.y = 2;
+            return;
+        }
+        if (this._heightMode === 'tile') {
+            // Height locked to tile zoom level: deep tile zoom (zoomed-in data) → short
+            // spires; shallow tile zoom (city-scale data) → tall spires.
+            // refZoom=17 ≈ street level where scale=2 looks natural.
+            const z = this.tileBounds?.zoom ?? 17;
+            const scale = Math.max(0.2, Math.min(8, 2 * Math.pow(2, 17 - z)));
+            this.pointsGroup.scale.y = scale;
             return;
         }
         const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
@@ -895,7 +903,7 @@ export class Signal3DMap {
             this.pointsGroup.scale.y = Math.sqrt(ratio) * 2;
             return;
         }
-        // zoom-adaptive: getDistance() unaffected by camera tilt; closer → shorter
+        // zoom-adaptive: closer camera → shorter spires
         this.pointsGroup.scale.y = ratio * 2;
     }
 

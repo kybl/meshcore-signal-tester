@@ -1722,7 +1722,9 @@ header .help-icon.active {
     flex-direction: column;
     gap: 10px;
     min-width: 200px;
-    white-space: nowrap;
+    max-width: min(320px, calc(100vw - 24px));
+    white-space: normal;
+    word-break: break-word;
     color: #444;
 }
 .map-settings-panel.hidden { display: none; }
@@ -1734,6 +1736,7 @@ header .help-icon.active {
     font-size: 12px;
     cursor: pointer;
     color: #444;
+    white-space: normal;
 }
 .map-setting-toggle input[type="checkbox"] { cursor: pointer; }
 
