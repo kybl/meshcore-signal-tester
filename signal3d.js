@@ -886,24 +886,28 @@ export class Signal3DMap {
         if (!this._refCamDist) return;
         if (this._heightMode === 'fixed') {
             this.pointsGroup.scale.y = 2;
-            return;
-        }
-        if (this._heightMode === 'tile') {
+        } else if (this._heightMode === 'tile') {
             // Aggressive zoom-adaptive: shrink spires fast as camera approaches so
             // a tall spire never extends out of the viewport when you get close.
-            // ratio^1.7 vs the regular linear ratio.
             const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
             this.pointsGroup.scale.y = Math.pow(ratio, 1.7) * 2;
-            return;
+        } else {
+            const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
+            this.pointsGroup.scale.y = this._heightMode === 'damped'
+                ? Math.sqrt(ratio) * 2
+                : ratio * 2;
         }
-        const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
-        if (this._heightMode === 'damped') {
-            // sqrt-damped: halfway between fully adaptive and fully fixed
-            this.pointsGroup.scale.y = Math.sqrt(ratio) * 2;
-            return;
+        this._applyDotScale();
+    }
+
+    // Scale dot material sizes proportionally to the current height scale so
+    // balls stay small when spires are short (zoomed in) and grow with them.
+    _applyDotScale() {
+        const f = this.pointsGroup.scale.y / 2;  // 1.0 at reference distance
+        for (const m of this._ptsMeshes) {
+            if (m.userData.baseDotSize !== undefined)
+                m.material.size = m.userData.baseDotSize * f;
         }
-        // zoom-adaptive: closer camera → shorter spires
-        this.pointsGroup.scale.y = ratio * 2;
     }
 
     _latLonToWorld(lat, lon) {
@@ -1166,7 +1170,7 @@ export class Signal3DMap {
                 ? targetPx * refDist * fovFactor / screenH
                 : targetPx;
             const isLit = opacity >= 1.0;
-            return new THREE.Points(geo, new THREE.PointsMaterial({
+            const mesh = new THREE.Points(geo, new THREE.PointsMaterial({
                 map:             this._sphereTex,
                 size:            dotSize,
                 sizeAttenuation: this._perspSize,
@@ -1177,6 +1181,8 @@ export class Signal3DMap {
                 depthWrite:      isLit,
                 alphaTest:       isLit ? 0.5 : 0.02,
             }));
+            mesh.userData.baseDotSize = dotSize;  // base size at scale.y = 2
+            return mesh;
         };
 
         const addPoints = (pts, opacity, sizeMult) => {
@@ -1251,6 +1257,7 @@ export class Signal3DMap {
         this._lineSegsDim = makeLines(dimPts, dimMat);
 
         this._updateStaticMarkers();
+        this._applyDotScale();
     }
 
     _scaleMarkerToScreen() {
