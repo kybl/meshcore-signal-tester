@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=63';
+import { Signal3DMap } from './signal3d.js?v=64';
 
 class MeshCoreMonitor {
     constructor() {
@@ -1373,9 +1373,14 @@ class MeshCoreMonitor {
             tagKnown,
         };
 
-        // Record uplink SNR in the Sent SNR History chart
-        this._sentSnrHistory.push({ time: Date.now(), snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex });
+        // Record uplink SNR in the Sent SNR History chart and 3D map
+        const now = Date.now();
+        this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex });
         this.scheduleChartRender();
+        const sentLoc = this.signalMap?.currentLocation() ?? null;
+        if (sentLoc && remoteSnr != null) {
+            this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: pubKeyHex, time: now, rawId: pubKeyHex });
+        }
 
         // Each DSC response → new row in Received Packets (same node can respond to
         // multiple retries; always use current time so order is correct).
@@ -2301,9 +2306,9 @@ class MeshCoreMonitor {
             && !this._colHasMapMarker(this._chartSelected)) {
             this._selectRepeater(null);
         }
-        this.renderChart('rssi');
         this.renderChart('snr');
         this.renderSentSnrChart();
+        this.renderChart('rssi');
     }
 
     _chartYBounds(type) {

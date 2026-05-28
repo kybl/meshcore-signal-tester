@@ -76,24 +76,6 @@
                 </div>
             </div>
 
-            <div class="section-wrap" id="rssiChartWrap">
-                <div class="section-header">
-                    <span class="section-title">Repeaters RSSI history<span class="help-icon" data-help="chart-interact">?</span></span>
-                    <button class="collapse-btn" data-target="rssiChartBody" title="Toggle section">▾</button>
-                </div>
-                <div class="section-body" id="rssiChartBody">
-                    <div class="chart-box">
-                        <div class="chart-svg-wrap">
-                            <svg id="rssiChart" class="rssi-chart"></svg>
-                        </div>
-                        <div class="chart-legend-wrap" id="rssiLegendWrap">
-                            <button class="legend-toggle-btn" data-wrap="rssiLegendWrap" data-key="legend-rssi">▾ Legend</button>
-                            <div id="rssiChartLegend" class="chart-legend"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <div class="section-wrap" id="snrChartWrap">
                 <div class="section-header">
                     <span class="section-title">Repeaters SNR history<span class="help-icon" data-help="chart-interact">?</span></span>
@@ -131,6 +113,24 @@
                                 <button class="legend-toggle-btn" data-wrap="sentSnrLegendWrap" data-key="legend-sentsnr">▾ Legend</button>
                                 <div id="sentSnrChartLegend" class="chart-legend"></div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-wrap" id="rssiChartWrap">
+                <div class="section-header">
+                    <span class="section-title">Repeaters RSSI history<span class="help-icon" data-help="chart-interact">?</span></span>
+                    <button class="collapse-btn" data-target="rssiChartBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="rssiChartBody">
+                    <div class="chart-box">
+                        <div class="chart-svg-wrap">
+                            <svg id="rssiChart" class="rssi-chart"></svg>
+                        </div>
+                        <div class="chart-legend-wrap" id="rssiLegendWrap">
+                            <button class="legend-toggle-btn" data-wrap="rssiLegendWrap" data-key="legend-rssi">▾ Legend</button>
+                            <div id="rssiChartLegend" class="chart-legend"></div>
                         </div>
                     </div>
                 </div>
@@ -312,6 +312,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=122"></script>
+    <script type="module" src="app.js?v=123"></script>
 </body>
 </html>

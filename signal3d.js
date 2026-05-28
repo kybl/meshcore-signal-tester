@@ -10,8 +10,8 @@ import { MapControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 12;    // world units for strongest signal
 const MIN_HEIGHT     = 2;     // world units for weakest signal
-const RSSI_GOOD      = -50;
-const RSSI_BAD       = -125;
+const SNR_GOOD       = 12;    // dB — excellent signal
+const SNR_BAD        = -20;   // dB — minimum decodable (LoRa SF12)
 const MAX_TILES_AXIS = 4;
 const TILE_PX        = 256;
 // Reference camera distance: distance from origin when camera is at the initial
@@ -101,9 +101,11 @@ export class Signal3DMap {
         this._lineSegs    = null;   // vertical lines for lit (selected/all) points
         this._lineSegsDim = null;   // vertical lines for dim (unselected) points
         this._iHitClusters = [];
-        // Shared hit-test geometry & sphere sprite texture (created once)
+        // Shared hit-test geometry & sprite textures (created once)
         this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
         this._sphereTex   = this._makeSphereTex();
+        this._squareTex   = this._makeSquareTex();
+        this._sentPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
         this.onFilter        = opts.onFilter        || null;
@@ -137,6 +139,28 @@ export class Signal3DMap {
         spec.addColorStop(0.5, 'rgba(255,255,255,0.2)');
         spec.addColorStop(1,   'rgba(255,255,255,0)');
         ctx.fillStyle = spec; ctx.fillRect(0, 0, s, s);
+        return new THREE.CanvasTexture(canvas);
+    }
+
+    _makeSquareTex() {
+        const s = 64, pad = 4, r = 10;
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = s;
+        const ctx = canvas.getContext('2d');
+        ctx.beginPath();
+        ctx.moveTo(pad + r, pad);
+        ctx.lineTo(s - pad - r, pad); ctx.arcTo(s - pad, pad, s - pad, pad + r, r);
+        ctx.lineTo(s - pad, s - pad - r); ctx.arcTo(s - pad, s - pad, s - pad - r, s - pad, r);
+        ctx.lineTo(pad + r, s - pad); ctx.arcTo(pad, s - pad, pad, s - pad - r, r);
+        ctx.lineTo(pad, pad + r); ctx.arcTo(pad, pad, pad + r, pad, r);
+        ctx.closePath();
+        ctx.clip();
+        const grad = ctx.createLinearGradient(pad, pad, s - pad, s - pad);
+        grad.addColorStop(0,   'rgba(255,255,255,1)');
+        grad.addColorStop(0.4, 'rgba(200,200,200,1)');
+        grad.addColorStop(1,   'rgba(80,80,80,1)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, s, s);
         return new THREE.CanvasTexture(canvas);
     }
 
@@ -664,6 +688,7 @@ export class Signal3DMap {
 
     clearPoints() {
         this.points = [];
+        this._sentPts = [];
         this._selectedCol = null;
         this._disposeInstanced();
         this._removeOverlay();
@@ -726,12 +751,19 @@ export class Signal3DMap {
     // ---- Packet ingestion ----
 
     addPacket(opts) {
-        if (opts.lat == null || opts.lon == null || opts.rssi == null) return;
+        if (opts.lat == null || opts.lon == null || opts.snr == null) return;
         this.points.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
         if (opts.col === this._selectedCol) this._updateInfoPanel();
         this._repositionAll();
-        this._scheduleMapUpdate();   // reload tiles if point moved out of bounds (slow, debounced)
+        this._scheduleMapUpdate();
+    }
+
+    addSentSnrPacket(opts) {
+        if (opts.lat == null || opts.lon == null || opts.snr == null) return;
+        this._sentPts.push({ ...opts });
+        if (this.emptyEl) this.emptyEl.classList.add('hidden');
+        this._repositionAll();
     }
 
     // Called by the host app when chart/legend selection changes.
@@ -750,9 +782,11 @@ export class Signal3DMap {
     // refreshes selection / info panel if the active repeater goes away.
     purgeOlderThan(cutoff) {
         if (!Number.isFinite(cutoff)) return;
-        const before = this.points.length;
-        this.points = this.points.filter(p => p.time >= cutoff);
-        if (this.points.length === before) return;
+        const before     = this.points.length;
+        const sentBefore = this._sentPts.length;
+        this.points   = this.points.filter(p => p.time >= cutoff);
+        this._sentPts = this._sentPts.filter(p => p.time >= cutoff);
+        if (this.points.length === before && this._sentPts.length === sentBefore) return;
         if (this._selectedCol && !this.points.some(p => p.col === this._selectedCol)) {
             this._selectedCol = null;
             this._updateInfoPanel();
@@ -1076,22 +1110,20 @@ export class Signal3DMap {
         this._overlayKey = null;
     }
 
-    _rssiToHeight(rssi) {
-        const t = Math.max(0, Math.min(1, (rssi - RSSI_BAD) / (RSSI_GOOD - RSSI_BAD)));
+    _signalToHeight(snr) {
+        if (snr == null) return MIN_HEIGHT;
+        const t = Math.max(0, Math.min(1, (snr - SNR_BAD) / (SNR_GOOD - SNR_BAD)));
         const range = MAX_HEIGHT - MIN_HEIGHT;
         switch (this._heightMode) {
             case 'log':
-                // log10(1+9t): spreads weak end apart, compresses strong end
                 return MIN_HEIGHT + (Math.log1p(t * 9) / Math.LN10) * range;
             case 'sqrt':
-                // gentler curve than log, natural "perceived signal" feel
                 return MIN_HEIGHT + Math.sqrt(t) * range;
             case 'inverted':
-                // weak signal = tall spire; highlights dead zones
                 return MIN_HEIGHT + (1 - t) * range;
             case 'steps': {
-                // 4 discrete levels at meaningful dBm thresholds
-                const level = rssi >= -80 ? 1.0 : rssi >= -95 ? 0.66 : rssi >= -110 ? 0.33 : 0.0;
+                // 4 discrete levels at meaningful SNR thresholds
+                const level = snr >= 5 ? 1.0 : snr >= -5 ? 0.66 : snr >= -12 ? 0.33 : 0.0;
                 return MIN_HEIGHT + level * range;
             }
             default:  // 'spires', 'fixed'
@@ -1169,14 +1201,14 @@ export class Signal3DMap {
         const screenH    = this.canvas.clientHeight || 600;
 
         // Build a THREE.Points object for a set of data points
-        const makePoints = (pts, opacity, sizeMult) => {
+        const makePoints = (pts, opacity, sizeMult, tex = this._sphereTex) => {
             const pos = new Float32Array(pts.length * 3);
             const col = new Float32Array(pts.length * 3);
             for (let i = 0; i < pts.length; i++) {
                 const p  = pts[i];
                 const wp = this._latLonToWorld(p.lat, p.lon);
                 pos[i*3]   = wp ? wp.x : 0;
-                pos[i*3+1] = wp ? this._rssiToHeight(p.rssi) : 0;
+                pos[i*3+1] = wp ? this._signalToHeight(p.snr) : 0;
                 pos[i*3+2] = wp ? wp.z : 0;
                 _col.set(this.colorFor(p.col));
                 col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
@@ -1187,7 +1219,7 @@ export class Signal3DMap {
             const dotSize = this.sphereSize * sizeMult * 14;
             const isLit = opacity >= 1.0;
             const mat = new THREE.PointsMaterial({
-                map:             this._sphereTex,
+                map:             tex,
                 size:            dotSize,
                 sizeAttenuation: false,  // we apply our own dampened perspective below
                 vertexColors:    true,
@@ -1220,9 +1252,9 @@ export class Signal3DMap {
             return mesh;
         };
 
-        const addPoints = (pts, opacity, sizeMult) => {
+        const addPoints = (pts, opacity, sizeMult, tex) => {
             if (!pts.length) return;
-            const m = makePoints(pts, opacity, sizeMult);
+            const m = makePoints(pts, opacity, sizeMult, tex);
             this._ptsMeshes.push(m);
             this.pointsGroup.add(m);
         };
@@ -1241,7 +1273,7 @@ export class Signal3DMap {
             const p   = visible[i];
             const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) { _m4.makeScale(0, 0, 0); this._iMeshHit.setMatrixAt(i, _m4); continue; }
-            const h  = this._rssiToHeight(p.rssi);
+            const h  = this._signalToHeight(p.snr);
             const hr = this.sphereSize + 1.8;
             _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(hr, hr, hr));
             this._iMeshHit.setMatrixAt(i, _m4);
@@ -1257,7 +1289,7 @@ export class Signal3DMap {
                 const p  = pts[i];
                 const wp = this._latLonToWorld(p.lat, p.lon);
                 if (!wp) continue;
-                const h = this._rssiToHeight(p.rssi);
+                const h = this._signalToHeight(p.snr);
                 const j = i * 6;
                 pos[j]   = wp.x; pos[j+1] = 0; pos[j+2] = wp.z;
                 pos[j+3] = wp.x; pos[j+4] = h; pos[j+5] = wp.z;
@@ -1291,6 +1323,17 @@ export class Signal3DMap {
         if (this._lineSegs)
             this._lineSegs.geometry.setAttribute('color', new THREE.BufferAttribute(litCol, 3));
         this._lineSegsDim = makeLines(dimPts, dimMat);
+
+        // Sent SNR squares — outgoing signal quality (how well the repeater heard us)
+        const sentCutoff = this._displayCutoff;
+        const sentAll = this._sentPts.filter(p =>
+            (!this.filterFn || this.filterFn(p.col)) &&
+            (!sentCutoff || p.time >= sentCutoff)
+        );
+        const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
+        const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
+        addPoints(sentLit, 1.0,  1.6, this._squareTex);
+        addPoints(sentDim, 0.07, 1.6, this._squareTex);
 
         this._updateStaticMarkers();
         this._applyDotScale();
