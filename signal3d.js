@@ -104,7 +104,7 @@ export class Signal3DMap {
         // Shared hit-test geometry & sprite textures (created once)
         this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
         this._sphereTex   = this._makeSphereTex();
-        this._squareTex   = this._makeSquareTex();
+        this._starTex     = this._makeStarTex();
         this._sentPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
@@ -142,25 +142,27 @@ export class Signal3DMap {
         return new THREE.CanvasTexture(canvas);
     }
 
-    _makeSquareTex() {
-        const s = 64, pad = 4, r = 10;
+    _makeStarTex() {
+        const s = 64, cx = s / 2, cy = s / 2;
         const canvas = document.createElement('canvas');
         canvas.width = canvas.height = s;
         const ctx = canvas.getContext('2d');
+        const outerR = s / 2 - 3;
+        const innerR = outerR * 0.42;
         ctx.beginPath();
-        ctx.moveTo(pad + r, pad);
-        ctx.lineTo(s - pad - r, pad); ctx.arcTo(s - pad, pad, s - pad, pad + r, r);
-        ctx.lineTo(s - pad, s - pad - r); ctx.arcTo(s - pad, s - pad, s - pad - r, s - pad, r);
-        ctx.lineTo(pad + r, s - pad); ctx.arcTo(pad, s - pad, pad, s - pad - r, r);
-        ctx.lineTo(pad, pad + r); ctx.arcTo(pad, pad, pad + r, pad, r);
+        for (let i = 0; i < 10; i++) {
+            const a = (i * Math.PI / 5) - Math.PI / 2;
+            const r = i % 2 === 0 ? outerR : innerR;
+            const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
         ctx.closePath();
-        ctx.clip();
-        const grad = ctx.createLinearGradient(pad, pad, s - pad, s - pad);
+        const grad = ctx.createRadialGradient(cx - outerR * 0.2, cy - outerR * 0.3, 0, cx, cy, outerR);
         grad.addColorStop(0,   'rgba(255,255,255,1)');
-        grad.addColorStop(0.4, 'rgba(200,200,200,1)');
-        grad.addColorStop(1,   'rgba(80,80,80,1)');
+        grad.addColorStop(0.5, 'rgba(200,200,200,1)');
+        grad.addColorStop(1,   'rgba(60,60,60,1)');
         ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, s, s);
+        ctx.fill();
         return new THREE.CanvasTexture(canvas);
     }
 
@@ -1332,8 +1334,8 @@ export class Signal3DMap {
         );
         const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
         const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
-        addPoints(sentLit, 1.0,  1.6, this._squareTex);
-        addPoints(sentDim, 0.07, 1.6, this._squareTex);
+        addPoints(sentLit, 1.0,  1.6, this._starTex);
+        addPoints(sentDim, 0.07, 1.6, this._starTex);
 
         this._updateStaticMarkers();
         this._applyDotScale();

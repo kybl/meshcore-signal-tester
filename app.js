@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=64';
+import { Signal3DMap } from './signal3d.js?v=65';
 
 class MeshCoreMonitor {
     constructor() {
@@ -2317,7 +2317,7 @@ class MeshCoreMonitor {
             if (v > vMax) vMax = v;
         }
         if (type === 'snr') {
-            for (const p of this._sentSnrHistory) {
+            for (const p of this._visibleSentSnrPts()) {
                 if (p.snr < vMin) vMin = p.snr;
                 if (p.snr > vMax) vMax = p.snr;
             }
@@ -2339,7 +2339,7 @@ class MeshCoreMonitor {
 
     _onChartClick(e, type) {
         const incomingPts = this._visibleChartPoints();
-        const sentPts = type === 'snr' ? this._sentSnrHistory : [];
+        const sentPts = type === 'snr' ? this._visibleSentSnrPts() : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
         if (!pts.length) return;
         const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
@@ -2401,7 +2401,7 @@ class MeshCoreMonitor {
         wrap?.classList.remove('hidden');
 
         const pts = this._visibleChartPoints();
-        const sentPts = type === 'snr' ? this._sentSnrHistory : [];
+        const sentPts = type === 'snr' ? this._visibleSentSnrPts() : [];
         const hasData = pts.length > 0 || sentPts.length > 0;
 
         const W = svg.clientWidth || 600;
@@ -2548,22 +2548,28 @@ class MeshCoreMonitor {
             }
         }
 
-        // Render sent SNR as squares (SNR chart only)
+        // Render sent SNR as stars (SNR chart only)
         if (sentPts.length) {
-            const sq = this._dotSize * 2;
-            const half = sq / 2;
-            const sqSel = sq * 1.43;
-            const halfSel = sqSel / 2;
+            const starPts = (cx, cy, r) => {
+                const inner = r * 0.42;
+                const pts = [];
+                for (let i = 0; i < 10; i++) {
+                    const a = (i * Math.PI / 5) - Math.PI / 2;
+                    const rad = i % 2 === 0 ? r : inner;
+                    pts.push(`${(cx + Math.cos(a) * rad).toFixed(1)},${(cy + Math.sin(a) * rad).toFixed(1)}`);
+                }
+                return pts.join(' ');
+            };
+            const rNorm = this._dotSize * 1.5;
+            const rSel  = rNorm * 1.43;
             for (const p of sentPts) {
                 if (selected && selected === p.col) continue;
-                const cx = +xOf(p.time), cy = +yOf(p.snr);
-                parts.push(`<rect x="${(cx - half).toFixed(1)}" y="${(cy - half).toFixed(1)}" width="${sq}" height="${sq}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" rx="1.5"/>`);
+                parts.push(`<polygon points="${starPts(+xOf(p.time), +yOf(p.snr), rNorm)}" fill="${this._chartColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}"/>`);
             }
             if (selected) {
                 for (const p of sentPts) {
                     if (p.col !== selected) continue;
-                    const cx = +xOf(p.time), cy = +yOf(p.snr);
-                    parts.push(`<rect x="${(cx - halfSel).toFixed(1)}" y="${(cy - halfSel).toFixed(1)}" width="${sqSel.toFixed(1)}" height="${sqSel.toFixed(1)}" fill="${this._chartColor(p.col)}" fill-opacity="0.95" rx="2"/>`);
+                    parts.push(`<polygon points="${starPts(+xOf(p.time), +yOf(p.snr), rSel)}" fill="${this._chartColor(p.col)}" fill-opacity="0.95"/>`);
                 }
             }
         }
@@ -2628,7 +2634,7 @@ class MeshCoreMonitor {
                     const selClass = !selected ? '' : (selected === col ? ' legend-item-selected' : ' legend-item-dimmed');
                     entries.push({
                         val: last.snr,
-                        html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span class="legend-dot" style="background:${c};border-radius:2px"></span>${displayName} ↗ <span class="legend-val">(${valStr})</span></span>`,
+                        html: `<span class="legend-item${selClass}" data-col="${this.escHtml(col)}"><span style="color:${c};font-size:13px;line-height:1;flex-shrink:0">★</span>${displayName} ↗ <span class="legend-val">(${valStr})</span></span>`,
                     });
                 }
                 entries.sort((a, b) => b.val - a.val);
@@ -2664,7 +2670,7 @@ class MeshCoreMonitor {
     showChartTooltip(e, type) {
         if (!this.tooltip) return;
         const incomingPts = this._visibleChartPoints();
-        const sentPts = type === 'snr' ? this._sentSnrHistory : [];
+        const sentPts = type === 'snr' ? this._visibleSentSnrPts() : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
         if (!pts.length) return;
         const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
@@ -2709,7 +2715,7 @@ class MeshCoreMonitor {
         const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const color = this._chartColor(nearest.col);
         const dotShape = isSent
-            ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`
+            ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
             : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
         const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this.escHtml(cName)}</span>` : '';
@@ -3283,6 +3289,12 @@ class MeshCoreMonitor {
         return this._repFilterTerms.length
             ? pts.filter(p => this._colMatchesRepFilter(p.col))
             : pts;
+    }
+
+    _visibleSentSnrPts() {
+        const cutoff = this._displayCutoffNow();
+        let pts = cutoff ? this._sentSnrHistory.filter(p => p.time >= cutoff) : this._sentSnrHistory;
+        return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
 
     _applyRepFilter() {
