@@ -900,10 +900,10 @@ export class Signal3DMap {
         this._applyDotScale();
     }
 
-    // Scale dot material sizes proportionally to the current height scale so
-    // balls stay small when spires are short (zoomed in) and grow with them.
+    // Scale dot material sizes with height scale so balls follow spire height,
+    // but milder (sqrt) so they don't get tiny when zoomed in.
     _applyDotScale() {
-        const f = this.pointsGroup.scale.y / 2;  // 1.0 at reference distance
+        const f = Math.sqrt(Math.max(0.05, this.pointsGroup.scale.y / 2));
         for (const m of this._ptsMeshes) {
             if (m.userData.baseDotSize !== undefined)
                 m.material.size = m.userData.baseDotSize * f;
@@ -1165,7 +1165,7 @@ export class Signal3DMap {
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
             // Perspective size: convert target pixel size at refDist → world units
-            const targetPx  = this.sphereSize * sizeMult * 7;
+            const targetPx  = this.sphereSize * sizeMult * 10;
             const dotSize   = this._perspSize
                 ? targetPx * refDist * fovFactor / screenH
                 : targetPx;
@@ -1244,11 +1244,11 @@ export class Signal3DMap {
         }
         const lineOpacity = Math.min(1, 0.25 + 0.35 * this.sphereSize);
         const litMat = new THREE.LineBasicMaterial({
-            vertexColors: true, transparent: lineOpacity < 1,
-            depthWrite: false, opacity: lineOpacity,
+            vertexColors: true, transparent: true,
+            depthWrite: false, depthTest: false, opacity: lineOpacity,
         });
         const dimMat = new THREE.LineBasicMaterial({
-            color: 0x888888, transparent: true, depthWrite: false, opacity: 0.18,
+            color: 0x888888, transparent: true, depthWrite: false, depthTest: false, opacity: 0.18,
         });
 
         this._lineSegs = makeLines(litPts, litMat);
