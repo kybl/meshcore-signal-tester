@@ -158,8 +158,8 @@ export class Signal3DMap {
         this.controls.screenSpacePanning = false;  // always pan in world XZ plane, no tilt-fight
         this.controls.minDistance        = 0.5;
         this.controls.maxDistance        = 300;
-        // Single finger = pan; two fingers = pinch-zoom + pan (centroid); twist = custom below
-        this.controls.touches = { ONE: 1 /* PAN */, TWO: 2 /* DOLLY_PAN */ };
+        // Single finger = pan; two fingers = orbit/tilt (centroid) + pinch-zoom; twist = custom below
+        this.controls.touches = { ONE: 1 /* PAN */, TWO: 3 /* DOLLY_ROTATE */ };
         this.controls.update();
         this.controls.addEventListener('change', () => {
             this.controls.target.y = 0;
@@ -191,7 +191,7 @@ export class Signal3DMap {
             if (delta >  Math.PI) delta -= 2 * Math.PI;
             if (delta < -Math.PI) delta += 2 * Math.PI;
             if (Math.abs(delta) > 0.001) {
-                const a   = delta * 1.4;
+                const a   = -delta * 1.4;
                 const cos = Math.cos(a), sin = Math.sin(a);
                 const tx  = this.controls.target.x, tz = this.controls.target.z;
                 const dx  = this.camera.position.x - tx;
