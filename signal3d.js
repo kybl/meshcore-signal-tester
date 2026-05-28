@@ -170,9 +170,10 @@ export class Signal3DMap {
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
         });
 
-        // Two-finger twist (rotation around midpoint between fingers).
-        // DOLLY_ROTATE handles centroid-movement rotation; we add angle-delta rotation
-        // so a pure twist-in-place also rotates the camera azimuth.
+        // Two-finger twist: rotate camera azimuth by the angular change between the
+        // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
+        // rotate camera.position directly around the Y axis through controls.target
+        // and let controls.update() recompute its internal spherical state.
         let _twistAngle = null;
         canvas.addEventListener('touchstart', e => {
             if (e.touches.length === 2) {
@@ -190,7 +191,14 @@ export class Signal3DMap {
             if (delta >  Math.PI) delta -= 2 * Math.PI;
             if (delta < -Math.PI) delta += 2 * Math.PI;
             if (Math.abs(delta) > 0.001) {
-                this.controls.rotateLeft(delta * 1.5);  // ×1.5 for snappier feel
+                const a   = delta * 1.4;
+                const cos = Math.cos(a), sin = Math.sin(a);
+                const tx  = this.controls.target.x, tz = this.controls.target.z;
+                const dx  = this.camera.position.x - tx;
+                const dz  = this.camera.position.z - tz;
+                this.camera.position.x = tx + dx * cos - dz * sin;
+                this.camera.position.z = tz + dx * sin + dz * cos;
+                this.controls.update();
             }
             _twistAngle = newAngle;
         }, { passive: true });
