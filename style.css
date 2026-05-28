@@ -523,11 +523,35 @@ html.light-theme .status.importing {
 }
 
 .chart-svg-wrap {
-    resize: vertical;
     overflow: hidden;
     height: 180px;
     min-height: 80px;
     max-height: calc(100vh - 80px);
+}
+
+.chart-resize-handle {
+    height: 24px;
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    touch-action: none;
+    opacity: 0.35;
+    transition: opacity 0.15s;
+    margin-bottom: 2px;
+    border-radius: 0 0 4px 4px;
+}
+.chart-resize-handle:hover,
+.chart-resize-handle:active { opacity: 0.85; }
+.chart-resize-handle::after {
+    content: '';
+    display: block;
+    width: 44px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--text-muted);
+    box-shadow: 0 -6px 0 var(--text-muted), 0 6px 0 var(--text-muted);
 }
 
 .rssi-chart {

@@ -84,6 +84,36 @@ class MeshCoreMonitor {
             const obs = new ResizeObserver(() => this.scheduleChartRender());
             document.querySelectorAll('.chart-svg-wrap').forEach(el => obs.observe(el));
         }
+
+        // Custom resize handles — large touch target below each chart
+        document.querySelectorAll('.chart-svg-wrap').forEach(wrap => {
+            const handle = document.createElement('div');
+            handle.className = 'chart-resize-handle';
+            wrap.insertAdjacentElement('afterend', handle);
+            let startY = 0, startH = 0;
+            const onMove = e => {
+                const cy = e.touches ? e.touches[0].clientY : e.clientY;
+                wrap.style.height = Math.max(80, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchend', onUp);
+            };
+            handle.addEventListener('mousedown', e => {
+                e.preventDefault();
+                startY = e.clientY; startH = wrap.offsetHeight;
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+            handle.addEventListener('touchstart', e => {
+                e.preventDefault();
+                startY = e.touches[0].clientY; startH = wrap.offsetHeight;
+                document.addEventListener('touchmove', onMove, { passive: false });
+                document.addEventListener('touchend', onUp);
+            }, { passive: false });
+        });
         setInterval(() => {
             if (!this._chartFrozenAt) this.scheduleChartRender();
             if (isFinite(this.DISPLAY_LIFETIME)) {
@@ -743,8 +773,10 @@ class MeshCoreMonitor {
                 'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
             'snr':
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
+            'chart-snr':
+                'Click a dot or legend label to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Circles = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover.',
             'chart-interact':
-                'Click a dot or legend label to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. The shaded area on the RSSI chart shows the estimated noise floor (RSSI − SNR).',
+                'Click a dot or legend label to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. The shaded area shows the estimated noise floor (RSSI − SNR).',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':
