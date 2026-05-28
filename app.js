@@ -2483,6 +2483,12 @@ class MeshCoreMonitor {
         } else {
             ({ yMin, yMax, yStep } = this._chartYBounds(type));
         }
+        // Adapt yStep so major gridlines are ~35 px apart (more when taller, fewer when short)
+        const maxMajorLines = Math.max(2, Math.floor(ch / 35));
+        const niceYSteps = [0.5, 1, 2, 5, 10, 20, 50, 100];
+        const minYStep = (yMax - yMin) / maxMajorLines;
+        const adaptedStep = niceYSteps.find(s => s >= minYStep);
+        if (adaptedStep && adaptedStep > yStep) yStep = adaptedStep;
         const tRange = Math.max(1, now - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
