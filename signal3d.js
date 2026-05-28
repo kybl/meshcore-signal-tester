@@ -101,6 +101,7 @@ export class Signal3DMap {
         this._lineSegs    = null;   // vertical lines for lit (selected/all) points
         this._lineSegsDim = null;   // vertical lines for dim (unselected) points
         this._iHitClusters = [];
+        this._clickedPoint = null;  // the specific point instance last clicked
         // Shared hit-test geometry & sprite textures (created once)
         this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
         this._sphereTex   = this._makeSphereTex();
@@ -478,6 +479,7 @@ export class Signal3DMap {
                         }
                     }
                     const newCol = entry.col === this._selectedCol ? null : entry.col;
+                    this._clickedPoint = null;
                     this._selectedCol = newCol;
                     this._repositionAll();
                     this.onSelect?.(newCol);
@@ -489,13 +491,15 @@ export class Signal3DMap {
         }
 
         let newCol = null;
+        let clickedPt = null;
         if (this._iMeshHit) {
             const hits = this._raycaster.intersectObject(this._iMeshHit);
             if (hits.length > 0) {
                 const c = this._iHitClusters[hits[0].instanceId];
-                if (c) newCol = (this._selectedCol === c.col) ? null : c.col;
+                if (c) { newCol = (this._selectedCol === c.col) ? null : c.col; clickedPt = newCol ? c : null; }
             }
         }
+        this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
         this._repositionAll();
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
@@ -509,13 +513,24 @@ export class Signal3DMap {
         if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
         const pts = this.points.filter(p => p.col === col);
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
-        const color   = this.colorFor(col);
-        const dot     = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;flex-shrink:0"></span>`;
-        const name    = this.nameForCol ? this.nameForCol(col) : null;
+        const color    = this.colorFor(col);
+        const dot      = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;flex-shrink:0"></span>`;
+        const name     = this.nameForCol ? this.nameForCol(col) : null;
         const nameHtml = name ? ` <span class="smi-colname">${this._escHtml(name)}</span>` : '';
+        // Use the exact clicked point; fall back to latest point for the column
+        const p = (this._clickedPoint?.col === col) ? this._clickedPoint
+            : pts.reduce((best, q) => q.time > best.time ? q : best, pts[0]);
+        const snrStr  = p.snr  != null ? `${p.snr  >= 0 ? '+' : ''}${p.snr.toFixed(1)} dB`  : null;
+        const rssiStr = p.rssi != null ? `${p.rssi} dBm` : null;
+        const timeStr = new Date(p.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const sigParts = [snrStr ? `SNR <b>${this._escHtml(snrStr)}</b>` : null,
+                          rssiStr ? `RSSI <b>${this._escHtml(rssiStr)}</b>` : null].filter(Boolean);
+        const sigHtml = sigParts.length
+            ? `<div class="smi-sig">${sigParts.join(' &nbsp; ')}<span class="smi-time">${timeStr}</span></div>` : '';
         this.infoEl.innerHTML =
             `<button class="smi-close" title="Deselect">✕</button>` +
-            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}</div>`;
+            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}</div>` +
+            sigHtml;
         this.infoEl.classList.remove('hidden');
     }
 

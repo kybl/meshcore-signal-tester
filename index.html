@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
-    <link rel="stylesheet" href="style.css?v=94">
+    <link rel="stylesheet" href="style.css?v=95">
 </head>
 <body>
     <header>
@@ -56,17 +56,19 @@
                     <button class="collapse-btn" data-target="snrChartBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="snrChartBody">
-                    <div class="snr-toggle-bar">
-                        <label class="snr-toggle-label"><input type="checkbox" id="snrShowIncoming" checked> Incoming</label>
-                        <label class="snr-toggle-label"><input type="checkbox" id="snrShowOutgoing" checked> Outgoing ★</label>
-                    </div>
-                    <div class="chart-box">
-                        <div class="chart-svg-wrap">
-                            <svg id="snrChart" class="rssi-chart"></svg>
+                    <div class="section-body-inner">
+                        <div class="snr-toggle-bar">
+                            <label class="snr-toggle-label"><input type="checkbox" id="snrShowIncoming" checked> Incoming</label>
+                            <label class="snr-toggle-label"><input type="checkbox" id="snrShowOutgoing" checked> Outgoing ★</label>
                         </div>
-                        <div class="chart-legend-wrap" id="snrLegendWrap">
-                            <button class="legend-toggle-btn" data-wrap="snrLegendWrap" data-key="legend-snr">▾ Legend</button>
-                            <div id="snrChartLegend" class="chart-legend"></div>
+                        <div class="chart-box">
+                            <div class="chart-svg-wrap">
+                                <svg id="snrChart" class="rssi-chart"></svg>
+                            </div>
+                            <div class="chart-legend-wrap" id="snrLegendWrap">
+                                <button class="legend-toggle-btn" data-wrap="snrLegendWrap" data-key="legend-snr">▾ Legend</button>
+                                <div id="snrChartLegend" class="chart-legend"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -296,6 +298,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=132"></script>
+    <script type="module" src="app.js?v=133"></script>
 </body>
 </html>

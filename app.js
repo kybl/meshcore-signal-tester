@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=66';
+import { Signal3DMap } from './signal3d.js?v=67';
 
 class MeshCoreMonitor {
     constructor() {
@@ -192,14 +192,19 @@ class MeshCoreMonitor {
 
         const bindChartTooltip = (svg, type) => {
             if (!svg) return;
+            let lastTouch = 0;
             svg.addEventListener('mousemove', e => this.showChartTooltip(e, type));
-            svg.addEventListener('mouseleave', () => this.hideChartTooltip());
+            svg.addEventListener('mouseleave', () => {
+                if (Date.now() - lastTouch > 400) this.hideChartTooltip();
+            });
             svg.addEventListener('click', e => this._onChartClick(e, type));
             svg.addEventListener('touchstart', e => {
+                lastTouch = Date.now();
                 if (e.touches.length === 1) this.showChartTooltip(e.touches[0], type);
             }, { passive: true });
             svg.addEventListener('touchend', () => {
-                setTimeout(() => this.hideChartTooltip(), 2000);
+                lastTouch = Date.now();
+                setTimeout(() => this.hideChartTooltip(), 2500);
             });
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');

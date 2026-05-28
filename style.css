@@ -410,6 +410,11 @@ html.light-theme .status.importing {
     grid-template-rows: 0fr;
 }
 
+.section-body-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+
 .section-body.collapsed > * {
     padding: 0;
     margin: 0;
@@ -1683,6 +1688,23 @@ html.light-theme .btn-show-all-repeaters:hover {
 
 .smi-filter:hover {
     background: #3558e8;
+}
+
+.smi-sig {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.smi-time {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-size: 10px;
+    white-space: nowrap;
+    opacity: 0.75;
 }
 
 @media (max-width: 600px) {
