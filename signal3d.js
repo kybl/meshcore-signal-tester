@@ -403,6 +403,7 @@ export class Signal3DMap {
     setDisplayCutoff(cutoffMs) {
         this._displayCutoff = cutoffMs || 0;
         this._repositionAll();
+        this._scheduleMapUpdate();   // re-fit map to the now-visible bbox
     }
 
     // ---- Click / selection ----
@@ -527,8 +528,9 @@ export class Signal3DMap {
         ctx.textBaseline = 'middle';
         ctx.fillText(emoji, S / 2, S / 2 + 4);
         const tex = new THREE.CanvasTexture(c);
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
         const sprite = new THREE.Sprite(mat);
+        sprite.renderOrder = 10;
         sprite.scale.set(3.0, 3.0, 1);
         sprite.position.set(0, yPos, 0);
         return sprite;
@@ -576,8 +578,9 @@ export class Signal3DMap {
             ctx.fillText(nameText, textW / 2 + 4, H / 2 + 14);
         }
         const tex = new THREE.CanvasTexture(c);
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
         const sprite = new THREE.Sprite(mat);
+        sprite.renderOrder = 10;
         const aspect = W / H;
         sprite.scale.set(aspect * 3.0, 3.0, 1);
         sprite.position.set(0, 7.0, 0);
@@ -737,7 +740,10 @@ export class Signal3DMap {
     }
 
     _bbox() {
-        const locs = this.points.map(p => ({ lat: p.lat, lon: p.lon }));
+        const cutoff = this._displayCutoff;
+        const locs = this.points
+            .filter(p => (!cutoff || p.time >= cutoff) && (!this.filterFn || this.filterFn(p.col)))
+            .map(p => ({ lat: p.lat, lon: p.lon }));
         if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
         for (const m of this._staticMarkers) locs.push({ lat: m.lat, lon: m.lon });
         if (!locs.length) return null;
@@ -883,9 +889,14 @@ export class Signal3DMap {
             this.pointsGroup.scale.y = 2;
             return;
         }
+        const ratio = Math.max(0.01, this.controls.getDistance() / this._refCamDist);
+        if (this._heightMode === 'damped') {
+            // sqrt-damped: halfway between fully adaptive and fully fixed
+            this.pointsGroup.scale.y = Math.sqrt(ratio) * 2;
+            return;
+        }
         // zoom-adaptive: getDistance() unaffected by camera tilt; closer → shorter
-        const scale = Math.max(0.05, this.controls.getDistance() / this._refCamDist) * 2;
-        this.pointsGroup.scale.y = scale;
+        this.pointsGroup.scale.y = ratio * 2;
     }
 
     _latLonToWorld(lat, lon) {
