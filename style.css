@@ -194,9 +194,11 @@ html.light-theme .status.importing {
 }
 
 .btn-primary {
+    -webkit-appearance: none;
+    appearance: none;
     background: #667eea;
     color: white;
-    border: none;
+    border: 1px solid #5568d3;
     padding: 6px 14px;
     border-radius: 6px;
     font-size: 13px;
@@ -218,6 +220,8 @@ html.light-theme .status.importing {
 }
 
 .btn-pause {
+    -webkit-appearance: none;
+    appearance: none;
     background: var(--bg-box);
     color: #667eea;
     border: 1.5px solid var(--border);
@@ -279,9 +283,33 @@ html.light-theme .status.importing {
 }
 
 .size-range {
+    -webkit-appearance: none;
+    appearance: none;
     width: 72px;
-    accent-color: #667eea;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
     cursor: pointer;
+    outline: none;
+    vertical-align: middle;
+}
+.size-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #667eea;
+    cursor: pointer;
+    border: 2px solid var(--bg-header);
+}
+.size-range::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #667eea;
+    cursor: pointer;
+    border: 2px solid var(--bg-header);
 }
 
 .size-val {
@@ -1011,6 +1039,8 @@ html.light-theme .status.importing {
 /* ── Help system ─────────────────────────────────────── */
 
 .help-btn {
+    -webkit-appearance: none;
+    appearance: none;
     background: var(--bg-box);
     color: #667eea;
     border: 1.5px solid var(--border);
