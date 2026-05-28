@@ -900,10 +900,11 @@ export class Signal3DMap {
         this._applyDotScale();
     }
 
-    // Scale dot material sizes with height scale so balls follow spire height,
-    // but milder (sqrt) so they don't get tiny when zoomed in.
+    // Scale dot material sizes very gently with height scale so balls remain
+    // visibly large even when spires are short.  pow(f, 0.25): scale of 0.1
+    // still leaves dots at ~56% size, 0.5 → ~84%.
     _applyDotScale() {
-        const f = Math.sqrt(Math.max(0.05, this.pointsGroup.scale.y / 2));
+        const f = Math.pow(Math.max(0.05, this.pointsGroup.scale.y / 2), 0.25);
         for (const m of this._ptsMeshes) {
             if (m.userData.baseDotSize !== undefined)
                 m.material.size = m.userData.baseDotSize * f;
@@ -1164,24 +1165,33 @@ export class Signal3DMap {
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-            // Perspective size: convert target pixel size at refDist → world units
-            const targetPx  = this.sphereSize * sizeMult * 10;
-            const dotSize   = this._perspSize
-                ? targetPx * refDist * fovFactor / screenH
-                : targetPx;
+            const dotSize = this.sphereSize * sizeMult * 14;
             const isLit = opacity >= 1.0;
-            const mesh = new THREE.Points(geo, new THREE.PointsMaterial({
+            const mat = new THREE.PointsMaterial({
                 map:             this._sphereTex,
                 size:            dotSize,
-                sizeAttenuation: this._perspSize,
+                sizeAttenuation: false,  // we apply our own dampened perspective below
                 vertexColors:    true,
-                // Lit dots: write to depth buffer so closer dots occlude farther ones
                 transparent:     !isLit,
                 opacity,
                 depthWrite:      isLit,
                 alphaTest:       isLit ? 0.5 : 0.02,
-            }));
-            mesh.userData.baseDotSize = dotSize;  // base size at scale.y = 2
+            });
+            // Dampened perspective: gl_PointSize = size * (refDist / -mvz)^0.5
+            // Standard perspective would use exponent 1.0; 0.5 halves the visual
+            // size difference between near and far dots in log space.
+            if (this._perspSize) {
+                mat.onBeforeCompile = shader => {
+                    shader.uniforms.uRefDist = { value: refDist };
+                    shader.vertexShader = shader.vertexShader
+                        .replace('#include <common>',
+                                 '#include <common>\nuniform float uRefDist;')
+                        .replace('gl_PointSize = size;',
+                                 'gl_PointSize = size * pow(uRefDist / max(0.5, -mvPosition.z), 0.5);');
+                };
+            }
+            const mesh = new THREE.Points(geo, mat);
+            mesh.userData.baseDotSize = dotSize;
             return mesh;
         };
 
