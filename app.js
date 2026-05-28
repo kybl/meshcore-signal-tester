@@ -100,7 +100,7 @@ class MeshCoreMonitor {
             if (!btn) return;
             const hint = document.createElement('span');
             hint.className = 'section-hint';
-            header.appendChild(hint);
+            header.insertBefore(hint, btn);
             const updateHint = collapsed => { hint.textContent = collapsed ? 'Click to show' : 'Click to hide'; };
             const body = document.getElementById(btn.dataset.target);
             updateHint(body?.classList.contains('collapsed') ?? false);
