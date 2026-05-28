@@ -1149,6 +1149,15 @@ class MeshCoreMonitor {
         this._updateShowAllBtn();
     }
 
+    _colHasMapMarker(col) {
+        if (!col) return false;
+        if (col === this._chartSelected && this._contactsForMapButtons(col).length) return true;
+        for (const pubKeyFullHex of this._mapPins) {
+            if (pubKeyFullHex.slice(0, 6) === col) return true;
+        }
+        return false;
+    }
+
     _updateContactsCount() {
         if (this.contactsCountEl) this.contactsCountEl.textContent = this._contacts.size;
         if (this.contactsHstat) this.contactsHstat.style.display = this._contacts.size > 0 ? '' : 'none';
@@ -2287,7 +2296,9 @@ class MeshCoreMonitor {
     }
 
     renderCharts() {
-        if (this._chartSelected && !this._visibleChartPoints().some(p => p.col === this._chartSelected)) {
+        if (this._chartSelected
+            && !this._visibleChartPoints().some(p => p.col === this._chartSelected)
+            && !this._colHasMapMarker(this._chartSelected)) {
             this._selectRepeater(null);
         }
         this.renderChart('rssi');
