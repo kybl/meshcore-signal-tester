@@ -1,6 +1,30 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=77';
+import { Signal3DMap } from './signal3d.js?v=78';
+
+// Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
+// Booleans are stored as 'true'/'false'; numbers as their string form.
+const Store = {
+    get(key, fallback = null) {
+        try { const v = localStorage.getItem(key); return v === null ? fallback : v; }
+        catch { return fallback; }
+    },
+    set(key, value) {
+        try { localStorage.setItem(key, value); } catch { /* private mode / quota */ }
+    },
+    num(key, fallback) {
+        const n = parseFloat(this.get(key));
+        return Number.isFinite(n) ? n : fallback;
+    },
+    bool(key, fallback) {
+        const v = this.get(key);
+        return v === null ? fallback : (v === 'true' || v === '1');
+    },
+    json(key, fallback) {
+        try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
+        catch { return fallback; }
+    },
+};
 
 class MeshCoreMonitor {
     constructor() {
@@ -155,7 +179,7 @@ class MeshCoreMonitor {
         this.contactsLoadingMsg = document.getElementById('contactsLoadingMsg');
         this.repeaterLogBody = document.getElementById('repeaterLogBody');
         this.soundSelect = document.getElementById('soundSelect');
-        try { const s = localStorage.getItem('sound'); if (s) this.soundSelect.value = s; } catch (e) { console.warn('localStorage error:', e); }
+        this.soundSelect.value = Store.get('sound', this.soundSelect.value);
         this.tooltip = document.getElementById('chartTooltip');
 
         document.getElementById('pauseBtn')?.addEventListener('click', () => {
@@ -289,21 +313,21 @@ class MeshCoreMonitor {
         const ttlSelect  = document.getElementById('ttlSelect');
         const hideSelect = document.getElementById('hideSelect');
         if (ttlSelect) {
-            try { const s = localStorage.getItem('ttl'); if (s) ttlSelect.value = s; } catch (e) { console.warn('localStorage error:', e); }
+            ttlSelect.value = Store.get('ttl', ttlSelect.value);
             const v = ttlSelect.value;
             this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
             ttlSelect.addEventListener('change', () => {
                 const v = ttlSelect.value;
                 this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
-                try { localStorage.setItem('ttl', v); } catch (e) { console.warn('localStorage error:', e); }
+                Store.set('ttl', v);
                 this._updateHideSelectOptions();
             });
         }
         if (hideSelect) {
-            try { let s = localStorage.getItem('hide'); if (s === 'same') s = 'all'; if (s) hideSelect.value = s; } catch (e) { console.warn('localStorage error:', e); }
+            hideSelect.value = Store.get('hide', hideSelect.value);
             this._applyHideSelect();
             hideSelect.addEventListener('change', () => {
-                try { localStorage.setItem('hide', hideSelect.value); } catch (e) { console.warn('localStorage error:', e); }
+                Store.set('hide', hideSelect.value);
                 this._applyHideSelect();
             });
         }
@@ -317,7 +341,7 @@ class MeshCoreMonitor {
         document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(e => console.error('Discover failed:', e)));
 
         this.soundSelect?.addEventListener('change', () => {
-            try { localStorage.setItem('sound', this.soundSelect.value); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('sound', this.soundSelect.value);
         });
 
         // UI scale
@@ -329,14 +353,12 @@ class MeshCoreMonitor {
                 if (v === 'large')  document.documentElement.classList.add('ui-large');
                 if (v === 'larger') document.documentElement.classList.add('ui-larger');
             };
-            let stored = null;
-            try { stored = localStorage.getItem('uiScale'); } catch (e) { console.warn('localStorage error:', e); }
-            const initial = stored || 'normal';
+            const initial = Store.get('uiScale', 'normal');
             uiScaleSelect.value = initial;
             applyUiScale(initial);
             uiScaleSelect.addEventListener('change', () => {
                 applyUiScale(uiScaleSelect.value);
-                try { localStorage.setItem('uiScale', uiScaleSelect.value); } catch (e) { console.warn('localStorage error:', e); }
+                Store.set('uiScale', uiScaleSelect.value);
             });
         }
 
@@ -347,20 +369,19 @@ class MeshCoreMonitor {
                 document.documentElement.classList.toggle('light-theme', light);
                 themeBtn.textContent = light ? '🌙' : '☀︎';
             };
-            let isLight = false;
-            try { isLight = localStorage.getItem('theme') === 'light'; } catch (e) {}
+            let isLight = Store.get('theme') === 'light';
             applyTheme(isLight);
             themeBtn.addEventListener('click', () => {
                 isLight = !isLight;
                 applyTheme(isLight);
-                try { localStorage.setItem('theme', isLight ? 'light' : 'dark'); } catch (e) {}
+                Store.set('theme', isLight ? 'light' : 'dark');
                 this.renderCharts();
             });
         }
 
         // Point size controls
-        try { this._dotSize = parseFloat(localStorage.getItem('dotSize') || '3.5'); } catch (e) { console.warn('localStorage error:', e); this._dotSize = 3.5; }
-        try { this._sphereSize = parseFloat(localStorage.getItem('sphereSize') || '1'); } catch (e) { console.warn('localStorage error:', e); this._sphereSize = 1; }
+        this._dotSize    = Store.num('dotSize', 3.5);
+        this._sphereSize = Store.num('sphereSize', 1);
 
         const dotSizeInput = document.getElementById('dotSizeInput');
         const dotSizeVal   = document.getElementById('dotSizeVal');
@@ -370,7 +391,7 @@ class MeshCoreMonitor {
             dotSizeInput.addEventListener('input', () => {
                 this._dotSize = parseFloat(dotSizeInput.value);
                 if (dotSizeVal) dotSizeVal.textContent = this._dotSize;
-                try { localStorage.setItem('dotSize', this._dotSize); } catch (e) { console.warn('localStorage error:', e); }
+                Store.set('dotSize', this._dotSize);
                 this.scheduleChartRender();
             });
         }
@@ -383,7 +404,7 @@ class MeshCoreMonitor {
             sphereSizeInput.addEventListener('input', () => {
                 this._sphereSize = parseFloat(sphereSizeInput.value);
                 if (sphereSizeVal) sphereSizeVal.textContent = this._sphereSize;
-                try { localStorage.setItem('sphereSize', this._sphereSize); } catch (e) { console.warn('localStorage error:', e); }
+                Store.set('sphereSize', this._sphereSize);
                 this.signalMap?.setSphereSize(this._sphereSize);
             });
         }
@@ -395,9 +416,9 @@ class MeshCoreMonitor {
             const applyState = collapsed => {
                 wrap?.classList.toggle('legend-collapsed', collapsed);
                 btn.textContent = (collapsed ? '▸' : '▾') + ' Legend';
-                try { localStorage.setItem(key, collapsed ? '1' : '0'); } catch (e) { console.warn('localStorage error:', e); }
+                Store.set(key, collapsed);
             };
-            try { applyState(localStorage.getItem(key) === '1'); } catch (e) { console.warn('localStorage error:', e); applyState(false); }
+            applyState(Store.bool(key, false));
             btn.addEventListener('click', () => applyState(!wrap?.classList.contains('legend-collapsed')));
         });
 
@@ -503,11 +524,11 @@ class MeshCoreMonitor {
         const applyRepExpand = expanded => {
             repLogScroll?.classList.toggle('expanded', expanded);
             if (repExpandCb) repExpandCb.checked = expanded;
-            try { localStorage.setItem('repExpand', expanded ? '1' : '0'); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('repExpand', expanded);
         };
         if (repExpandCb) {
             repExpandCb.addEventListener('change', () => applyRepExpand(repExpandCb.checked));
-            try { applyRepExpand(localStorage.getItem('repExpand') === '1'); } catch (e) { console.warn('localStorage error:', e); applyRepExpand(false); }
+            applyRepExpand(Store.bool('repExpand', false));
         }
 
         // Corner notice buttons
@@ -590,13 +611,7 @@ class MeshCoreMonitor {
         if (!canvas) return;
 
         const sourceSel = document.getElementById('mapSourceSelect');
-        const savedSource = (() => {
-            try {
-                const v = localStorage.getItem('mapSource') || '';
-                // Migrate the original single-key 'mapycom' value
-                return v === 'mapycom' ? 'mapycom-basic' : v;
-            } catch (e) { console.warn('localStorage error:', e); return ''; }
-        })();
+        const savedSource = Store.get('mapSource', '');
         if (sourceSel && savedSource) sourceSel.value = savedSource;
 
         try {
@@ -611,9 +626,8 @@ class MeshCoreMonitor {
                 nameForCol:    col => this._contactNameForCol(col),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
-                initialClusterRadius: (() => { try { const v = localStorage.getItem('clusterRadius'); return v != null ? parseFloat(v) : 0; } catch { return 0; } })(),
-                initialHeightMode: 'spires',
-                initialPerspSize: (() => { try { const v = localStorage.getItem('perspSize'); return v === null ? true : v !== 'false'; } catch { return true; } })(),
+                initialClusterRadius: Store.num('clusterRadius', 0),
+                initialPerspSize: Store.bool('perspSize', true),
                 onSelect:      col => {
                     this._selectRepeater(col);
                 },
@@ -660,7 +674,7 @@ class MeshCoreMonitor {
 
         sourceSel?.addEventListener('change', () => {
             this.signalMap.setMapSource(sourceSel.value);
-            try { localStorage.setItem('mapSource', sourceSel.value); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('mapSource', sourceSel.value);
         });
 
         // Settings gear panel
@@ -679,43 +693,33 @@ class MeshCoreMonitor {
 
         const showLinesChk  = document.getElementById('showLinesChk');
         const showMarkerChk = document.getElementById('showMarkerChk');
+        const clusterSel    = document.getElementById('clusterRadiusSelect');
+        const perspSizeChk  = document.getElementById('perspSizeChk');
         showLinesChk?.addEventListener('change', () => {
             this.signalMap?.setShowLines(showLinesChk.checked);
-            try { localStorage.setItem('showLines', showLinesChk.checked); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('showLines', showLinesChk.checked);
         });
         showMarkerChk?.addEventListener('change', () => {
             this.signalMap?.setShowMarker(showMarkerChk.checked);
-            try { localStorage.setItem('showMarker', showMarkerChk.checked); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('showMarker', showMarkerChk.checked);
         });
-        const clusterSel = document.getElementById('clusterRadiusSelect');
         clusterSel?.addEventListener('change', () => {
-            const r = parseFloat(clusterSel.value);
-            this.signalMap?.setClusterRadius(r);
-            try { localStorage.setItem('clusterRadius', clusterSel.value); } catch (e) { console.warn('localStorage error:', e); }
+            this.signalMap?.setClusterRadius(parseFloat(clusterSel.value));
+            Store.set('clusterRadius', clusterSel.value);
         });
-        const perspSizeChk = document.getElementById('perspSizeChk');
         perspSizeChk?.addEventListener('change', () => {
             this.signalMap?.setPerspSize(perspSizeChk.checked);
-            try { localStorage.setItem('perspSize', perspSizeChk.checked); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('perspSize', perspSizeChk.checked);
         });
-        // Restore saved values
-        try {
-            if (localStorage.getItem('showLines') === 'false' && showLinesChk) {
-                showLinesChk.checked = false;
-                this.signalMap?.setShowLines(false);
-            }
-            if (localStorage.getItem('showMarker') === 'false' && showMarkerChk) {
-                showMarkerChk.checked = false;
-                this.signalMap?.setShowMarker(false);
-            }
-            const savedCluster = localStorage.getItem('clusterRadius');
-            if (savedCluster != null && clusterSel) {
-                clusterSel.value = savedCluster;
-                this.signalMap?.setClusterRadius(parseFloat(savedCluster));
-            }
-            const savedPerspSize = localStorage.getItem('perspSize');
-            if (savedPerspSize !== null && perspSizeChk) perspSizeChk.checked = savedPerspSize !== 'false';
-        } catch (e) { console.warn('Failed to restore map settings:', e); }
+
+        // Restore saved values into the controls (the map itself was already
+        // constructed with the same Store-backed defaults above).
+        const showLines = Store.bool('showLines', true);
+        if (showLinesChk)  { showLinesChk.checked  = showLines;  this.signalMap?.setShowLines(showLines); }
+        const showMarker = Store.bool('showMarker', true);
+        if (showMarkerChk) { showMarkerChk.checked = showMarker; this.signalMap?.setShowMarker(showMarker); }
+        if (clusterSel)   clusterSel.value   = String(Store.num('clusterRadius', 0));
+        if (perspSizeChk) perspSizeChk.checked = Store.bool('perspSize', true);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
     }
@@ -1256,8 +1260,7 @@ class MeshCoreMonitor {
     // --- Saved devices (localStorage) ---
 
     getSavedDevices() {
-        try { return JSON.parse(localStorage.getItem('meshcore-devices') || '[]'); }
-        catch { return []; }
+        return Store.json('devices', []);
     }
 
     saveDevice(device) {
@@ -1268,13 +1271,13 @@ class MeshCoreMonitor {
         } else {
             devices.push({ id: device.id, name: device.name || 'Unknown' });
         }
-        localStorage.setItem('meshcore-devices', JSON.stringify(devices));
+        Store.set('devices', JSON.stringify(devices));
         this.renderSavedDevices();
     }
 
     forgetDevice(deviceId) {
         const devices = this.getSavedDevices().filter(d => d.id !== deviceId);
-        localStorage.setItem('meshcore-devices', JSON.stringify(devices));
+        Store.set('devices', JSON.stringify(devices));
         this.renderSavedDevices();
     }
 
@@ -1563,14 +1566,6 @@ class MeshCoreMonitor {
     idSuffix(id, bytes) {
         // IDs are high-byte-first: '5E' is the high byte of '5E9F', so compare from left
         return id.slice(0, bytes * 2).toUpperCase();
-    }
-
-    idsCompatible(id1, id2) {
-        if (id1.includes('/') || id2.includes('/')) return false;
-        if (id1 === 'direct' || id2 === 'direct') return id1 === id2;
-        if (id1 === 'unknown' || id2 === 'unknown') return id1 === id2;
-        const minPrec = Math.min(this.idPrecision(id1), this.idPrecision(id2));
-        return this.idSuffix(id1, minPrec) === this.idSuffix(id2, minPrec);
     }
 
     findOrCreateColumn(rawId) {
@@ -2974,7 +2969,7 @@ class MeshCoreMonitor {
         }
         if (!currentValid) {
             hideSelect.value = 'all';
-            try { localStorage.setItem('hide', 'all'); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('hide', 'all');
             this._applyHideSelect();
         }
     }
@@ -3562,14 +3557,14 @@ class MeshCoreMonitor {
         if (ttlSelect && isFinite(this.HASH_LIFETIME)) {
             ttlSelect.value = 'Infinity';
             this.HASH_LIFETIME = Infinity;
-            try { localStorage.setItem('ttl', 'Infinity'); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('ttl', 'Infinity');
             this._updateHideSelectOptions();
         }
         // Show all imported data regardless of previous display window setting
         const hideSelect = document.getElementById('hideSelect');
         if (hideSelect && hideSelect.value !== 'all') {
             hideSelect.value = 'all';
-            try { localStorage.setItem('hide', 'all'); } catch (e) { console.warn('localStorage error:', e); }
+            Store.set('hide', 'all');
             this._applyHideSelect();
         }
 

@@ -93,7 +93,6 @@ export class Signal3DMap {
         this._showMarker  = opts.showMarker !== false;
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
-        this._heightMode  = opts.initialHeightMode || 'spires';
         this._perspSize   = opts.initialPerspSize !== false; // default on
         // Points / mesh handles — replaced per _repositionAll call
         this._ptsMeshes   = [];     // THREE.Points for spheres (sprite texture), one or more per call
@@ -723,13 +722,6 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
-    setHeightMode(mode) {
-        if (mode === this._heightMode) return;
-        this._heightMode = mode;
-        this._updateHeightScale();
-        this._repositionAll();
-    }
-
     setPerspSize(v) {
         if (!!v === this._perspSize) return;
         this._perspSize = !!v;
@@ -759,10 +751,6 @@ export class Signal3DMap {
         this.lastBboxKey = null;
         this._removeOverlay();
         this._scheduleMapUpdate();
-    }
-
-    availableSources() {
-        return Object.entries(TILE_SOURCES).map(([id, s]) => ({ id, label: s.label }));
     }
 
     // ---- Packet ingestion ----
@@ -832,6 +820,50 @@ export class Signal3DMap {
     _scheduleMapUpdate() {
         clearTimeout(this._mapTimer);
         this._mapTimer = setTimeout(() => this._updateMap(), 500);
+    }
+
+    // Fetch an nx×ny grid of map tiles, stitch them onto a single canvas and
+    // return it as a ready-to-use THREE texture.  Used for both the base map
+    // and the high-zoom detail overlay.  When withAttrib is true the source's
+    // attribution string is painted into the bottom-right corner.
+    async _stitchTiles(sourceId, zoom, x0, y0, nx, ny, withAttrib) {
+        const src = TILE_SOURCES[sourceId];
+        const canvas = document.createElement('canvas');
+        canvas.width  = nx * TILE_PX;
+        canvas.height = ny * TILE_PX;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#dfdfdf';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const tasks = [];
+        for (let dx = 0; dx < nx; dx++) {
+            for (let dy = 0; dy < ny; dy++) {
+                tasks.push(new Promise(res => {
+                    const img = new Image();
+                    img.crossOrigin = 'anonymous';
+                    img.onload  = () => { ctx.drawImage(img, dx * TILE_PX, dy * TILE_PX); res(); };
+                    img.onerror = () => res();
+                    img.src = src.url(zoom, x0 + dx, y0 + dy);
+                }));
+            }
+        }
+        await Promise.all(tasks);
+
+        if (withAttrib) {
+            ctx.font = '11px system-ui, sans-serif';
+            const tw = ctx.measureText(src.attrib).width;
+            ctx.fillStyle = 'rgba(255,255,255,0.75)';
+            ctx.fillRect(canvas.width - tw - 10, canvas.height - 17, tw + 8, 15);
+            ctx.fillStyle = '#333';
+            ctx.fillText(src.attrib, canvas.width - tw - 6, canvas.height - 6);
+        }
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace  = THREE.SRGBColorSpace;
+        texture.minFilter   = THREE.LinearFilter;
+        texture.anisotropy  = this.renderer.capabilities.getMaxAnisotropy();
+        texture.needsUpdate = true;
+        return texture;
     }
 
     _bbox() {
@@ -916,41 +948,7 @@ export class Signal3DMap {
 
         this._mapBusy = true;
         try {
-            const tileCanvas = document.createElement('canvas');
-            tileCanvas.width  = nx * TILE_PX;
-            tileCanvas.height = ny * TILE_PX;
-            const ctx = tileCanvas.getContext('2d');
-            ctx.fillStyle = '#dfdfdf';
-            ctx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
-
-            const src = TILE_SOURCES[sourceId];
-            const tasks = [];
-            for (let dx = 0; dx < nx; dx++) {
-                for (let dy = 0; dy < ny; dy++) {
-                    tasks.push(new Promise(res => {
-                        const img = new Image();
-                        img.crossOrigin = 'anonymous';
-                        img.onload  = () => { ctx.drawImage(img, dx * TILE_PX, dy * TILE_PX); res(); };
-                        img.onerror = () => res();
-                        img.src = src.url(zoom, x0 + dx, y0 + dy);
-                    }));
-                }
-            }
-            await Promise.all(tasks);
-
-            const attrib = src.attrib;
-            ctx.font = '11px system-ui, sans-serif';
-            const tw = ctx.measureText(attrib).width;
-            ctx.fillStyle = 'rgba(255,255,255,0.75)';
-            ctx.fillRect(tileCanvas.width - tw - 10, tileCanvas.height - 17, tw + 8, 15);
-            ctx.fillStyle = '#333';
-            ctx.fillText(attrib, tileCanvas.width - tw - 6, tileCanvas.height - 6);
-
-            const texture = new THREE.CanvasTexture(tileCanvas);
-            texture.colorSpace  = THREE.SRGBColorSpace;
-            texture.minFilter   = THREE.LinearFilter;
-            texture.anisotropy  = this.renderer.capabilities.getMaxAnisotropy();
-            texture.needsUpdate = true;
+            const texture = await this._stitchTiles(sourceId, zoom, x0, y0, nx, ny, true);
 
             const aspect = nx / ny;
             const planeW = aspect >= 1 ? PLANE_SIZE : PLANE_SIZE * aspect;
@@ -1017,18 +1015,11 @@ export class Signal3DMap {
         this._forceFit  = true;
     }
 
+    // Spire height (and dot size) scale linearly with camera distance so the
+    // beads stay legible whether zoomed in or out.
     _updateHeightScale() {
-        if (this._heightMode === 'fixed') {
-            this.pointsGroup.scale.y = 2;
-        } else if (this._heightMode === 'tile') {
-            const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
-            this.pointsGroup.scale.y = Math.pow(ratio, 1.7) * 2;
-        } else {
-            const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
-            this.pointsGroup.scale.y = this._heightMode === 'damped'
-                ? Math.sqrt(ratio) * 2
-                : ratio * 2;
-        }
+        const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
+        this.pointsGroup.scale.y = ratio * 2;
         this._applyDotScale();
     }
 
@@ -1129,27 +1120,7 @@ export class Signal3DMap {
 
         this._overlayBusy = true;
         try {
-            const tileCanvas = document.createElement('canvas');
-            tileCanvas.width  = onx * TILE_PX;
-            tileCanvas.height = ony * TILE_PX;
-            const ctx = tileCanvas.getContext('2d');
-            ctx.fillStyle = '#dfdfdf';
-            ctx.fillRect(0, 0, tileCanvas.width, tileCanvas.height);
-
-            const src = TILE_SOURCES[sourceId];
-            const tasks = [];
-            for (let dx = 0; dx < onx; dx++) {
-                for (let dy = 0; dy < ony; dy++) {
-                    tasks.push(new Promise(res => {
-                        const img = new Image();
-                        img.crossOrigin = 'anonymous';
-                        img.onload  = () => { ctx.drawImage(img, dx * TILE_PX, dy * TILE_PX); res(); };
-                        img.onerror = () => res();
-                        img.src = src.url(overlayZoom, ox0 + dx, oy0 + dy);
-                    }));
-                }
-            }
-            await Promise.all(tasks);
+            const texture = await this._stitchTiles(sourceId, overlayZoom, ox0, oy0, onx, ony, false);
 
             // Position overlay in world space using the current (fixed) base tileBounds
             const nwLL  = tileToLatLon(ox0,     oy0,     overlayZoom);
@@ -1162,12 +1133,6 @@ export class Signal3DMap {
             const oH  = Math.abs(sePos.z - nwPos.z);
             const ocx = (nwPos.x + sePos.x) / 2;
             const ocz = (nwPos.z + sePos.z) / 2;
-
-            const texture = new THREE.CanvasTexture(tileCanvas);
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.minFilter  = THREE.LinearFilter;
-            texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
-            texture.needsUpdate = true;
 
             const geo  = new THREE.PlaneGeometry(oW, oH);
             const mat  = new THREE.MeshBasicMaterial({ map: texture });
@@ -1194,25 +1159,11 @@ export class Signal3DMap {
         this._overlayKey = null;
     }
 
+    // Map SNR linearly to a spire height between MIN_HEIGHT and MAX_HEIGHT.
     _signalToHeight(snr) {
         if (snr == null) return MIN_HEIGHT;
         const t = Math.max(0, Math.min(1, (snr - SNR_BAD) / (SNR_GOOD - SNR_BAD)));
-        const range = MAX_HEIGHT - MIN_HEIGHT;
-        switch (this._heightMode) {
-            case 'log':
-                return MIN_HEIGHT + (Math.log1p(t * 9) / Math.LN10) * range;
-            case 'sqrt':
-                return MIN_HEIGHT + Math.sqrt(t) * range;
-            case 'inverted':
-                return MIN_HEIGHT + (1 - t) * range;
-            case 'steps': {
-                // 4 discrete levels at meaningful SNR thresholds
-                const level = snr >= 5 ? 1.0 : snr >= -5 ? 0.66 : snr >= -12 ? 0.33 : 0.0;
-                return MIN_HEIGHT + level * range;
-            }
-            default:  // 'spires', 'fixed'
-                return MIN_HEIGHT + t * range;
-        }
+        return MIN_HEIGHT + t * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
     _disposeInstanced() {
@@ -1463,14 +1414,4 @@ export class Signal3DMap {
         this.userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
     }
 
-    // ---- Lifecycle ----
-
-    dispose() {
-        if (this.watchId != null) navigator.geolocation.clearWatch(this.watchId);
-        cancelAnimationFrame(this._rafId);
-        window.removeEventListener('resize', this._onResize);
-        this._ro?.disconnect();
-        this._removeOverlay();
-        this.renderer.dispose();
-    }
 }
