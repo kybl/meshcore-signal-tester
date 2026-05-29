@@ -862,13 +862,20 @@ export class Signal3DMap {
         const bb = this._bbox();
         if (!bb) return;
 
-        // Save camera anchor in geographic coords before any tile rebuild so we
-        // can restore it afterwards (tileBounds/planeDim change remaps world space).
-        const savedTargetLL = this.tileBounds
-            ? this._worldToLatLon(this.controls.target.x, this.controls.target.z)
-            : null;
-        const camOffset = this.camera.position.clone().sub(this.controls.target);
-        const oldScale  = this.tileBounds ? this._mapScale() : null;
+        // Save the camera's entire orientation in geography + scale-neutral units
+        // so we can restore it exactly after the world coordinate system is rebuilt.
+        // Both camera eye and look-at target are saved as lat/lon; height is
+        // expressed as a fraction of the current map scale (world units per degree)
+        // so it survives zoom-level changes without an explicit scale factor.
+        let savedCam = null;
+        if (this.tileBounds && this.planeDim) {
+            const sc = this._mapScale();
+            savedCam = {
+                targetLL: this._worldToLatLon(this.controls.target.x,    this.controls.target.z),
+                eyeLL:    this._worldToLatLon(this.camera.position.x,     this.camera.position.z),
+                eyeHFrac: this.camera.position.y / sc,
+            };
+        }
 
         // Only pad when bbox has zero extent (single point) — otherwise the
         // +1 tile margin below already gives plenty of context, and bbox
@@ -879,8 +886,11 @@ export class Signal3DMap {
         if (maxLat === minLat) { minLat -= padLat / 2; maxLat += padLat / 2; }
         if (maxLon === minLon) { minLon -= padLon / 2; maxLon += padLon / 2; }
 
-        // Find highest zoom where data fits within MAX_TILES_AXIS × MAX_TILES_AXIS
-        let zoom = 19;
+        // Start from the current zoom so the world scale never changes unless
+        // the bbox genuinely can't fit within MAX_TILES_AXIS tiles at that level.
+        // Starting from 19 (the old approach) would eagerly drop zoom for any
+        // bbox that the current level can already accommodate.
+        let zoom = this.tileBounds ? this.tileBounds.zoom : 19;
         let tl, br;
         while (zoom > 1) {
             tl = lonLatToTile(minLon, maxLat, zoom);
@@ -975,20 +985,21 @@ export class Signal3DMap {
             this._updateUserMarker();
             this._fitCameraOnce();         // no-op after the first tile load
 
-            // Restore the camera to the same geographic look-at point AND the same
-            // apparent view. _fitCameraOnce handles the very first load; after that
-            // savedTargetLL is always set. Because tileBounds/planeDim change rescales
-            // world space, the camera offset (and height) must be scaled by the
-            // map-scale ratio so the view looks identical instead of zoomed in/out.
-            if (savedTargetLL && oldScale) {
-                const newT = this._latLonToWorld(savedTargetLL.lat, savedTargetLL.lon);
-                if (newT) {
-                    const f = this._mapScale() / oldScale;
-                    this.controls.target.set(newT.x, 0, newT.z);
+            // Restore the camera to the same geographic look-at point and eye
+            // position. Both target and eye are stored as lat/lon so the
+            // authoritative _latLonToWorld conversion handles any zoom/scale
+            // change without a hand-rolled scale factor.  Height is kept as a
+            // fraction of the map scale (world-units-per-degree) which also
+            // survives zoom changes correctly.
+            if (savedCam) {
+                const newTarget = this._latLonToWorld(savedCam.targetLL.lat, savedCam.targetLL.lon);
+                const newEye    = this._latLonToWorld(savedCam.eyeLL.lat,    savedCam.eyeLL.lon);
+                if (newTarget && newEye) {
+                    this.controls.target.set(newTarget.x, 0, newTarget.z);
                     this.camera.position.set(
-                        newT.x + camOffset.x * f,
-                        camOffset.y * f,
-                        newT.z + camOffset.z * f
+                        newEye.x,
+                        savedCam.eyeHFrac * this._mapScale(),
+                        newEye.z
                     );
                     this.controls.update();
                 }
