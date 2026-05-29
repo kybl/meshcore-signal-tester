@@ -93,7 +93,6 @@ export class Signal3DMap {
         this._showMarker  = opts.showMarker !== false;
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
-        this._pendingSelectionFit = false;
         this._heightMode  = opts.initialHeightMode || 'spires';
         this._perspSize   = opts.initialPerspSize !== false; // default on
         // Points / mesh handles — replaced per _repositionAll call
@@ -503,7 +502,6 @@ export class Signal3DMap {
         }
         this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
-        if (newCol) this._pendingSelectionFit = true;
         this._repositionAll();
         this._scheduleMapUpdate();   // re-fit tiles to include the selected repeater
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
@@ -795,7 +793,6 @@ export class Signal3DMap {
             return;
         }
         this._selectedCol = col ?? null;
-        if (col) this._pendingSelectionFit = true;
         this._repositionAll();
         this._scheduleMapUpdate();   // re-fit tiles to include the newly selected repeater
         this._updateInfoPanel();
@@ -833,20 +830,6 @@ export class Signal3DMap {
             if (m.col === col && m.lat != null && m.lon != null)
                 locs.push({ lat: m.lat, lon: m.lon, time: 0, isMarker: true });
         return locs;
-    }
-
-    _panToSelected() {
-        const locs = this._selectedLocs();
-        if (!locs.length) return;
-        // Prefer the marker (the repeater's own position); otherwise the most
-        // recent received packet.
-        const marker = locs.find(l => l.isMarker);
-        const target = marker ||
-            locs.reduce((best, p) => p.time > best.time ? p : best, locs[0]);
-        const wp = this._latLonToWorld(target.lat, target.lon);
-        if (!wp) return;
-        this.controls.target.set(wp.x, 0, wp.z);
-        this.controls.update();
     }
 
     _scheduleMapUpdate() {
@@ -917,10 +900,6 @@ export class Signal3DMap {
         const key = `${sourceId}/${zoom}/${x0}/${y0}/${x1}/${y1}`;
         if (key === this.lastBboxKey) {
             this._updateUserMarker();  // tiles unchanged — just move the user pin
-            if (this._pendingSelectionFit) {
-                this._panToSelected();
-                this._pendingSelectionFit = false;
-            }
             return;
         }
 
@@ -987,10 +966,6 @@ export class Signal3DMap {
             this._updateStaticMarkers();   // reposition markers against the new tile scale
             this._updateUserMarker();
             this._fitCameraOnce();
-            if (this._pendingSelectionFit) {
-                this._panToSelected();
-                this._pendingSelectionFit = false;
-            }
         } finally {
             this._mapBusy = false;
         }
