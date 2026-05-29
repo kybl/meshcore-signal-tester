@@ -1,6 +1,12 @@
-# MeshCore RX Monitor
+# MeshCore Signal Tester
 
 Web application for real-time monitoring of LoRa mesh traffic from a MeshCore companion radio via Bluetooth.
+
+> **Walking with the screen off?** Browsers freeze the page and drop the
+> Bluetooth connection when the screen turns off. For background capture during
+> a walk, build the native Android app in [`android/`](android/README.md) — it
+> wraps this exact web app but handles BLE + GPS natively in a foreground
+> service so capture survives screen-off.
 
 ## Features
 
@@ -37,6 +43,9 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 | `style.css` | Styles |
 | `app.js` | Application logic (Bluetooth, decoding, rendering) |
 | `signal3d.js` | Three.js-based 3D signal map |
+| `native-bridge.js` | No-op on the web; bridges Bluetooth/Geolocation to native code inside the Android app |
+| `vendor/` | Locally bundled JS deps (three.js, MapControls, meshcore-decoder) so the app runs fully offline |
+| `android/` | Native Android wrapper for background (screen-off) capture |
 
 ## Bluetooth protocol
 
