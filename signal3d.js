@@ -4,8 +4,8 @@
 //
 // Two tile sources: Mapy.com (default, requires API key) and OpenStreetMap.
 
-import * as THREE from 'https://esm.sh/three@0.160.0';
-import { MapControls } from 'https://esm.sh/three@0.160.0/examples/jsm/controls/MapControls.js';
+import * as THREE from 'three';
+import { MapControls } from './vendor/controls/MapControls.js';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 12;    // world units for strongest signal

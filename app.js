@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
-import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=80';
+import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
+import { Signal3DMap } from './signal3d.js?v=81';
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
