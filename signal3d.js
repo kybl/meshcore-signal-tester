@@ -979,11 +979,9 @@ export class Signal3DMap {
             this._fitCameraOnce();         // no-op after the first tile load
 
             // Restore the camera to the same geographic look-at point and eye position.
-            // Target and eye are stored as lat/lon so the authoritative _latLonToWorld
-            // handles any zoom/scale change.  Height is restored as absolute world units
-            // (eyeY) — the plane is always PLANE_SIZE world units wide, so this is
-            // scale-invariant and never explodes when zoom drops dramatically.
-            if (savedCam) {
+            // Skipped when fitCamera() was called (e.g. after CSV import) — in that
+            // case _fitCameraOnce() above has already centred the view on the data.
+            if (savedCam && !this._forceFit) {
                 const newTarget = this._latLonToWorld(savedCam.targetLL.lat, savedCam.targetLL.lon);
                 const newEye    = this._latLonToWorld(savedCam.eyeLL.lat,    savedCam.eyeLL.lon);
                 if (newTarget && newEye) {
@@ -995,6 +993,7 @@ export class Signal3DMap {
                     this._updateHeightScale();
                 }
             }
+            this._forceFit = false;
         } finally {
             this._mapBusy = false;
         }
@@ -1009,6 +1008,13 @@ export class Signal3DMap {
         this.controls.update();
         this._cameraFit = true;
         this._updateHeightScale();
+    }
+
+    // Force the camera to fit all current data on the next tile rebuild.
+    // Call after bulk-importing points so the view centres on the imported data.
+    fitCamera() {
+        this._cameraFit = false;
+        this._forceFit  = true;
     }
 
     _updateHeightScale() {

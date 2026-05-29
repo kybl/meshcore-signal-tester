@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=76';
+import { Signal3DMap } from './signal3d.js?v=77';
 
 class MeshCoreMonitor {
     constructor() {
@@ -3632,6 +3632,8 @@ class MeshCoreMonitor {
         }
 
         this.sortColumns();
+        // Move the 3D map camera to show all imported points regardless of current GPS location
+        this.signalMap?.fitCamera?.();
         // Freeze chart at last packet time + 1 min so all imported data is in view
         const lastTime = rows.length ? rows[rows.length - 1].time : 0;
         if (!this._collecting && lastTime) this._chartFrozenAt = lastTime + 1_000;
