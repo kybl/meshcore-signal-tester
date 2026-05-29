@@ -1226,7 +1226,7 @@ export class Signal3DMap {
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-            const dotSize = this._sphereSize * sizeMult * 28;
+            const dotSize = this._sphereSize * sizeMult * 14;
             const isLit = opacity >= 1.0;
             const mat = new THREE.PointsMaterial({
                 map:             tex,
@@ -1284,7 +1284,7 @@ export class Signal3DMap {
             const pos = this._latLonToWorld(p.lat, p.lon);
             if (!pos) { _m4.makeScale(0, 0, 0); this._hitMesh.setMatrixAt(i, _m4); continue; }
             const h  = this._signalToHeight(p.snr);
-            const hr = this._sphereSize * 2 + 1.8;
+            const hr = this._sphereSize + 1.8;
             _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(hr, hr, hr));
             this._hitMesh.setMatrixAt(i, _m4);
         }

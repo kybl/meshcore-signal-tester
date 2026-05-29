@@ -1797,6 +1797,9 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
 }
 .map-setting-toggle input[type="checkbox"] { cursor: pointer; }
 
+.map-settings-panel .size-label,
+.map-settings-panel .size-val { color: #444; }
+
 /* ---- Repeater table selection ---- */
 .rl-id-clickable { cursor: pointer; }
 .rl-id-clickable:hover { text-decoration: underline; }
