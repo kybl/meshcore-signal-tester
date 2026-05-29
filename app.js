@@ -614,6 +614,37 @@ class MeshCoreApp {
         const canvas = document.getElementById('mapCanvas');
         if (!canvas) return;
 
+        // Resize handle — same pattern as chart resize handles
+        const mapContainer = document.querySelector('.map-container');
+        if (mapContainer) {
+            const handle = document.createElement('div');
+            handle.className = 'map-resize-handle';
+            mapContainer.insertAdjacentElement('afterend', handle);
+            let startY = 0, startH = 0;
+            const onMove = e => {
+                const cy = e.touches ? e.touches[0].clientY : e.clientY;
+                mapContainer.style.height = Math.max(200, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
+            };
+            const onUp = () => {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchend', onUp);
+            };
+            handle.addEventListener('mousedown', e => {
+                e.preventDefault();
+                startY = e.clientY; startH = mapContainer.offsetHeight;
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+            handle.addEventListener('touchstart', e => {
+                e.preventDefault();
+                startY = e.touches[0].clientY; startH = mapContainer.offsetHeight;
+                document.addEventListener('touchmove', onMove, { passive: false });
+                document.addEventListener('touchend', onUp);
+            }, { passive: false });
+        }
+
         const sourceSel = document.getElementById('mapSourceSelect');
         const savedSource = Store.get('mapSource', '');
         if (sourceSel && savedSource) sourceSel.value = savedSource;
