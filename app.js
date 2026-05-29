@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=78';
+import { Signal3DMap } from './signal3d.js?v=79';
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -25,6 +25,10 @@ const Store = {
         catch { return fallback; }
     },
 };
+
+// Inner padding (px) of the SVG signal charts: left (y-axis labels), right,
+// top, bottom (x-axis labels). Shared by render, click hit-testing and tooltip.
+const CHART_PAD = { l: 36, r: 8, t: 6, b: 24 };
 
 class MeshCoreMonitor {
     constructor() {
@@ -2393,7 +2397,7 @@ class MeshCoreMonitor {
         const my = e.clientY - rect.top;
         const W = rect.width || 600;
         const H = rect.height || 180;
-        const pl = 36, pr = 8, pt = 6, pb = 24;
+        const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
         const now = this._chartFrozenAt ?? Date.now();
@@ -2450,7 +2454,7 @@ class MeshCoreMonitor {
 
         const W = svg.clientWidth || 600;
         const H = svg.clientHeight || 180;
-        const pl = 36, pr = 8, pt = 6, pb = 24;
+        const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
 
@@ -2732,7 +2736,7 @@ class MeshCoreMonitor {
         const my = e.clientY - rect.top;
         const W = rect.width || 600;
         const H = rect.height || 180;
-        const pl = 36, pr = 8, pt = 6, pb = 24;
+        const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
 

@@ -800,23 +800,6 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
-    // All known locations for the selected repeater — received packets AND
-    // static markers (a contact may have GPS coords but no GPS-located packets).
-    // Markers carry the repeater's true geographic position; packets are placed
-    // at the user's location (where they were received).
-    _selectedLocs() {
-        const col = this._selectedCol;
-        if (!col) return [];
-        const locs = [];
-        for (const p of this.points)
-            if (p.col === col && p.lat != null && p.lon != null)
-                locs.push({ lat: p.lat, lon: p.lon, time: p.time ?? 0, isMarker: false });
-        for (const m of this._staticMarkers)
-            if (m.col === col && m.lat != null && m.lon != null)
-                locs.push({ lat: m.lat, lon: m.lon, time: 0, isMarker: true });
-        return locs;
-    }
-
     _scheduleMapUpdate() {
         clearTimeout(this._mapTimer);
         this._mapTimer = setTimeout(() => this._updateMap(), 500);
@@ -1032,14 +1015,6 @@ export class Signal3DMap {
             if (m.userData.baseDotSize !== undefined)
                 m.material.size = m.userData.baseDotSize * f;
         }
-    }
-
-    // World units per degree (representative). Used to rescale the camera when
-    // the tile zoom changes so the apparent view is preserved across rebuilds.
-    _mapScale() {
-        if (!this.tileBounds || !this.planeDim) return 1;
-        const { nx, zoom } = this.tileBounds;
-        return (this.planeDim.w / nx) * Math.pow(2, zoom);
     }
 
     _latLonToWorld(lat, lon) {
