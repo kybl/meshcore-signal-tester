@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MeshCore Signal Tester</string>
+    <string name="notif_channel_name">Signal capture</string>
+    <string name="notif_title">MeshCore Signal Tester</string>
+    <string name="notif_text">Capturing signal — Bluetooth + GPS active</string>
+</resources>

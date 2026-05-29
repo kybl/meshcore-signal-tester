@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'cz.kyblsoft.meshcore'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "cz.kyblsoft.meshcore"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bundle the web app (repository root) into the APK under assets/www/ so the
+// page loads from file:///android_asset/www/index.html and works fully offline.
+// The web files stay the single source of truth at the repo root; this copies
+// them in at build time.
+// ---------------------------------------------------------------------------
+def webGen = layout.buildDirectory.dir("generated/web").get().asFile
+tasks.register('copyWebApp', Copy) {
+    from(rootProject.file("..")) {
+        include 'index.html'
+        include 'app.js'
+        include 'signal3d.js'
+        include 'style.css'
+        include 'native-bridge.js'
+        include 'vendor/**'
+    }
+    into new File(webGen, "www")
+}
+tasks.named('preBuild').configure { dependsOn 'copyWebApp' }
+android.sourceSets.named('main') {
+    assets.srcDir(webGen)
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    // WebViewAssetLoader: serve bundled assets from a secure https origin
+    // (https://appassets.androidplatform.net) instead of file://, so map
+    // tile servers see a real Origin and WebGL textures load correctly.
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

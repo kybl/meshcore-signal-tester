@@ -1,0 +1,317 @@
+package cz.kyblsoft.meshcore
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.widget.ArrayAdapter
+import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewClientCompat
+import org.json.JSONArray
+import org.json.JSONObject
+
+class MainActivity : AppCompatActivity() {
+
+    lateinit var ble: BleManager
+        private set
+    lateinit var location: LocationHelper
+        private set
+
+    private lateinit var webView: WebView
+    private lateinit var jsApi: JsApi
+
+    private val main = Handler(Looper.getMainLooper())
+
+    // ---- scanning state (one picker at a time) ----
+    private var scanCallback: ScanCallback? = null
+    private var pickerDialog: AlertDialog? = null
+    private var pickerResolved = false
+    private val foundAddrs = ArrayList<String>()
+    private val foundNames = ArrayList<String>()
+
+    private val requestPerms = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        // Whatever was granted, start the foreground service so capture can run
+        // with the screen off, then try to obtain "Allow all the time".
+        maybeRequestBackgroundLocation()
+        MeshcoreService.start(this)
+    }
+
+    private val requestBackgroundLocation = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* user decides in settings; capture still works while screen is on */ }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        webView = WebView(this)
+        setContentView(webView)
+
+        jsApi = JsApi(webView)
+        ble = BleManager(applicationContext, jsApi)
+        location = LocationHelper(applicationContext, jsApi)
+
+        with(webView.settings) {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+            cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+        }
+
+        webView.addJavascriptInterface(BleBridge(this), "AndroidBle")
+        webView.addJavascriptInterface(GeoBridge(this), "AndroidGeo")
+
+        // Serve bundled assets from a secure origin so remote map tiles load
+        // into WebGL correctly (a real Origin header is sent).
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        webView.webViewClient = object : WebViewClientCompat() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                return assetLoader.shouldInterceptRequest(request.url)
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val url = request.url
+                if (url.host == "appassets.androidplatform.net") return false
+                // Open any external link in the system browser.
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, url))
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+        }
+
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(m: ConsoleMessage): Boolean {
+                android.util.Log.d("MeshWeb", "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
+                return true
+            }
+        }
+
+        webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) webView.goBack() else finish()
+            }
+        })
+
+        requestRuntimePermissions()
+    }
+
+    override fun onDestroy() {
+        stopScan()
+        location.stop()
+        MeshcoreService.stop(this)
+        webView.destroy()
+        super.onDestroy()
+    }
+
+    // ---- permissions ----------------------------------------------------
+
+    private fun requestRuntimePermissions() {
+        val needed = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= 31) {
+            needed += Manifest.permission.BLUETOOTH_SCAN
+            needed += Manifest.permission.BLUETOOTH_CONNECT
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            needed += Manifest.permission.POST_NOTIFICATIONS
+        }
+        val missing = needed.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            maybeRequestBackgroundLocation()
+            MeshcoreService.start(this)
+        } else {
+            requestPerms.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun maybeRequestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < 29) return
+        val fineGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val bgGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (fineGranted && !bgGranted) {
+            requestBackgroundLocation.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+    }
+
+    // ---- device picker (called from BleBridge) --------------------------
+
+    fun requestDevice(reqId: String, filtersJson: String) {
+        val prefixes = parsePrefixes(filtersJson)
+        main.post { startScanDialog(reqId, prefixes) }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startScanDialog(reqId: String, prefixes: List<String>) {
+        if (Build.VERSION.SDK_INT >= 31 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            jsApi.resolve(reqId, false, errJson("SecurityError", "Bluetooth scan permission not granted"))
+            return
+        }
+
+        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+        if (adapter == null || !adapter.isEnabled) {
+            Toast.makeText(this, "Please turn on Bluetooth", Toast.LENGTH_LONG).show()
+            jsApi.resolve(reqId, false, errJson("NotFoundError", "Bluetooth is off"))
+            return
+        }
+        val scanner = adapter.bluetoothLeScanner
+        if (scanner == null) {
+            jsApi.resolve(reqId, false, errJson("NotFoundError", "BLE scanner unavailable"))
+            return
+        }
+
+        pickerResolved = false
+        foundAddrs.clear()
+        foundNames.clear()
+
+        val listAdapter = ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, ArrayList())
+
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val name = result.scanRecord?.deviceName
+                    ?: try { result.device.name } catch (e: Exception) { null }
+                    ?: return
+                if (prefixes.isNotEmpty() && prefixes.none { name.startsWith(it, ignoreCase = true) }) return
+                val addr = result.device.address
+                if (foundAddrs.contains(addr)) return
+                foundAddrs.add(addr)
+                foundNames.add(name)
+                main.post {
+                    listAdapter.add("$name\n$addr")
+                    listAdapter.notifyDataSetChanged()
+                }
+            }
+        }
+        scanCallback = callback
+
+        scanner.startScan(
+            null,
+            ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
+            callback
+        )
+        // Stop scanning after 20 s to save battery; the dialog stays open.
+        main.postDelayed({ stopScan() }, 20_000)
+
+        pickerDialog = AlertDialog.Builder(this)
+            .setTitle("Select MeshCore device")
+            .setAdapter(listAdapter) { _, which ->
+                if (which in foundAddrs.indices) {
+                    resolvePicker(reqId, foundAddrs[which], foundNames[which])
+                }
+            }
+            .setNegativeButton("Cancel") { _, _ -> cancelPicker(reqId) }
+            .setOnCancelListener { cancelPicker(reqId) }
+            .create()
+        pickerDialog?.show()
+    }
+
+    private fun resolvePicker(reqId: String, address: String, name: String) {
+        if (pickerResolved) return
+        pickerResolved = true
+        stopScan()
+        saveKnownDevice(address, name)
+        val info = JSONObject().put("id", address).put("name", name)
+        jsApi.resolve(reqId, true, info.toString())
+        pickerDialog?.dismiss()
+        pickerDialog = null
+    }
+
+    private fun cancelPicker(reqId: String) {
+        if (pickerResolved) return
+        pickerResolved = true
+        stopScan()
+        // Matches the web app's expectation: user cancellation = NotFoundError.
+        jsApi.resolve(reqId, false, errJson("NotFoundError", "User cancelled device selection"))
+        pickerDialog = null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopScan() {
+        val cb = scanCallback ?: return
+        scanCallback = null
+        try {
+            val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
+            adapter?.bluetoothLeScanner?.stopScan(cb)
+        } catch (_: Exception) {}
+    }
+
+    // ---- known devices (for one-tap reconnect via getDevices) -----------
+
+    fun getKnownDevices(reqId: String) {
+        jsApi.resolve(reqId, true, loadKnown().toString())
+    }
+
+    private fun prefs() = getSharedPreferences("mc_prefs", Context.MODE_PRIVATE)
+
+    private fun loadKnown(): JSONArray =
+        try { JSONArray(prefs().getString("known", "[]")) } catch (e: Exception) { JSONArray() }
+
+    private fun saveKnownDevice(address: String, name: String) {
+        val arr = loadKnown()
+        for (i in 0 until arr.length()) {
+            if (arr.getJSONObject(i).optString("id") == address) return
+        }
+        arr.put(JSONObject().put("id", address).put("name", name))
+        prefs().edit().putString("known", arr.toString()).apply()
+    }
+
+    // ---- helpers --------------------------------------------------------
+
+    private fun parsePrefixes(filtersJson: String): List<String> {
+        val out = ArrayList<String>()
+        try {
+            val filters = JSONObject(filtersJson).optJSONArray("filters") ?: return out
+            for (i in 0 until filters.length()) {
+                val f = filters.getJSONObject(i)
+                f.optString("namePrefix").takeIf { it.isNotEmpty() }?.let { out.add(it) }
+                f.optString("name").takeIf { it.isNotEmpty() }?.let { out.add(it) }
+            }
+        } catch (_: Exception) {}
+        return out
+    }
+
+    private fun errJson(name: String, message: String): String =
+        JSONObject().put("name", name).put("message", message).toString()
+}
