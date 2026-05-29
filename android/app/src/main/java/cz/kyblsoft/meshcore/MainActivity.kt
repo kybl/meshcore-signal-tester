@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.webkit.ConsoleMessage
+import android.webkit.GeolocationPermissions
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -125,6 +126,17 @@ class MainActivity : AppCompatActivity() {
             override fun onConsoleMessage(m: ConsoleMessage): Boolean {
                 android.util.Log.d("MeshWeb", "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
                 return true
+            }
+
+            // Auto-grant WebView's built-in geolocation permission. This is a
+            // belt-and-suspenders fallback in case the JS-level polyfill that
+            // replaces navigator.geolocation fails for any reason. The real
+            // location work happens in LocationHelper via the native bridge.
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String,
+                callback: GeolocationPermissions.Callback
+            ) {
+                callback.invoke(origin, true, false)
             }
 
             override fun onShowFileChooser(

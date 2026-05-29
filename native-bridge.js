@@ -273,7 +273,10 @@
         var watchers = {};
         var wseq = 0;
 
-        navigator.geolocation = {
+        // Simple assignment fails silently in strict mode when the property is
+        // defined as a getter-only on Navigator.prototype — use defineProperty
+        // to create an own property that shadows the prototype getter.
+        var _geoImpl = {
             watchPosition: function (success, error) {
                 var id = ++wseq;
                 watchers[id] = { s: success, e: error, once: false };
@@ -293,6 +296,14 @@
                 try { window.AndroidGeo.getCurrent(); } catch (e) {}
             }
         };
+        try {
+            Object.defineProperty(navigator, 'geolocation', {
+                configurable: true, enumerable: true,
+                get: function () { return _geoImpl; }
+            });
+        } catch (e) {
+            navigator.geolocation = _geoImpl; // non-strict fallback
+        }
 
         window.__mcGeoUpdate = function (lat, lon, accuracy, ts) {
             var pos = {
@@ -320,28 +331,42 @@
 
         // Report geolocation permission as granted so the map auto-starts
         // watching; the native side handles the real Android permission.
-        if (!navigator.permissions) navigator.permissions = {};
-        var _origQuery = navigator.permissions.query;
-        navigator.permissions.query = function (desc) {
-            if (desc && desc.name === 'geolocation') {
-                return Promise.resolve({
-                    state: 'granted', onchange: null,
-                    addEventListener: function () {}, removeEventListener: function () {}
+        try {
+            var _permsObj = navigator.permissions || {};
+            var _origQuery = _permsObj.query ? _permsObj.query.bind(_permsObj) : null;
+            var _patchedQuery = function (desc) {
+                if (desc && desc.name === 'geolocation') {
+                    return Promise.resolve({
+                        state: 'granted', onchange: null,
+                        addEventListener: function () {}, removeEventListener: function () {}
+                    });
+                }
+                return _origQuery ? _origQuery(desc)
+                                  : Promise.reject(nameErr('TypeError', 'permission not supported'));
+            };
+            if (!navigator.permissions) {
+                Object.defineProperty(navigator, 'permissions', {
+                    configurable: true, enumerable: true,
+                    value: { query: _patchedQuery }
                 });
+            } else {
+                try {
+                    Object.defineProperty(navigator.permissions, 'query', {
+                        configurable: true, writable: true, value: _patchedQuery
+                    });
+                } catch (e) {
+                    navigator.permissions.query = _patchedQuery;
+                }
             }
-            return _origQuery ? _origQuery.call(navigator.permissions, desc)
-                              : Promise.reject(nameErr('TypeError', 'permission not supported'));
-        };
+        } catch (e) {}
     }
 
     // ---- CSV download intercept -----------------------------------------
-    // WebView ignores <a download> clicks on blob: URLs. To intercept them we
-    // must read the blob BEFORE URL.revokeObjectURL is called (which happens
-    // synchronously right after a.click() in app.js). Strategy:
-    //  1. Patch URL.revokeObjectURL to skip revocation for URLs we are fetching.
-    //  2. Add a capture-phase click listener that fires inside a.click(), before
-    //     the revoke call — we mark the URL pending and start the fetch.
-    //  3. After fetch completes we revoke the URL ourselves and save the file.
+    // WebView ignores <a download> clicks on blob: URLs. Patch
+    // HTMLAnchorElement.prototype.click so we intercept the call before
+    // URL.revokeObjectURL runs (which happens synchronously in app.js right
+    // after a.click()). We delay the actual revocation until the fetch
+    // completes, then hand the content to AndroidFiles.saveCsv().
 
     if (typeof window.AndroidFiles !== 'undefined') {
         var _pendingRevoke = new Set();
@@ -352,27 +377,33 @@
             _origRevoke(url);
         };
 
-        document.addEventListener('click', function (e) {
-            var el = e.target;
-            while (el && el.tagName !== 'A') el = el.parentElement;
-            if (!el || !el.hasAttribute('download')) return;
-            var href = el.href || '';
-            var filename = el.getAttribute('download') || 'export.csv';
-            if (!href.startsWith('blob:')) return;
-            e.preventDefault();
-            _pendingRevoke.add(href);
-            fetch(href)
-                .then(function (r) { return r.text(); })
-                .then(function (text) {
-                    _pendingRevoke.delete(href);
-                    _origRevoke(href);
-                    window.AndroidFiles.saveCsv(filename, text);
-                })
-                .catch(function () {
-                    _pendingRevoke.delete(href);
-                    _origRevoke(href);
-                });
-        }, true);
+        // Patch HTMLAnchorElement.prototype.click rather than listening for a
+        // DOM click event. The event-listener approach is unreliable in WebView
+        // because the capture phase may not fire for programmatic .click() on
+        // elements with download attributes. Prototype-patching is synchronous
+        // and guaranteed to run before URL.revokeObjectURL is called.
+        var _origAnchorClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function () {
+            var href = this.href || '';
+            var dl = this.getAttribute('download');
+            if (dl !== null && href.indexOf('blob:') === 0) {
+                var filename = dl || 'export.csv';
+                _pendingRevoke.add(href);
+                fetch(href)
+                    .then(function (r) { return r.text(); })
+                    .then(function (text) {
+                        _pendingRevoke.delete(href);
+                        _origRevoke(href);
+                        window.AndroidFiles.saveCsv(filename, text);
+                    })
+                    .catch(function () {
+                        _pendingRevoke.delete(href);
+                        _origRevoke(href);
+                    });
+                return;
+            }
+            return _origAnchorClick.call(this);
+        };
     }
 
     console.log('[native-bridge] MeshCore native host detected — Bluetooth/Geolocation bridged to Android.');
