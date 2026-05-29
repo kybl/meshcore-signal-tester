@@ -352,7 +352,6 @@ html.light-theme .status.importing {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    white-space: nowrap;
 }
 
 .section-header {
@@ -1803,7 +1802,7 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
     display: flex;
     flex-direction: column;
     gap: 10px;
-    min-width: 200px;
+    min-width: 240px;
     max-width: min(320px, calc(100vw - 24px));
     white-space: normal;
     word-break: break-word;
