@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=81';
+import { Signal3DMap } from './signal3d.js?v=82';
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -1333,6 +1333,7 @@ class MeshCoreApp {
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
                 const milliVolts = payload[1] | (payload[2] << 8);
+                console.log(`[BLE battery] raw bytes: ${Array.from(payload.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ')}  parsed mV: ${milliVolts}`);
                 this._updateBleBatteryVoltage(milliVolts);
             }
             return;

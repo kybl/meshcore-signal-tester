@@ -346,12 +346,15 @@ export class Signal3DMap {
         let resolved = false;
         const failTimer = setTimeout(() => {
             if (!resolved) {
-                this._setStatus('No response from browser — check location permissions or browser shields (e.g. Brave).');
-                if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.classList.remove('hidden'); }
-                navigator.geolocation.clearWatch(this._watchId);
-                this._watchId = null;
+                // Don't clear the watch — GPS may just be slow (cold start takes
+                // 1–2 min). The success callback will fire and hide the button
+                // once a fix arrives. Show a context-appropriate message.
+                const msg = window.__MESHCORE_NATIVE__
+                    ? 'Waiting for GPS fix… (cold start may take 1–2 minutes outdoors)'
+                    : 'No response from browser — check location permissions or browser shields (e.g. Brave).';
+                this._setStatus(msg);
             }
-        }, 10000);
+        }, 30000);
         this._watchId = navigator.geolocation.watchPosition(
             pos => {
                 resolved = true;

@@ -335,23 +335,43 @@
     }
 
     // ---- CSV download intercept -----------------------------------------
-    // WebView silently drops <a download> clicks on blob: URLs; intercept them
-    // and hand the content to the native FilesBridge which saves to Downloads.
+    // WebView ignores <a download> clicks on blob: URLs. To intercept them we
+    // must read the blob BEFORE URL.revokeObjectURL is called (which happens
+    // synchronously right after a.click() in app.js). Strategy:
+    //  1. Patch URL.revokeObjectURL to skip revocation for URLs we are fetching.
+    //  2. Add a capture-phase click listener that fires inside a.click(), before
+    //     the revoke call — we mark the URL pending and start the fetch.
+    //  3. After fetch completes we revoke the URL ourselves and save the file.
 
     if (typeof window.AndroidFiles !== 'undefined') {
+        var _pendingRevoke = new Set();
+        var _origRevoke = URL.revokeObjectURL.bind(URL);
+
+        URL.revokeObjectURL = function (url) {
+            if (_pendingRevoke.has(url)) return; // will be revoked after fetch
+            _origRevoke(url);
+        };
+
         document.addEventListener('click', function (e) {
             var el = e.target;
             while (el && el.tagName !== 'A') el = el.parentElement;
             if (!el || !el.hasAttribute('download')) return;
             var href = el.href || '';
             var filename = el.getAttribute('download') || 'export.csv';
-            if (href.startsWith('blob:')) {
-                e.preventDefault();
-                fetch(href)
-                    .then(function (r) { return r.text(); })
-                    .then(function (text) { window.AndroidFiles.saveCsv(filename, text); })
-                    .catch(function () {});
-            }
+            if (!href.startsWith('blob:')) return;
+            e.preventDefault();
+            _pendingRevoke.add(href);
+            fetch(href)
+                .then(function (r) { return r.text(); })
+                .then(function (text) {
+                    _pendingRevoke.delete(href);
+                    _origRevoke(href);
+                    window.AndroidFiles.saveCsv(filename, text);
+                })
+                .catch(function () {
+                    _pendingRevoke.delete(href);
+                    _origRevoke(href);
+                });
         }, true);
     }
 
