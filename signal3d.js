@@ -818,13 +818,32 @@ export class Signal3DMap {
         this._repositionAll();
     }
 
-    _panToSelected() {
+    // All known locations for the selected repeater — received packets AND
+    // static markers (a contact may have GPS coords but no GPS-located packets).
+    // Markers carry the repeater's true geographic position; packets are placed
+    // at the user's location (where they were received).
+    _selectedLocs() {
         const col = this._selectedCol;
-        if (!col) return;
-        const pts = this.points.filter(p => p.col === col);
-        if (!pts.length) return;
-        const recent = pts.reduce((best, p) => p.time > best.time ? p : best, pts[0]);
-        const wp = this._latLonToWorld(recent.lat, recent.lon);
+        if (!col) return [];
+        const locs = [];
+        for (const p of this.points)
+            if (p.col === col && p.lat != null && p.lon != null)
+                locs.push({ lat: p.lat, lon: p.lon, time: p.time ?? 0, isMarker: false });
+        for (const m of this._staticMarkers)
+            if (m.col === col && m.lat != null && m.lon != null)
+                locs.push({ lat: m.lat, lon: m.lon, time: 0, isMarker: true });
+        return locs;
+    }
+
+    _panToSelected() {
+        const locs = this._selectedLocs();
+        if (!locs.length) return;
+        // Prefer the marker (the repeater's own position); otherwise the most
+        // recent received packet.
+        const marker = locs.find(l => l.isMarker);
+        const target = marker ||
+            locs.reduce((best, p) => p.time > best.time ? p : best, locs[0]);
+        const wp = this._latLonToWorld(target.lat, target.lon);
         if (!wp) return;
         this.controls.target.set(wp.x, 0, wp.z);
         this.controls.update();
@@ -840,11 +859,9 @@ export class Signal3DMap {
         const locs = this.points
             .filter(p => (!cutoff || p.time >= cutoff) && (!this.filterFn || this.filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
-        // Always include the selected repeater's points even if outside the display window or filter
-        if (this._selectedCol) {
-            for (const p of this.points)
-                if (p.col === this._selectedCol) locs.push({ lat: p.lat, lon: p.lon });
-        }
+        // Always include the selected repeater's locations even if outside the
+        // display window or filter — from both packets and static markers.
+        for (const l of this._selectedLocs()) locs.push({ lat: l.lat, lon: l.lon });
         if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
@@ -967,6 +984,7 @@ export class Signal3DMap {
             this._removeOverlay();   // scale changed — overlay must be rebuilt
 
             this._repositionAll();
+            this._updateStaticMarkers();   // reposition markers against the new tile scale
             this._updateUserMarker();
             this._fitCameraOnce();
             if (this._pendingSelectionFit) {
