@@ -17,6 +17,10 @@
     --bg-table-head:  #282838;
     --bg-sig-hover:   #28283e;
     --bg-sig-active:  #32324e;
+    --bg-col-sel:     #2a3060;
+    --bg-row-sel:     #252840;
+    --bg-row-flash:   rgba(70, 80, 200, 0.30);
+    --bg-cell-flash:  rgba(40, 150, 80, 0.30);
     --text-primary:   #d8dcee;
     --text-secondary: #8890b8;
     --text-muted:     #55607a;
@@ -41,6 +45,10 @@ html.light-theme {
     --bg-table-head:  #dde4f0;
     --bg-sig-hover:   #eaeaff;
     --bg-sig-active:  #d8d8ff;
+    --bg-col-sel:     #c8d8f8;
+    --bg-row-sel:     #eef3ff;
+    --bg-row-flash:   #d8dcff;
+    --bg-cell-flash:  #b8f0c8;
     --text-primary:   #0f1a2e;
     --text-secondary: #1e2d40;
     --text-muted:     #3a4a60;
@@ -820,7 +828,7 @@ html.light-theme .status.importing {
 
 /* Row animations */
 @keyframes rowFlash {
-    0%   { background-color: #d8dcff; }
+    0%   { background-color: var(--bg-row-flash); }
     100% { background-color: transparent; }
 }
 
@@ -1440,7 +1448,7 @@ header .help-icon.active {
 }
 
 @keyframes cellFlash {
-    0%   { background-color: #b8f0c8; }
+    0%   { background-color: var(--bg-cell-flash); }
     100% { background-color: transparent; }
 }
 
@@ -1841,13 +1849,13 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
 .rl-id-clickable { cursor: pointer; }
 .rl-id-clickable:hover { text-decoration: underline; }
 
-.rl-row-sel { background: #eef3ff !important; font-weight: 600; }
+.rl-row-sel { background: var(--bg-row-sel) !important; font-weight: 600; }
 .rl-row-dim { opacity: 0.4; }
 
 /* ---- Message table column selection ---- */
 th.msg-col-rep { cursor: pointer; }
-th.msg-col-rep:hover { background: #dde4f0; }
-th.col-sel { background: #c8d8f8 !important; }
+th.msg-col-rep:hover { background: var(--bg-sig-hover); }
+th.col-sel { background: var(--bg-col-sel) !important; }
 th.col-dim { opacity: 0.4; }
 td.col-dim { opacity: 0.25; }
 
