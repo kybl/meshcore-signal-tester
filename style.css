@@ -431,7 +431,7 @@ html.light-theme .status.importing {
     border: none;
     cursor: pointer;
     font-size: 13px;
-    color: rgba(255,255,255,0.5);
+    color: var(--text-muted);
     padding: 0 2px;
     line-height: 1;
     transition: transform 0.2s, color 0.15s;
@@ -439,7 +439,7 @@ html.light-theme .status.importing {
 }
 
 .collapse-btn:hover {
-    color: rgba(255,255,255,0.9);
+    color: var(--text-primary);
 }
 
 .collapse-btn.collapsed {

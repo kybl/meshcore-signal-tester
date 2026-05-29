@@ -498,7 +498,13 @@ export class Signal3DMap {
             const hits = this._raycaster.intersectObject(this._hitMesh);
             if (hits.length > 0) {
                 const c = this._hitPoints[hits[0].instanceId];
-                if (c) { newCol = (this._selectedCol === c.col) ? null : c.col; clickedPt = newCol ? c : null; }
+                if (c) {
+                    // Clicking the exact same bead again deselects. Clicking any
+                    // other bead — even one of the already-selected repeater —
+                    // shows that specific bead's SNR/RSSI in the info panel.
+                    if (this._clickedPoint === c) { newCol = null; clickedPt = null; }
+                    else { newCol = c.col; clickedPt = c; }
+                }
             }
         }
         this._clickedPoint = clickedPt;

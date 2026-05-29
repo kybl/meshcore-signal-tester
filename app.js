@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=82';
+import { Signal3DMap } from './signal3d.js?v=83';
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -3271,8 +3271,13 @@ class MeshCoreApp {
 
         const dur = 0.05 * scale;
         const gap = 0.08 * scale;
-        beep(baseFreq, 0, dur);
-        beep(baseFreq * Math.pow(2, (rssi + 100) / 30), gap, dur);
+        // The two tones run back-to-back over one window: the first tone takes
+        // 1/3 of the time, the second (pitched by RSSI) the remaining 2/3.
+        const total = dur + gap;
+        const d1 = total / 3;
+        const d2 = total * 2 / 3;
+        beep(baseFreq, 0, d1);
+        beep(baseFreq * Math.pow(2, (rssi + 100) / 30), d1, d2);
     }
 
     // --- BLE Device Battery ---
