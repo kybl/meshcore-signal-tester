@@ -1002,6 +1002,11 @@ export class Signal3DMap {
                         newEye.z
                     );
                     this.controls.update();
+                    // _updateHeightScale (called inside _repositionAll above) uses
+                    // controls.getDistance() to compute spire height and ball size.
+                    // Now that the camera is at its correct position, recompute so
+                    // the balls are the same size as before the tile rebuild.
+                    this._updateHeightScale();
                 }
             }
         } finally {

@@ -1,6 +1,6 @@
 // MeshCore RX Monitor Application
 import { MeshCoreDecoder, Utils } from 'https://esm.sh/@michaelhart/meshcore-decoder';
-import { Signal3DMap } from './signal3d.js?v=74';
+import { Signal3DMap } from './signal3d.js?v=75';
 
 class MeshCoreMonitor {
     constructor() {
