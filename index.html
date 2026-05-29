@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
-    <link rel="stylesheet" href="style.css?v=98">
+    <link rel="stylesheet" href="style.css?v=99">
     <script>try{if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme")}catch(e){}</script>
 </head>
 <body>
@@ -93,17 +93,17 @@
                 </div>
             </div>
 
-            <div class="section-wrap" id="signalMapWrap">
+            <div class="section-wrap" id="mapWrap">
                 <div class="section-header">
                     <span class="section-title">Signal 3D map<span class="help-icon" data-help="signal3d">?</span></span>
-                    <button class="collapse-btn" data-target="signalMapBody" title="Toggle section">▾</button>
+                    <button class="collapse-btn" data-target="mapBody" title="Toggle section">▾</button>
                 </div>
-                <div class="section-body" id="signalMapBody">
-                    <div class="signal-map-inner">
-                        <div class="signal-map-controls">
+                <div class="section-body" id="mapBody">
+                    <div class="map-inner">
+                        <div class="map-controls">
                             <button id="enableLocationBtn" class="btn-primary">Enable location</button>
                             <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
-                            <span class="signal-map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
+                            <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
                             <div class="map-settings-wrap">
                                 <button id="mapSettingsBtn" class="map-settings-btn" title="Map settings">⚙</button>
                                 <div id="mapSettingsPanel" class="map-settings-panel hidden">
@@ -139,11 +139,11 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="signal-map-container">
-                            <canvas id="signalMapCanvas" class="signal-map-canvas"></canvas>
-                            <div id="signalMapEmpty" class="signal-map-empty">Allow location and capture some packets to populate the 3D map.</div>
-                            <div id="signalMapInfo" class="signal-map-info hidden"></div>
-                            <button id="signalMapFullscreenBtn" class="signal-map-fullscreen-btn" title="Fullscreen">⛶</button>
+                        <div class="map-container">
+                            <canvas id="mapCanvas" class="map-canvas"></canvas>
+                            <div id="mapEmpty" class="map-empty">Allow location and capture some packets to populate the 3D map.</div>
+                            <div id="mapInfo" class="map-info hidden"></div>
+                            <button id="mapFullscreenBtn" class="map-fullscreen-btn" title="Fullscreen">⛶</button>
                         </div>
                     </div>
                 </div>
@@ -163,8 +163,8 @@
                 </div>
                 <div class="section-body" id="repeaterBody">
                     <div class="section-body-inner">
-                        <div class="repeater-log-scroll" id="repeaterLogScroll">
-                            <table class="repeater-log-table">
+                        <div class="rep-table-scroll" id="repTableScroll">
+                            <table class="rep-table">
                                 <thead><tr>
                                     <th data-sort-key="id">Repeater<span class="help-icon" data-help="repeater">?</span></th>
                                     <th data-sort-key="count">RX</th>
@@ -174,7 +174,7 @@
                                     <th data-sort-key="lastSnr">Last SNR</th>
                                     <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
                                 </tr></thead>
-                                <tbody id="repeaterLogBody"></tbody>
+                                <tbody id="repTableBody"></tbody>
                             </table>
                         </div>
                         <div class="rep-expand-bar">
@@ -257,7 +257,7 @@
     <div id="helpModal" class="help-modal-overlay hidden">
         <div class="help-modal">
             <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
-            <div class="help-modal-title">MeshCore RX Monitor</div>
+            <div class="help-modal-title">MeshCore Signal Tester</div>
             <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Ping</b> button sends a zero-hop self-advertisement so nearby repeaters announce themselves; everything else is passive listening.</p>
 
             <div class="help-section-title">Getting started</div>
@@ -294,6 +294,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=150"></script>
+    <script type="module" src="app.js?v=151"></script>
 </body>
 </html>

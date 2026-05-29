@@ -69,50 +69,50 @@ export class Signal3DMap {
         this.displayId = opts.displayId || (col => col);
         this.nameForCol = opts.nameForCol || null;
 
-        this.points       = [];     // { lat, lon, rssi, snr, col, time }
-        this._staticMarkers     = [];   // { lat, lon, name, color }
-        this._staticMarkerMeshes = [];
-        this.userLoc      = null;
-        this.watchId      = null;
-        this.tileBounds   = null;   // { x0, y0, nx, ny, zoom }
-        this.planeDim     = null;   // { w, h } in world units
-        this.mapMesh      = null;
-        this.userMarker   = null;
-        this.lastBboxKey  = null;
+        this._rxPoints       = [];     // { lat, lon, rssi, snr, col, time }
+        this._pins     = [];   // { lat, lon, name, color }
+        this._pinGroups = [];
+        this._userLoc      = null;
+        this._watchId      = null;
+        this._tileBounds   = null;   // { x0, y0, nx, ny, zoom }
+        this._planeDim     = null;   // { w, h } in world units
+        this._mapMesh      = null;
+        this._userMarker   = null;
+        this._lastMapKey  = null;
         this._cameraFit   = false;
         this._mapBusy     = false;
-        this.overlayMesh  = null;
+        this._overlayMesh  = null;
         this._overlayBusy = false;
         this._overlayKey  = null;
-        this.filterFn     = null;   // col => boolean, or null (show all)
+        this._filterFn     = null;   // col => boolean, or null (show all)
         this._displayCutoff = 0;    // timestamp ms; 0 = no filter
-        this.mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
+        this._mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
             ? opts.initialSource : DEFAULT_SOURCE;
-        this.sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
+        this._sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
         this._showLines   = opts.showLines !== false;
         this._showMarker  = opts.showMarker !== false;
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
         this._perspSize   = opts.initialPerspSize !== false; // default on
-        // Points / mesh handles — replaced per _repositionAll call
-        this._ptsMeshes   = [];     // THREE.Points for spheres (sprite texture), one or more per call
-        this._iMeshHit    = null;   // invisible InstancedMesh for raycasting only
+        // Points / mesh handles — replaced per _rebuildDots call
+        this._dotMeshes   = [];     // THREE.Points for spheres (sprite texture), one or more per call
+        this._hitMesh     = null;   // invisible InstancedMesh for raycasting only
         this._lineSegs    = null;   // vertical lines for lit (selected/all) points
         this._lineSegsDim = null;   // vertical lines for dim (unselected) points
-        this._iHitClusters = [];
+        this._hitPoints = [];
         this._clickedPoint = null;  // the specific point instance last clicked
         // Shared hit-test geometry & sprite textures (created once)
         this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
         this._sphereTex   = this._makeSphereTex();
         this._starTex     = this._makeStarTex();
-        this._sentPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
+        this._outgoingPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
         this.onFilter        = opts.onFilter        || null;
         this.onRemoveMarker  = opts.onRemoveMarker  || null;
         this.onPinMarker     = opts.onPinMarker     || null;
         // Sprite lists for static marker hit-testing
-        this._markerSprites  = [];   // [{sprite, col, pubKeyFullHex, isClose}]
+        this._pinSprites  = [];   // [{sprite, col, pubKeyFullHex, isClose}]
 
         this._initScene();
         this._bindButton();
@@ -245,13 +245,13 @@ export class Signal3DMap {
         // Placeholder floor until tiles arrive
         const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
         const phMat = new THREE.MeshBasicMaterial({ color: 0xdcdcdc });
-        this.mapMesh = new THREE.Mesh(phGeo, phMat);
-        this.mapMesh.rotation.x = -Math.PI / 2;
-        this.scene.add(this.mapMesh);
-        this.planeDim = { w: PLANE_SIZE, h: PLANE_SIZE };
+        this._mapMesh = new THREE.Mesh(phGeo, phMat);
+        this._mapMesh.rotation.x = -Math.PI / 2;
+        this.scene.add(this._mapMesh);
+        this._planeDim = { w: PLANE_SIZE, h: PLANE_SIZE };
 
-        this.pointsGroup = new THREE.Group();
-        this.scene.add(this.pointsGroup);
+        this._rxPointsGroup = new THREE.Group();
+        this.scene.add(this._rxPointsGroup);
 
         this._raycaster = new THREE.Raycaster();
 
@@ -276,7 +276,7 @@ export class Signal3DMap {
             this.infoEl.addEventListener('click', e => {
                 if (e.target.closest('.smi-close')) {
                     this._selectedCol = null;
-                    this._repositionAll();
+                    this._rebuildDots();
                     this._updateInfoPanel();
                     this.onSelect?.(null);
                 } else if (e.target.closest('.smi-filter')) {
@@ -317,7 +317,7 @@ export class Signal3DMap {
             const p = await navigator.permissions.query({ name: 'geolocation' });
             const apply = () => {
                 if (p.state === 'granted') {
-                    if (!this.watchId) this.startWatching();
+                    if (!this._watchId) this.startWatching();
                 } else if (p.state === 'denied') {
                     this._setStatus('Location denied — new packets won\'t be placed on the map. You can still view and rotate existing data.');
                     if (this.btnEl) { this.btnEl.disabled = true; this.btnEl.textContent = 'Location denied'; }
@@ -340,7 +340,7 @@ export class Signal3DMap {
     }
 
     startWatching() {
-        if (!('geolocation' in navigator) || this.watchId != null) return;
+        if (!('geolocation' in navigator) || this._watchId != null) return;
         this._setStatus('Requesting location… (allow in browser if prompted)');
         if (this.btnEl) this.btnEl.disabled = true;
         let resolved = false;
@@ -348,19 +348,19 @@ export class Signal3DMap {
             if (!resolved) {
                 this._setStatus('No response from browser — check location permissions or browser shields (e.g. Brave).');
                 if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.classList.remove('hidden'); }
-                navigator.geolocation.clearWatch(this.watchId);
-                this.watchId = null;
+                navigator.geolocation.clearWatch(this._watchId);
+                this._watchId = null;
             }
         }, 10000);
-        this.watchId = navigator.geolocation.watchPosition(
+        this._watchId = navigator.geolocation.watchPosition(
             pos => {
                 resolved = true;
                 clearTimeout(failTimer);
                 if (this.btnEl) this.btnEl.classList.add('hidden');
                 const { latitude, longitude, accuracy } = pos.coords;
-                this.userLoc = { lat: latitude, lon: longitude, accuracy };
+                this._userLoc = { lat: latitude, lon: longitude, accuracy };
                 this._setStatus(`📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}  (±${Math.round(accuracy)} m)`);
-                if (this.emptyEl && !this.points.length) {
+                if (this.emptyEl && !this._rxPoints.length) {
                     this.emptyEl.textContent = 'Waiting for packets to populate the 3D map.';
                 }
                 this._scheduleMapUpdate();
@@ -371,14 +371,14 @@ export class Signal3DMap {
                 clearTimeout(failTimer);
                 this._setStatus(`Location error: ${err.message}`);
                 if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.classList.remove('hidden'); }
-                this.watchId = null;
+                this._watchId = null;
             },
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
         );
     }
 
     currentLocation() {
-        return this.userLoc;
+        return this._userLoc;
     }
 
     // ---- Filter ----
@@ -389,21 +389,21 @@ export class Signal3DMap {
     // keep the stale col and lose their selection / color sync.
     renameCol(oldCol, newCol) {
         if (oldCol === newCol) return;
-        for (const p of this.points) {
+        for (const p of this._rxPoints) {
             if (p.col === oldCol) p.col = newCol;
         }
         if (this._selectedCol === oldCol) {
             this._selectedCol = newCol;
             this._updateInfoPanel();
         }
-        this._repositionAll();
+        this._rebuildDots();
     }
 
     // For un-merging a previously-promoted column. classifier(rawId) returns
     // a new col to migrate the point to, or null/undefined to leave it.
     splitPoints(oldCol, classifier) {
         let touched = false;
-        for (const p of this.points) {
+        for (const p of this._rxPoints) {
             if (p.col !== oldCol) continue;
             const target = classifier(p.rawId);
             if (target && target !== oldCol) {
@@ -416,24 +416,24 @@ export class Signal3DMap {
                 this._selectedCol = null;
                 this._updateInfoPanel();
             }
-            this._repositionAll();
+            this._rebuildDots();
         }
     }
 
     setFilterFn(fn) {
-        this.filterFn = fn;
+        this._filterFn = fn;
         // If the currently selected repeater is now filtered out, deselect it
         if (this._selectedCol && fn && !fn(this._selectedCol)) {
             this._selectedCol = null;
             this._updateInfoPanel();
             this.onSelect?.(null);
         }
-        this._repositionAll();
+        this._rebuildDots();
     }
 
     setDisplayCutoff(cutoffMs) {
         this._displayCutoff = cutoffMs || 0;
-        this._repositionAll();
+        this._rebuildDots();
         this._scheduleMapUpdate();   // re-fit map to the now-visible bbox
     }
 
@@ -448,8 +448,8 @@ export class Signal3DMap {
         this._raycaster.setFromCamera(mouse, this.camera);
 
         // Check static marker sprites first (emoji icons and labels)
-        if (this._markerSprites.length) {
-            const clickableEntries = this._markerSprites.filter(s => !s.isClose);
+        if (this._pinSprites.length) {
+            const clickableEntries = this._pinSprites.filter(s => !s.isClose);
             const sprites = clickableEntries.map(s => s.sprite);
             const hits = this._raycaster.intersectObjects(sprites);
             if (hits.length > 0) {
@@ -480,7 +480,7 @@ export class Signal3DMap {
                     const newCol = entry.col === this._selectedCol ? null : entry.col;
                     this._clickedPoint = null;
                     this._selectedCol = newCol;
-                    this._repositionAll();
+                    this._rebuildDots();
                     this.onSelect?.(newCol);
                     this._infoPanelFromClick = !!newCol;
                     this._updateInfoPanel();
@@ -491,16 +491,16 @@ export class Signal3DMap {
 
         let newCol = null;
         let clickedPt = null;
-        if (this._iMeshHit) {
-            const hits = this._raycaster.intersectObject(this._iMeshHit);
+        if (this._hitMesh) {
+            const hits = this._raycaster.intersectObject(this._hitMesh);
             if (hits.length > 0) {
-                const c = this._iHitClusters[hits[0].instanceId];
+                const c = this._hitPoints[hits[0].instanceId];
                 if (c) { newCol = (this._selectedCol === c.col) ? null : c.col; clickedPt = newCol ? c : null; }
             }
         }
         this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
-        this._repositionAll();
+        this._rebuildDots();
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
         this._infoPanelFromClick = !!newCol;   // set after the feedback loop so panel stays visible
         this._updateInfoPanel();
@@ -510,7 +510,7 @@ export class Signal3DMap {
         if (!this.infoEl) return;
         const col = this._selectedCol;
         if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
-        const pts = this.points.filter(p => p.col === col);
+        const pts = this._rxPoints.filter(p => p.col === col);
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const color    = this.colorFor(col);
         const dot      = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;flex-shrink:0"></span>`;
@@ -540,14 +540,14 @@ export class Signal3DMap {
     // ---- Static contact markers ----
 
     setStaticMarkers(markers) {
-        this._disposeStaticMarkers();
-        this._staticMarkers = markers || [];
-        if (this._staticMarkers.length && this.emptyEl) this.emptyEl.classList.add('hidden');
-        this._updateStaticMarkers();
+        this._disposePins();
+        this._pins = markers || [];
+        if (this._pins.length && this.emptyEl) this.emptyEl.classList.add('hidden');
+        this._rebuildPins();
     }
 
-    _disposeStaticMarkers() {
-        for (const g of this._staticMarkerMeshes) {
+    _disposePins() {
+        for (const g of this._pinGroups) {
             this.scene.remove(g);
             g.traverse(obj => {
                 obj.geometry?.dispose();
@@ -557,8 +557,8 @@ export class Signal3DMap {
                 }
             });
         }
-        this._staticMarkerMeshes = [];
-        this._markerSprites = [];
+        this._pinGroups = [];
+        this._pinSprites = [];
     }
 
     _makeEmojiSprite(emoji, yPos) {
@@ -654,10 +654,10 @@ export class Signal3DMap {
         return sprite;
     }
 
-    _updateStaticMarkers() {
-        this._disposeStaticMarkers();
-        if (!this._staticMarkers.length || !this.tileBounds) return;
-        for (const m of this._staticMarkers) {
+    _rebuildPins() {
+        this._disposePins();
+        if (!this._pins.length || !this._tileBounds) return;
+        for (const m of this._pins) {
             const pos = this._latLonToWorld(m.lat, m.lon);
             if (!pos) continue;
             const hexColor = m.color || '#ff8800';
@@ -687,26 +687,26 @@ export class Signal3DMap {
             // 📡 emoji sprite — click target for selection
             const emojiSprite = this._makeEmojiSprite('📡', 3.8);
             group.add(emojiSprite);
-            this._markerSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: false });
+            this._pinSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: false });
 
             // Text label sprite — click target; corner region detected by normalized hit coords
             const labelSprite = this._makeMarkerLabel(m.id ?? '', m.name ?? null, hexColor, isPinned);
             group.add(labelSprite);
-            this._markerSprites.push({ sprite: labelSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: true, isPinned });
+            this._pinSprites.push({ sprite: labelSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: true, isPinned });
 
             group.position.set(pos.x, 0, pos.z);
             this.scene.add(group);
-            this._staticMarkerMeshes.push(group);
+            this._pinGroups.push(group);
         }
     }
 
     // ---- Map source ----
 
     clearPoints() {
-        this.points = [];
-        this._sentPts = [];
+        this._rxPoints = [];
+        this._outgoingPts = [];
         this._selectedCol = null;
-        this._disposeInstanced();
+        this._disposeDots();
         this._removeOverlay();
         this._updateInfoPanel();
         this.onSelect?.(null);
@@ -717,15 +717,15 @@ export class Signal3DMap {
     }
 
     setSphereSize(n) {
-        if (n === this.sphereSize) return;
-        this.sphereSize = n;
-        this._repositionAll();
+        if (n === this._sphereSize) return;
+        this._sphereSize = n;
+        this._rebuildDots();
     }
 
     setPerspSize(v) {
         if (!!v === this._perspSize) return;
         this._perspSize = !!v;
-        this._repositionAll();
+        this._rebuildDots();
     }
 
     setShowLines(v) {
@@ -736,19 +736,19 @@ export class Signal3DMap {
 
     setShowMarker(v) {
         this._showMarker = !!v;
-        if (this.userMarker) this.userMarker.visible = this._showMarker;
+        if (this._userMarker) this._userMarker.visible = this._showMarker;
     }
 
     setClusterRadius(r) {
         if (r === this._clusterRadius) return;
         this._clusterRadius = r;
-        this._repositionAll();
+        this._rebuildDots();
     }
 
     setMapSource(source) {
-        if (!TILE_SOURCES[source] || source === this.mapSource) return;
-        this.mapSource = source;
-        this.lastBboxKey = null;
+        if (!TILE_SOURCES[source] || source === this._mapSource) return;
+        this._mapSource = source;
+        this._lastMapKey = null;
         this._removeOverlay();
         this._scheduleMapUpdate();
     }
@@ -757,18 +757,18 @@ export class Signal3DMap {
 
     addPacket(opts) {
         if (opts.lat == null || opts.lon == null || opts.snr == null) return;
-        this.points.push({ ...opts });
+        this._rxPoints.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
         if (opts.col === this._selectedCol) this._updateInfoPanel();
-        this._repositionAll();
+        this._rebuildDots();
         this._scheduleMapUpdate();
     }
 
     addSentSnrPacket(opts) {
         if (opts.lat == null || opts.lon == null || opts.snr == null) return;
-        this._sentPts.push({ ...opts });
+        this._outgoingPts.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
-        this._repositionAll();
+        this._rebuildDots();
     }
 
     // Called by the host app when chart/legend selection changes.
@@ -779,7 +779,7 @@ export class Signal3DMap {
             return;
         }
         this._selectedCol = col ?? null;
-        this._repositionAll();
+        this._rebuildDots();
         this._updateInfoPanel();
     }
 
@@ -787,17 +787,17 @@ export class Signal3DMap {
     // refreshes selection / info panel if the active repeater goes away.
     purgeOlderThan(cutoff) {
         if (!Number.isFinite(cutoff)) return;
-        const before     = this.points.length;
-        const sentBefore = this._sentPts.length;
-        this.points   = this.points.filter(p => p.time >= cutoff);
-        this._sentPts = this._sentPts.filter(p => p.time >= cutoff);
-        if (this.points.length === before && this._sentPts.length === sentBefore) return;
-        if (this._selectedCol && !this.points.some(p => p.col === this._selectedCol)) {
+        const before     = this._rxPoints.length;
+        const sentBefore = this._outgoingPts.length;
+        this._rxPoints   = this._rxPoints.filter(p => p.time >= cutoff);
+        this._outgoingPts = this._outgoingPts.filter(p => p.time >= cutoff);
+        if (this._rxPoints.length === before && this._outgoingPts.length === sentBefore) return;
+        if (this._selectedCol && !this._rxPoints.some(p => p.col === this._selectedCol)) {
             this._selectedCol = null;
             this._updateInfoPanel();
             this.onSelect?.(null);
         }
-        this._repositionAll();
+        this._rebuildDots();
     }
 
     _scheduleMapUpdate() {
@@ -851,10 +851,10 @@ export class Signal3DMap {
 
     _bbox() {
         const cutoff = this._displayCutoff;
-        const locs = this.points
-            .filter(p => (!cutoff || p.time >= cutoff) && (!this.filterFn || this.filterFn(p.col)))
+        const locs = this._rxPoints
+            .filter(p => (!cutoff || p.time >= cutoff) && (!this._filterFn || this._filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
-        if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
+        if (this._userLoc) locs.push({ lat: this._userLoc.lat, lon: this._userLoc.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
         for (const l of locs) {
@@ -877,7 +877,7 @@ export class Signal3DMap {
         // saved as absolute world units — the plane is always PLANE_SIZE wide so
         // camera.y has a consistent meaning regardless of tile zoom level.
         let savedCam = null;
-        if (this.tileBounds && this.planeDim) {
+        if (this._tileBounds && this._planeDim) {
             savedCam = {
                 targetLL: this._worldToLatLon(this.controls.target.x, this.controls.target.z),
                 eyeLL:    this._worldToLatLon(this.camera.position.x,  this.camera.position.z),
@@ -898,7 +898,7 @@ export class Signal3DMap {
         // the bbox genuinely can't fit within MAX_TILES_AXIS tiles at that level.
         // Starting from 19 (the old approach) would eagerly drop zoom for any
         // bbox that the current level can already accommodate.
-        let zoom = this.tileBounds ? this.tileBounds.zoom : 19;
+        let zoom = this._tileBounds ? this._tileBounds.zoom : 19;
         let tl, br;
         while (zoom > 1) {
             tl = lonLatToTile(minLon, maxLat, zoom);
@@ -922,9 +922,9 @@ export class Signal3DMap {
         const nx = x1 - x0 + 1;
         const ny = y1 - y0 + 1;
 
-        const sourceId = this.mapSource;
+        const sourceId = this._mapSource;
         const key = `${sourceId}/${zoom}/${x0}/${y0}/${x1}/${y1}`;
-        if (key === this.lastBboxKey) {
+        if (key === this._lastMapKey) {
             this._updateUserMarker();  // tiles unchanged — just move the user pin
             return;
         }
@@ -937,25 +937,25 @@ export class Signal3DMap {
             const planeW = aspect >= 1 ? PLANE_SIZE : PLANE_SIZE * aspect;
             const planeH = aspect >= 1 ? PLANE_SIZE / aspect : PLANE_SIZE;
 
-            if (this.mapMesh) {
-                this.scene.remove(this.mapMesh);
-                this.mapMesh.geometry.dispose();
-                this.mapMesh.material.map?.dispose?.();
-                this.mapMesh.material.dispose();
+            if (this._mapMesh) {
+                this.scene.remove(this._mapMesh);
+                this._mapMesh.geometry.dispose();
+                this._mapMesh.material.map?.dispose?.();
+                this._mapMesh.material.dispose();
             }
             const geo = new THREE.PlaneGeometry(planeW, planeH);
             const mat = new THREE.MeshBasicMaterial({ map: texture });
-            this.mapMesh = new THREE.Mesh(geo, mat);
-            this.mapMesh.rotation.x = -Math.PI / 2;
-            this.scene.add(this.mapMesh);
+            this._mapMesh = new THREE.Mesh(geo, mat);
+            this._mapMesh.rotation.x = -Math.PI / 2;
+            this.scene.add(this._mapMesh);
 
-            this.tileBounds  = { x0, y0, nx, ny, zoom };
-            this.planeDim    = { w: planeW, h: planeH };
-            this.lastBboxKey = key;
+            this._tileBounds  = { x0, y0, nx, ny, zoom };
+            this._planeDim    = { w: planeW, h: planeH };
+            this._lastMapKey = key;
             this._removeOverlay();   // scale changed — overlay must be rebuilt
 
-            this._repositionAll();
-            this._updateStaticMarkers();   // reposition markers against the new tile scale
+            this._rebuildDots();
+            this._rebuildPins();   // reposition markers against the new tile scale
             this._updateUserMarker();
             this._fitCameraOnce();         // no-op after the first tile load
 
@@ -982,7 +982,7 @@ export class Signal3DMap {
 
     _fitCameraOnce() {
         if (this._cameraFit) return;
-        const { w, h } = this.planeDim;
+        const { w, h } = this._planeDim;
         const r = Math.max(w, h);
         this.camera.position.set(r * 0.4, r * 0.55, r * 0.6);
         this.controls.target.set(0, 0, 0);
@@ -1002,7 +1002,7 @@ export class Signal3DMap {
     // beads stay legible whether zoomed in or out.
     _updateHeightScale() {
         const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
-        this.pointsGroup.scale.y = ratio * 2;
+        this._rxPointsGroup.scale.y = ratio * 2;
         this._applyDotScale();
     }
 
@@ -1010,27 +1010,27 @@ export class Signal3DMap {
     // visibly large even when spires are short.  pow(f, 0.25): scale of 0.1
     // still leaves dots at ~56% size, 0.5 → ~84%.
     _applyDotScale() {
-        const f = Math.pow(Math.max(0.05, this.pointsGroup.scale.y / 2), 0.25);
-        for (const m of this._ptsMeshes) {
+        const f = Math.pow(Math.max(0.05, this._rxPointsGroup.scale.y / 2), 0.25);
+        for (const m of this._dotMeshes) {
             if (m.userData.baseDotSize !== undefined)
                 m.material.size = m.userData.baseDotSize * f;
         }
     }
 
     _latLonToWorld(lat, lon) {
-        if (!this.tileBounds || !this.planeDim) return null;
-        const { x0, y0, nx, ny, zoom } = this.tileBounds;
+        if (!this._tileBounds || !this._planeDim) return null;
+        const { x0, y0, nx, ny, zoom } = this._tileBounds;
         const t  = lonLatToTile(lon, lat, zoom);
         const fx = (t.x - x0) / nx;
         const fy = (t.y - y0) / ny;
-        const { w, h } = this.planeDim;
+        const { w, h } = this._planeDim;
         return new THREE.Vector3((fx - 0.5) * w, 0, (fy - 0.5) * h);
     }
 
     _worldToLatLon(wx, wz) {
-        if (!this.tileBounds || !this.planeDim) return null;
-        const { x0, y0, nx, ny, zoom } = this.tileBounds;
-        const { w, h } = this.planeDim;
+        if (!this._tileBounds || !this._planeDim) return null;
+        const { x0, y0, nx, ny, zoom } = this._tileBounds;
+        const { w, h } = this._planeDim;
         const tx = (wx / w + 0.5) * nx + x0;
         const ty = (wz / h + 0.5) * ny + y0;
         const n = Math.pow(2, zoom);
@@ -1040,15 +1040,15 @@ export class Signal3DMap {
     }
 
     _cameraViewBbox() {
-        if (!this.tileBounds) return null;
+        if (!this._tileBounds) return null;
         const center = this._worldToLatLon(this.controls.target.x, this.controls.target.z);
         if (!center) return null;
         // Target is clamped to y=0 so getDistance() ≈ camera-to-floor distance.
         // Multiply by 1.5 to cover tilted views where visible area extends past the target.
         const r = Math.max(1, this.controls.getDistance()) * Math.tan((this.camera.fov / 2) * Math.PI / 180) * 1.5;
         // Convert radius in world units → lon/lat delta using current tileBounds scale
-        const { nx, ny, zoom } = this.tileBounds;
-        const { w, h } = this.planeDim;
+        const { nx, ny, zoom } = this._tileBounds;
+        const { w, h } = this._planeDim;
         const n = Math.pow(2, zoom);
         const lonDelta = r * nx / (w * n) * 360;
         const latDelta = r * ny / (h * n) * 360;
@@ -1061,7 +1061,7 @@ export class Signal3DMap {
     // ---- Detail overlay (high-zoom tiles when camera is close) ----
 
     async _updateOverlay() {
-        if (!this.tileBounds || this._overlayBusy) return;
+        if (!this._tileBounds || this._overlayBusy) return;
         const camBb = this._cameraViewBbox();
         if (!camBb) { this._removeOverlay(); return; }
 
@@ -1075,7 +1075,7 @@ export class Signal3DMap {
             overlayZoom--;
         }
         // Only show overlay when it offers more detail than the base map
-        if (overlayZoom <= this.tileBounds.zoom) { this._removeOverlay(); return; }
+        if (overlayZoom <= this._tileBounds.zoom) { this._removeOverlay(); return; }
 
         const maxTile = Math.pow(2, overlayZoom) - 1;
         const otx = Math.floor(oBr.x) - Math.floor(oTl.x) + 1;
@@ -1089,7 +1089,7 @@ export class Signal3DMap {
         const onx = ox1 - ox0 + 1;
         const ony = oy1 - oy0 + 1;
 
-        const sourceId = this.mapSource;
+        const sourceId = this._mapSource;
         const key = `ov/${sourceId}/${overlayZoom}/${ox0}/${oy0}/${ox1}/${oy1}`;
         if (key === this._overlayKey) return;
 
@@ -1116,7 +1116,7 @@ export class Signal3DMap {
             mesh.position.set(ocx, 0.02, ocz);   // 0.02 above base to avoid z-fighting
 
             this._removeOverlay();
-            this.overlayMesh = mesh;
+            this._overlayMesh = mesh;
             this.scene.add(mesh);
             this._overlayKey = key;
         } finally {
@@ -1125,12 +1125,12 @@ export class Signal3DMap {
     }
 
     _removeOverlay() {
-        if (!this.overlayMesh) return;
-        this.scene.remove(this.overlayMesh);
-        this.overlayMesh.geometry.dispose();
-        this.overlayMesh.material.map?.dispose();
-        this.overlayMesh.material.dispose();
-        this.overlayMesh = null;
+        if (!this._overlayMesh) return;
+        this.scene.remove(this._overlayMesh);
+        this._overlayMesh.geometry.dispose();
+        this._overlayMesh.material.map?.dispose();
+        this._overlayMesh.material.dispose();
+        this._overlayMesh = null;
         this._overlayKey = null;
     }
 
@@ -1141,29 +1141,29 @@ export class Signal3DMap {
         return MIN_HEIGHT + t * (MAX_HEIGHT - MIN_HEIGHT);
     }
 
-    _disposeInstanced() {
-        for (const obj of [...this._ptsMeshes, this._iMeshHit, this._lineSegs, this._lineSegsDim]) {
+    _disposeDots() {
+        for (const obj of [...this._dotMeshes, this._hitMesh, this._lineSegs, this._lineSegsDim]) {
             if (!obj) continue;
-            this.pointsGroup.remove(obj);
+            this._rxPointsGroup.remove(obj);
             obj.material?.dispose();
-            if (obj !== this._iMeshHit) obj.geometry?.dispose();
+            if (obj !== this._hitMesh) obj.geometry?.dispose();
         }
-        this._ptsMeshes   = [];
-        this._iMeshHit    = null;
+        this._dotMeshes   = [];
+        this._hitMesh    = null;
         this._lineSegs    = null;
         this._lineSegsDim = null;
-        this._iHitClusters = [];
+        this._hitPoints = [];
     }
 
-    _repositionAll() {
-        this._disposeInstanced();
-        if (!this.tileBounds) return;
+    _rebuildDots() {
+        this._disposeDots();
+        if (!this._tileBounds) return;
         this._updateHeightScale();
 
         const sel     = this._selectedCol;
         const cutoff  = this._displayCutoff;
-        let visible = this.points.filter(p =>
-            (!this.filterFn || this.filterFn(p.col)) &&
+        let visible = this._rxPoints.filter(p =>
+            (!this._filterFn || this._filterFn(p.col)) &&
             (!cutoff || p.time >= cutoff)
         );
         if (!visible.length) return;
@@ -1226,7 +1226,7 @@ export class Signal3DMap {
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-            const dotSize = this.sphereSize * sizeMult * 14;
+            const dotSize = this._sphereSize * sizeMult * 28;
             const isLit = opacity >= 1.0;
             const mat = new THREE.PointsMaterial({
                 map:             tex,
@@ -1265,16 +1265,16 @@ export class Signal3DMap {
         const addPoints = (pts, opacity, sizeMult, tex) => {
             if (!pts.length) return;
             const m = makePoints(pts, opacity, sizeMult, tex);
-            this._ptsMeshes.push(m);
-            this.pointsGroup.add(m);
+            this._dotMeshes.push(m);
+            this._rxPointsGroup.add(m);
         };
 
         addPoints(litPts, 1.0,  2.0);
         addPoints(dimPts, 0.07, 2.0);
 
         // Invisible InstancedMesh for raycasting (stays separate from visual rendering)
-        this._iHitClusters = visible;
-        this._iMeshHit = new THREE.InstancedMesh(
+        this._hitPoints = visible;
+        this._hitMesh = new THREE.InstancedMesh(
             this._hitGeo,
             new THREE.MeshBasicMaterial({ visible: false }),
             visible.length
@@ -1282,14 +1282,14 @@ export class Signal3DMap {
         for (let i = 0; i < visible.length; i++) {
             const p   = visible[i];
             const pos = this._latLonToWorld(p.lat, p.lon);
-            if (!pos) { _m4.makeScale(0, 0, 0); this._iMeshHit.setMatrixAt(i, _m4); continue; }
+            if (!pos) { _m4.makeScale(0, 0, 0); this._hitMesh.setMatrixAt(i, _m4); continue; }
             const h  = this._signalToHeight(p.snr);
-            const hr = this.sphereSize + 1.8;
+            const hr = this._sphereSize * 2 + 1.8;
             _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(hr, hr, hr));
-            this._iMeshHit.setMatrixAt(i, _m4);
+            this._hitMesh.setMatrixAt(i, _m4);
         }
-        this._iMeshHit.instanceMatrix.needsUpdate = true;
-        this.pointsGroup.add(this._iMeshHit);
+        this._hitMesh.instanceMatrix.needsUpdate = true;
+        this._rxPointsGroup.add(this._hitMesh);
 
         // Vertical lines — split into lit (coloured) and dim (flat grey, low opacity)
         const makeLines = (pts, mat) => {
@@ -1309,7 +1309,7 @@ export class Signal3DMap {
             const seg = new THREE.LineSegments(geo, mat);
             seg.renderOrder = 1;  // after dim dots (0), before lit balls (2)
             seg.visible = this._showLines;
-            this.pointsGroup.add(seg);
+            this._rxPointsGroup.add(seg);
             return seg;
         };
 
@@ -1320,7 +1320,7 @@ export class Signal3DMap {
             litCol[j]   = _col.r; litCol[j+1] = _col.g; litCol[j+2] = _col.b;
             litCol[j+3] = _col.r; litCol[j+4] = _col.g; litCol[j+5] = _col.b;
         }
-        const lineOpacity = Math.min(1, 0.25 + 0.35 * this.sphereSize);
+        const lineOpacity = Math.min(1, 0.25 + 0.35 * this._sphereSize);
         const litMat = new THREE.LineBasicMaterial({
             vertexColors: true, transparent: true,
             depthWrite: false, depthTest: false, opacity: lineOpacity,
@@ -1336,8 +1336,8 @@ export class Signal3DMap {
 
         // Sent SNR squares — outgoing signal quality (how well the repeater heard us)
         const sentCutoff = this._displayCutoff;
-        const sentAll = this._sentPts.filter(p =>
-            (!this.filterFn || this.filterFn(p.col)) &&
+        const sentAll = this._outgoingPts.filter(p =>
+            (!this._filterFn || this._filterFn(p.col)) &&
             (!sentCutoff || p.time >= sentCutoff)
         );
         const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
@@ -1345,7 +1345,7 @@ export class Signal3DMap {
         addPoints(sentLit, 1.0,  1.6, this._starTex);
         addPoints(sentDim, 0.07, 1.6, this._starTex);
 
-        this._updateStaticMarkers();
+        this._rebuildPins();
         this._applyDotScale();
     }
 
@@ -1357,17 +1357,17 @@ export class Signal3DMap {
             group.scale.setScalar(40 * d * fovFactor / (localH * screenH));
         };
         // Cone local height = 2.8; target 40 CSS pixels tall on screen
-        if (this.userMarker) scaleFor(this.userMarker, 2.8);
-        for (const g of this._staticMarkerMeshes) {
+        if (this._userMarker) scaleFor(this._userMarker, 2.8);
+        for (const g of this._pinGroups) {
             scaleFor(g, 4.0);
         }
     }
 
     _updateUserMarker() {
-        if (!this.userLoc || !this.tileBounds) return;
-        const pos = this._latLonToWorld(this.userLoc.lat, this.userLoc.lon);
+        if (!this._userLoc || !this._tileBounds) return;
+        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
         if (!pos) return;
-        if (!this.userMarker) {
+        if (!this._userMarker) {
             const group = new THREE.Group();
             const cone = new THREE.Mesh(
                 new THREE.ConeGeometry(1, 2.8, 14),
@@ -1382,11 +1382,11 @@ export class Signal3DMap {
             base.rotation.x = -Math.PI / 2;
             base.position.y = 0.05;
             group.add(base);
-            this.userMarker = group;
-            this.userMarker.visible = this._showMarker;
-            this.scene.add(this.userMarker);
+            this._userMarker = group;
+            this._userMarker.visible = this._showMarker;
+            this.scene.add(this._userMarker);
         }
-        this.userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
+        this._userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
     }
 
 }
