@@ -612,7 +612,7 @@ class MeshCoreMonitor {
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
                 initialClusterRadius: (() => { try { const v = localStorage.getItem('clusterRadius'); return v != null ? parseFloat(v) : 0; } catch { return 0; } })(),
-                initialHeightMode: (() => { try { return localStorage.getItem('heightMode') || 'spires'; } catch { return 'spires'; } })(),
+                initialHeightMode: 'spires',
                 initialPerspSize: (() => { try { const v = localStorage.getItem('perspSize'); return v === null ? true : v !== 'false'; } catch { return true; } })(),
                 onSelect:      col => {
                     this._selectRepeater(col);
@@ -693,11 +693,6 @@ class MeshCoreMonitor {
             this.signalMap?.setClusterRadius(r);
             try { localStorage.setItem('clusterRadius', clusterSel.value); } catch (e) { console.warn('localStorage error:', e); }
         });
-        const heightModeSel = document.getElementById('heightModeSelect');
-        heightModeSel?.addEventListener('change', () => {
-            this.signalMap?.setHeightMode(heightModeSel.value);
-            try { localStorage.setItem('heightMode', heightModeSel.value); } catch (e) { console.warn('localStorage error:', e); }
-        });
         const perspSizeChk = document.getElementById('perspSizeChk');
         perspSizeChk?.addEventListener('change', () => {
             this.signalMap?.setPerspSize(perspSizeChk.checked);
@@ -718,8 +713,6 @@ class MeshCoreMonitor {
                 clusterSel.value = savedCluster;
                 this.signalMap?.setClusterRadius(parseFloat(savedCluster));
             }
-            const savedHeightMode = localStorage.getItem('heightMode');
-            if (savedHeightMode && heightModeSel) heightModeSel.value = savedHeightMode;
             const savedPerspSize = localStorage.getItem('perspSize');
             if (savedPerspSize !== null && perspSizeChk) perspSizeChk.checked = savedPerspSize !== 'false';
         } catch (e) { console.warn('Failed to restore map settings:', e); }
