@@ -482,7 +482,6 @@ export class Signal3DMap {
                     this._clickedPoint = null;
                     this._selectedCol = newCol;
                     this._repositionAll();
-                    this._scheduleMapUpdate();   // re-fit tiles to include the selected repeater
                     this.onSelect?.(newCol);
                     this._infoPanelFromClick = !!newCol;
                     this._updateInfoPanel();
@@ -503,7 +502,6 @@ export class Signal3DMap {
         this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
         this._repositionAll();
-        this._scheduleMapUpdate();   // re-fit tiles to include the selected repeater
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
         this._infoPanelFromClick = !!newCol;   // set after the feedback loop so panel stays visible
         this._updateInfoPanel();
@@ -794,7 +792,6 @@ export class Signal3DMap {
         }
         this._selectedCol = col ?? null;
         this._repositionAll();
-        this._scheduleMapUpdate();   // re-fit tiles to include the newly selected repeater
         this._updateInfoPanel();
     }
 
@@ -842,9 +839,6 @@ export class Signal3DMap {
         const locs = this.points
             .filter(p => (!cutoff || p.time >= cutoff) && (!this.filterFn || this.filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
-        // Always include the selected repeater's locations even if outside the
-        // display window or filter — from both packets and static markers.
-        for (const l of this._selectedLocs()) locs.push({ lat: l.lat, lon: l.lon });
         if (this.userLoc) locs.push({ lat: this.userLoc.lat, lon: this.userLoc.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
@@ -862,18 +856,17 @@ export class Signal3DMap {
         const bb = this._bbox();
         if (!bb) return;
 
-        // Save the camera's entire orientation in geography + scale-neutral units
+        // Save the camera's entire orientation in geography + absolute-height units
         // so we can restore it exactly after the world coordinate system is rebuilt.
         // Both camera eye and look-at target are saved as lat/lon; height is
-        // expressed as a fraction of the current map scale (world units per degree)
-        // so it survives zoom-level changes without an explicit scale factor.
+        // saved as absolute world units — the plane is always PLANE_SIZE wide so
+        // camera.y has a consistent meaning regardless of tile zoom level.
         let savedCam = null;
         if (this.tileBounds && this.planeDim) {
-            const sc = this._mapScale();
             savedCam = {
-                targetLL: this._worldToLatLon(this.controls.target.x,    this.controls.target.z),
-                eyeLL:    this._worldToLatLon(this.camera.position.x,     this.camera.position.z),
-                eyeHFrac: this.camera.position.y / sc,
+                targetLL: this._worldToLatLon(this.controls.target.x, this.controls.target.z),
+                eyeLL:    this._worldToLatLon(this.camera.position.x,  this.camera.position.z),
+                eyeY:     this.camera.position.y,
             };
         }
 
@@ -985,27 +978,20 @@ export class Signal3DMap {
             this._updateUserMarker();
             this._fitCameraOnce();         // no-op after the first tile load
 
-            // Restore the camera to the same geographic look-at point and eye
-            // position. Both target and eye are stored as lat/lon so the
-            // authoritative _latLonToWorld conversion handles any zoom/scale
-            // change without a hand-rolled scale factor.  Height is kept as a
-            // fraction of the map scale (world-units-per-degree) which also
-            // survives zoom changes correctly.
+            // Restore the camera to the same geographic look-at point and eye position.
+            // Target and eye are stored as lat/lon so the authoritative _latLonToWorld
+            // handles any zoom/scale change.  Height is restored as absolute world units
+            // (eyeY) — the plane is always PLANE_SIZE world units wide, so this is
+            // scale-invariant and never explodes when zoom drops dramatically.
             if (savedCam) {
                 const newTarget = this._latLonToWorld(savedCam.targetLL.lat, savedCam.targetLL.lon);
                 const newEye    = this._latLonToWorld(savedCam.eyeLL.lat,    savedCam.eyeLL.lon);
                 if (newTarget && newEye) {
                     this.controls.target.set(newTarget.x, 0, newTarget.z);
-                    this.camera.position.set(
-                        newEye.x,
-                        savedCam.eyeHFrac * this._mapScale(),
-                        newEye.z
-                    );
+                    this.camera.position.set(newEye.x, savedCam.eyeY, newEye.z);
                     this.controls.update();
-                    // _updateHeightScale (called inside _repositionAll above) uses
-                    // controls.getDistance() to compute spire height and ball size.
-                    // Now that the camera is at its correct position, recompute so
-                    // the balls are the same size as before the tile rebuild.
+                    // Recompute with the now-correct camera distance so ball sizes
+                    // match what they were before the tile rebuild.
                     this._updateHeightScale();
                 }
             }
