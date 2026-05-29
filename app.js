@@ -1061,21 +1061,8 @@ class MeshCoreApp {
         await new Promise(r => setTimeout(r, 300));
         await this.sendGetContacts();
 
-        // Try to read BLE device battery (standard Battery Service 0x180F)
-        if (this.device && server) {
-            try {
-                const battSvc  = await server.getPrimaryService('0000180f-0000-1000-8000-00805f9b34fb');
-                const battChar = await battSvc.getCharacteristic('00002a19-0000-1000-8000-00805f9b34fb');
-                const val = await battChar.readValue();
-                this._updateBleBattery(val.getUint8(0));
-                try {
-                    this._onBatteryChanged = e => this._updateBleBattery(e.target.value.getUint8(0));
-                    await battChar.startNotifications();
-                    battChar.addEventListener('characteristicvaluechanged', this._onBatteryChanged);
-                    this._batteryCharacteristic = battChar;
-                } catch (e) { /* notifications not supported — one-shot read is enough */ }
-            } catch (e) { /* device does not expose Battery Service */ }
-        }
+        // Battery is read from MeshCore opcode 0x0c (voltage in mV) — more
+        // accurate than the BLE Battery Service which some devices report as 100%.
 
         this.saveDevice(device);
 
