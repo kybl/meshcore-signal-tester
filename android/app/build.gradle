@@ -29,6 +29,12 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "meshcore-signal-tester-${variant.buildType.name}.apk"
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

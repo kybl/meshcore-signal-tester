@@ -334,5 +334,26 @@
         };
     }
 
+    // ---- CSV download intercept -----------------------------------------
+    // WebView silently drops <a download> clicks on blob: URLs; intercept them
+    // and hand the content to the native FilesBridge which saves to Downloads.
+
+    if (typeof window.AndroidFiles !== 'undefined') {
+        document.addEventListener('click', function (e) {
+            var el = e.target;
+            while (el && el.tagName !== 'A') el = el.parentElement;
+            if (!el || !el.hasAttribute('download')) return;
+            var href = el.href || '';
+            var filename = el.getAttribute('download') || 'export.csv';
+            if (href.startsWith('blob:')) {
+                e.preventDefault();
+                fetch(href)
+                    .then(function (r) { return r.text(); })
+                    .then(function (text) { window.AndroidFiles.saveCsv(filename, text); })
+                    .catch(function () {});
+            }
+        }, true);
+    }
+
     console.log('[native-bridge] MeshCore native host detected — Bluetooth/Geolocation bridged to Android.');
 })();

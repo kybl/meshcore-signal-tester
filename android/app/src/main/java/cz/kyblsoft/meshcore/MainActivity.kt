@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.webkit.ConsoleMessage
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -63,6 +64,16 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* user decides in settings; capture still works while screen is on */ }
 
+    // File picker for CSV import — result wired to the pending WebView callback
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private val openFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        val cb = fileChooserCallback
+        fileChooserCallback = null
+        cb?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -84,6 +95,7 @@ class MainActivity : AppCompatActivity() {
 
         webView.addJavascriptInterface(BleBridge(this), "AndroidBle")
         webView.addJavascriptInterface(GeoBridge(this), "AndroidGeo")
+        webView.addJavascriptInterface(FilesBridge(applicationContext), "AndroidFiles")
 
         // Serve bundled assets from a secure origin so remote map tiles load
         // into WebGL correctly (a real Origin header is sent).
@@ -112,6 +124,18 @@ class MainActivity : AppCompatActivity() {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(m: ConsoleMessage): Boolean {
                 android.util.Log.d("MeshWeb", "${m.message()} (${m.sourceId()}:${m.lineNumber()})")
+                return true
+            }
+
+            override fun onShowFileChooser(
+                webView: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean {
+                // Cancel any previous pending callback to avoid leaking it.
+                fileChooserCallback?.onReceiveValue(null)
+                fileChooserCallback = filePathCallback
+                openFileLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/*"))
                 return true
             }
         }
