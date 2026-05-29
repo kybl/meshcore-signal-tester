@@ -868,6 +868,7 @@ export class Signal3DMap {
             ? this._worldToLatLon(this.controls.target.x, this.controls.target.z)
             : null;
         const camOffset = this.camera.position.clone().sub(this.controls.target);
+        const oldScale  = this.tileBounds ? this._mapScale() : null;
 
         // Only pad when bbox has zero extent (single point) — otherwise the
         // +1 tile margin below already gives plenty of context, and bbox
@@ -974,17 +975,20 @@ export class Signal3DMap {
             this._updateUserMarker();
             this._fitCameraOnce();         // no-op after the first tile load
 
-            // Restore the camera to the same geographic look-at point.
-            // _fitCameraOnce handles the very first load; after that savedTargetLL
-            // is always set and we use it to counteract the world-coord remap.
-            if (savedTargetLL) {
+            // Restore the camera to the same geographic look-at point AND the same
+            // apparent view. _fitCameraOnce handles the very first load; after that
+            // savedTargetLL is always set. Because tileBounds/planeDim change rescales
+            // world space, the camera offset (and height) must be scaled by the
+            // map-scale ratio so the view looks identical instead of zoomed in/out.
+            if (savedTargetLL && oldScale) {
                 const newT = this._latLonToWorld(savedTargetLL.lat, savedTargetLL.lon);
                 if (newT) {
+                    const f = this._mapScale() / oldScale;
                     this.controls.target.set(newT.x, 0, newT.z);
                     this.camera.position.set(
-                        newT.x + camOffset.x,
-                        this.camera.position.y,
-                        newT.z + camOffset.z
+                        newT.x + camOffset.x * f,
+                        camOffset.y * f,
+                        newT.z + camOffset.z * f
                     );
                     this.controls.update();
                 }
@@ -1029,6 +1033,14 @@ export class Signal3DMap {
             if (m.userData.baseDotSize !== undefined)
                 m.material.size = m.userData.baseDotSize * f;
         }
+    }
+
+    // World units per degree (representative). Used to rescale the camera when
+    // the tile zoom changes so the apparent view is preserved across rebuilds.
+    _mapScale() {
+        if (!this.tileBounds || !this.planeDim) return 1;
+        const { nx, zoom } = this.tileBounds;
+        return (this.planeDim.w / nx) * Math.pow(2, zoom);
     }
 
     _latLonToWorld(lat, lon) {
