@@ -498,8 +498,11 @@ html.light-theme .status.importing {
     color: var(--text-secondary);
     font-weight: 600;
     text-align: left;
-    padding: 5px 10px;
+    padding: 5px 6px;
     border-bottom: 1px solid var(--border);
+}
+.rep-table th:first-child {
+    padding-left: 4px;
 }
 
 .rep-table th[data-sort-key] {
@@ -517,9 +520,12 @@ html.light-theme .status.importing {
 .rep-table th.sort-desc::after { content: ' ↓'; }
 
 .rep-table td {
-    padding: 4px 10px;
+    padding: 4px 6px;
     border-bottom: 1px solid var(--border-light);
     color: var(--text-primary);
+}
+.rep-table td:first-child {
+    padding-left: 4px;
 }
 
 .rep-table tr:last-child td {
@@ -1717,7 +1723,7 @@ html.light-theme .btn-show-all-repeaters:hover {
 .smi-colname {
     font-size: 11px;
     font-weight: normal;
-    color: #7ab;
+    color: #8cc;
     margin-left: 5px;
 }
 
@@ -1939,13 +1945,13 @@ td.col-dim { opacity: 0.25; }
 .corner-notice-name {
     font-size: 12px;
     font-weight: 600;
-    color: #7ab;
+    color: #8cc;
     margin: 2px 0 4px;
 }
 .corner-notice-name-inline {
     font-size: 11px;
     font-weight: 600;
-    color: #7ab;
+    color: #8cc;
     margin-left: 4px;
 }
 .corner-notice-extra {
@@ -2017,6 +2023,13 @@ html.light-theme .cn-map-btn {
 html.light-theme .cn-map-btn:hover { background: #d0eaf8; border-color: #80b8d8; }
 html.light-theme .cn-map-btn-active { background: #c8e8c8; border-color: #80b880; color: #206020; }
 html.light-theme .cn-map-btn-active:hover { background: #b8ddb8; }
+
+html.light-theme .smi-colname,
+html.light-theme .corner-notice-name,
+html.light-theme .corner-notice-name-inline,
+html.light-theme .rl-name,
+html.light-theme .col-contact-name,
+html.light-theme .contacts-loading { color: #1a6080; }
 .corner-notice-btns {
     display: flex;
     gap: 6px;
@@ -2045,7 +2058,7 @@ html.light-theme .cn-map-btn-active:hover { background: #b8ddb8; }
 .rl-name {
     display: block;
     font-size: 10px;
-    color: #7ab;
+    color: #8cc;
     font-weight: normal;
     white-space: nowrap;
     overflow: hidden;
@@ -2055,7 +2068,7 @@ html.light-theme .cn-map-btn-active:hover { background: #b8ddb8; }
 .col-contact-name {
     font-size: 9px;
     font-weight: normal;
-    color: #7ab;
+    color: #8cc;
     display: block;
     text-align: center;
     white-space: nowrap;
@@ -2070,7 +2083,7 @@ html.light-theme .cn-map-btn-active:hover { background: #b8ddb8; }
 }
 .contacts-loading {
     font-size: 11px;
-    color: #7ab;
+    color: #8cc;
     font-style: italic;
     margin-left: 12px;
 }
@@ -2082,12 +2095,15 @@ html.light-theme .cn-map-btn-active:hover { background: #b8ddb8; }
 }
 .ping-hint {
     font-size: 12px;
-    color: #888;
+    color: #aab;
+}
+html.light-theme .ping-hint {
+    color: #444;
 }
 .theme-toggle-btn {
-    background: rgba(0,0,0,0.35);
-    border: 1px solid rgba(255,255,255,0.25);
-    color: #c8d8f0;
+    background: rgba(255,255,255,0.90);
+    border: 1px solid rgba(255,255,255,0.5);
+    color: #333;
     border-radius: 5px;
     padding: 2px 8px;
     font-size: 13px;
@@ -2095,6 +2111,14 @@ html.light-theme .cn-map-btn-active:hover { background: #b8ddb8; }
     line-height: 1.6;
 }
 .theme-toggle-btn:hover {
+    background: #fff;
+}
+html.light-theme .theme-toggle-btn {
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(0,0,0,0.25);
+    color: #f0f0f0;
+}
+html.light-theme .theme-toggle-btn:hover {
     background: rgba(0,0,0,0.55);
     color: #fff;
 }

@@ -29,7 +29,7 @@
             <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
             <span id="batteryStatus" class="battery-status hidden"></span>
             <div id="savedDevices" class="saved-devices hidden"></div>
-            <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀︎</button>
+            <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀️</button>
         </div>
             <div class="header-row header-row-tools">
                 <button id="exportCsvBtn" class="btn-pause" title="Export visible packets as CSV" disabled>Export CSV</button>
@@ -60,6 +60,13 @@
                 <p>Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.</p>
             </div>
 
+            <div class="rep-filter-bar" id="repFilterBar">
+                    <label class="rep-filter-label" for="repFilter">Filter repeaters</label>
+                    <input type="text" id="repFilter" class="rep-filter-input" autocomplete="off" spellcheck="false">
+                    <span class="help-icon" data-help="rep-filter">?</span>
+                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
+                    <span id="repFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
+                </div>
             <div class="ping-bar" id="discoverBar">
                 <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ 4× — nearby nodes reply with both uplink and downlink SNR (firmware ≥ v1.10)">Discover nodes</button>
                 <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and both SNR directions.</span>
@@ -163,13 +170,6 @@
             </div>
 
             <div class="section-wrap" id="repeaterWrap">
-                <div class="rep-filter-bar" id="repFilterBar">
-                    <label class="rep-filter-label" for="repFilter">Filter repeaters</label>
-                    <input type="text" id="repFilter" class="rep-filter-input" autocomplete="off" spellcheck="false">
-                    <span class="help-icon" data-help="rep-filter">?</span>
-                    <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
-                    <span id="repFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
-                </div>
                 <div class="section-header">
                     <span class="section-title">Seen repeaters</span>
                     <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
@@ -181,9 +181,9 @@
                                 <thead><tr>
                                     <th data-sort-key="id">Repeater<span class="help-icon" data-help="repeater">?</span></th>
                                     <th data-sort-key="count">RX</th>
-                                    <th data-sort-key="maxSnr">Max SNR<span class="help-icon" data-help="snr">?</span></th>
+                                    <th data-sort-key="maxSnr">Max SNR</th>
                                     <th data-sort-key="lastSnr">Last SNR</th>
-                                    <th data-sort-key="maxRssi">Max RSSI<span class="help-icon" data-help="rssi">?</span></th>
+                                    <th data-sort-key="maxRssi">Max RSSI</th>
                                     <th data-sort-key="lastRssi">Last RSSI</th>
                                     <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
                                 </tr></thead>

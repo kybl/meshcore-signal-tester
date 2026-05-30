@@ -385,7 +385,7 @@ class MeshCoreApp {
         if (themeBtn) {
             const applyTheme = light => {
                 document.documentElement.classList.toggle('light-theme', light);
-                themeBtn.textContent = light ? '🌙' : '☀︎';
+                themeBtn.textContent = light ? '🌙' : '☀️';
             };
             let isLight = Store.get('theme') === 'light';
             applyTheme(isLight);
@@ -837,7 +837,7 @@ class MeshCoreApp {
             'display':
                 'How far back to look when displaying data. Does not delete anything — data outside this window is still stored and continues to influence repeater ID merging and collision detection. "All" shows the full storage window. Can only be set equal to or shorter than Auto-remove.',
             'keepscreen':
-                'In a browser, this is necessary to keep collection running — if the screen turns off, the browser suspends JavaScript and stops capturing. In the Android app, collection runs in a background service so the screen can be off without losing data — unless the system\'s battery optimization is active and kills the service. Setting is remembered across sessions.',
+                'In a browser — especially a mobile browser — this is necessary to keep collection running: when the screen turns off, the browser suspends JavaScript and stops capturing. In the Android app, collection runs in a background service so the screen can be off without losing data — unless the system\'s battery optimization is active and kills the service. Setting is remembered across sessions.',
             'repeater':
                 '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Click a row to select that repeater — dims others in all views (charts, Received packets, 3D map); click again to deselect. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'rssi':
