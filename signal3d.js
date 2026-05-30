@@ -288,6 +288,13 @@ export class Signal3DMap {
 
         const tick = () => {
             this.controls.update();
+            if (this._perspSize) {
+                const camDist = this.controls.getDistance();
+                for (const m of this._dotMeshes) {
+                    const u = m.material.userData?.uRefDistUniform;
+                    if (u) u.value = camDist;
+                }
+            }
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
             this._rafId = requestAnimationFrame(tick);
@@ -1264,15 +1271,21 @@ export class Signal3DMap {
             // Dampened perspective: gl_PointSize = size * (refDist / -mvz)^0.5
             // Standard perspective would use exponent 1.0; 0.5 halves the visual
             // size difference between near and far dots in log space.
+            // uRefDist is updated every frame to controls.getDistance() so that
+            // the reference distance tracks the camera rather than being a fixed
+            // constant — otherwise high-scaled dots float closer to the camera
+            // than the target and appear enormous.
             if (this._perspSize) {
+                const uRefDist = { value: this.controls.getDistance() };
                 mat.onBeforeCompile = shader => {
-                    shader.uniforms.uRefDist = { value: CAMERA_REF_DIST };
+                    shader.uniforms.uRefDist = uRefDist;
                     shader.vertexShader = shader.vertexShader
                         .replace('#include <common>',
                                  '#include <common>\nuniform float uRefDist;')
                         .replace('gl_PointSize = size;',
                                  'gl_PointSize = size * pow(uRefDist / max(0.5, -mvPosition.z), 0.5);');
                 };
+                mat.userData.uRefDistUniform = uRefDist;
             }
             const mesh = new THREE.Points(geo, mat);
             // Render order: lit dots (renderOrder 2) paint over lines (renderOrder 1)
