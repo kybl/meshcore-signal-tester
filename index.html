@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=106">
+    <link rel="stylesheet" href="style.css?v=107">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -304,6 +304,13 @@
                 <li>Each additional sibling is added to the combined label (e.g. <code>1111/1122/1133</code>). The combined column always represents packets whose exact origin is uncertain among those nodes.</li>
                 <li>If a more-precise ID later arrives for one of the siblings, its part of the label is updated too (e.g. <code>1234/1289</code> → <code>123456/1289</code>).</li>
             </ul>
+
+            <div class="help-section-title">Android app</div>
+            <p>A native Android wrapper is available for field use. It packages this web app into an APK so it works fully offline — no browser needed. The main benefit for field work is the <b>Keep screen on</b> option: when enabled, the screen stays lit while collecting data, which is useful for signal mapping on the move. The screen lock is released automatically when the app goes to the background.</p>
+            <p>Source code and APK releases: <a href="https://github.com/kybl/meshcore-signal-tester" target="_blank" rel="noopener">github.com/kybl/meshcore-signal-tester</a></p>
+
+            <div class="help-section-title">About</div>
+            <p>MeshCore Signal Tester was created by <a href="https://alesjanda.cz" target="_blank" rel="noopener">Aleš Janda</a>.</p>
         </div>
     </div>
 

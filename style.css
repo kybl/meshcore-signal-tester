@@ -1337,6 +1337,13 @@ header .help-icon.active {
     margin-bottom: 6px;
 }
 
+.help-modal a {
+    color: #1565C0;
+    text-decoration: none;
+}
+.help-modal a:hover { text-decoration: underline; }
+.dark .help-modal a { color: #60a5fa; }
+
 /* ── Filter bar & export ────────────────────────────── */
 
 .msg-filter-bar {
