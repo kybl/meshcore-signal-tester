@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v167');
+console.log('[MeshWeb] app.js loaded, v168');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -2441,8 +2441,10 @@ class MeshCoreApp {
         let tMin;
         if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
         else {
-            tMin = incomingPts.length ? this._earliestTime(incomingPts) : Infinity;
-            if (sentPts.length) tMin = Math.min(tMin, this._earliestTime(sentPts));
+            const allIn  = type === 'snr' ? this._visibleChartPoints()  : incomingPts;
+            const allOut = type === 'snr' ? this._visibleSentSnrPts()   : [];
+            tMin = allIn.length  ? this._earliestTime(allIn)  : Infinity;
+            if (allOut.length) tMin = Math.min(tMin, this._earliestTime(allOut));
             if (!isFinite(tMin)) tMin = now - 5 * 60000;
         }
         const { yMin, yMax } = this._chartYBounds(type);
@@ -2485,9 +2487,13 @@ class MeshCoreApp {
         if (!svg) return;
         wrap?.classList.remove('hidden');
 
-        const pts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
-        const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
-        const hasData = pts.length > 0 || sentPts.length > 0;
+        const allInPts  = this._visibleChartPoints();
+        const allOutPts = type === 'snr' ? this._visibleSentSnrPts() : [];
+        const pts       = (type === 'snr' && !this._snrShowIncoming) ? [] : allInPts;
+        const sentPts   = type === 'snr' ? (this._snrShowOutgoing ? allOutPts : []) : [];
+        const hasData    = pts.length > 0 || sentPts.length > 0;
+        const hasAnyData = allInPts.length > 0 || allOutPts.length > 0;
+        const noneSelected = type === 'snr' && !this._snrShowIncoming && !this._snrShowOutgoing;
 
         const W = svg.clientWidth || 600;
         const H = svg.clientHeight || 180;
@@ -2498,15 +2504,16 @@ class MeshCoreApp {
         const now = this._chartFrozenAt ?? Date.now();
         const defaultWindow = 5 * 60000;
         let tMin;
-        if (!hasData) tMin = now - defaultWindow;
+        if (!hasAnyData) tMin = now - defaultWindow;
         else if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
         else {
-            tMin = pts.length ? this._earliestTime(pts) : Infinity;
-            if (sentPts.length) tMin = Math.min(tMin, this._earliestTime(sentPts));
+            tMin = allInPts.length ? this._earliestTime(allInPts) : Infinity;
+            if (allOutPts.length) tMin = Math.min(tMin, this._earliestTime(allOutPts));
+            if (!isFinite(tMin)) tMin = now - defaultWindow;
         }
 
         let yMin, yMax, yStep;
-        if (!hasData) {
+        if (!hasAnyData) {
             if (type === 'rssi') { yMin = -130; yMax = -30; yStep = 20; }
             else                 { yMin = -20;  yMax = 15;  yStep = 5;  }
         } else {
@@ -2667,7 +2674,8 @@ class MeshCoreApp {
         }
 
         if (!hasData) {
-            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">Waiting for data…</text>`);
+            const msg = noneSelected ? 'Select Incoming or Outgoing above' : 'Waiting for data…';
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">${msg}</text>`);
         }
 
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -2781,8 +2789,10 @@ class MeshCoreApp {
         let tMin;
         if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
         else {
-            tMin = incomingPts.length ? this._earliestTime(incomingPts) : Infinity;
-            if (sentPts.length) tMin = Math.min(tMin, this._earliestTime(sentPts));
+            const allIn  = type === 'snr' ? this._visibleChartPoints()  : incomingPts;
+            const allOut = type === 'snr' ? this._visibleSentSnrPts()   : [];
+            tMin = allIn.length  ? this._earliestTime(allIn)  : Infinity;
+            if (allOut.length) tMin = Math.min(tMin, this._earliestTime(allOut));
             if (!isFinite(tMin)) tMin = now - 5 * 60000;
         }
         const { yMin, yMax } = this._chartYBounds(type);
