@@ -822,7 +822,7 @@ class MeshCoreApp {
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':
-                'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "5E9F1234" and vice versa. Affects Seen Repeaters, charts, Received Packets, and the 3D map. A notice appears top-right while a filter is active.',
+                'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "5E" matches "3E2F1234" and vice versa. Affects Seen Repeaters, charts, Received Packets, and the 3D map. A notice appears top-right while a filter is active.',
             'messages':
                 'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then last RSSI, last SNR, total RX count, then alphabetically.',
             'msg-type':
