@@ -831,7 +831,7 @@ class MeshCoreApp {
             'signal3d':
                 'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. Use ⚙ (top right) to change map source, dot size, guide lines, and the location marker. Navigation: drag to pan · scroll/pinch to zoom · right-drag to tilt/rotate.',
             'discover':
-                'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it repeatedly — one round every few minutes is plenty. The button sends 4 probes automatically and stops.',
+                'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
         };
 
         const tipEl = document.getElementById('helpTip');
@@ -1223,8 +1223,7 @@ class MeshCoreApp {
         if (this.contactsHstat) this.contactsHstat.style.display = this._contacts.size > 0 ? '' : 'none';
     }
 
-    // Send DISCOVER_REQ 4 times with 500 ms gaps — LoRa is lossy, repeating improves coverage.
-    // All retries share the same tag so every response is correlated correctly.
+    // Send one DISCOVER_REQ, then wait 2 s to collect responses before re-enabling the button.
     async startDiscoverSequence(filterMask) {
         const btn = document.getElementById('discoverBtn');
         if (!this.bleRxCharacteristic) {
