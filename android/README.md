@@ -62,3 +62,9 @@ notification confirms the capture service is alive.
 ## Package
 
 `cz.kyblsoft.meshcore`
+
+## Author
+
+Created by **Aleš Janda** — feedback, bug reports, and questions welcome at [ales.janda@kyblsoft.cz](mailto:ales.janda@kyblsoft.cz).
+
+Source code: [github.com/kybl/meshcore-signal-tester](https://github.com/kybl/meshcore-signal-tester)
