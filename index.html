@@ -41,7 +41,8 @@
                 <label class="ttl-header-label">Auto-remove<select id="ttlSelect" class="ttl-header-select"><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="600">10 min</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">1 h</option><option value="Infinity" selected>Never</option></select><span class="help-icon" data-help="ttl">?</span></label>
                 <button id="clearDataBtn" class="btn-clear-data-header" title="Delete all captured data">Clear data</button>
                 <label class="ttl-header-label">Display<select id="hideSelect" class="ttl-header-select"><option value="all">All</option><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="600">10 min</option><option value="900" selected>15 min</option><option value="1800">30 min</option><option value="3600">1 h</option></select><span class="help-icon" data-help="display">?</span></label>
-                <label class="sound-toggle"><input type="checkbox" id="keepScreenChk" checked> Keep screen on</label>
+                <label class="sound-toggle" title="Keeps the display lit while collecting. Not needed for capture — collection keeps running with the screen off — just a convenience for watching packets arrive live.">
+                    <input type="checkbox" id="keepScreenChk" checked> Keep screen on</label>
             </div>
             <div class="header-stats-row">
                 <div class="header-stats">
