@@ -97,6 +97,7 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(BleBridge(this), "AndroidBle")
         webView.addJavascriptInterface(GeoBridge(this), "AndroidGeo")
         webView.addJavascriptInterface(FilesBridge(applicationContext), "AndroidFiles")
+        webView.addJavascriptInterface(ScreenBridge(this), "AndroidScreen")
 
         // Serve bundled assets from a secure origin so remote map tiles load
         // into WebGL correctly (a real Origin header is sent).

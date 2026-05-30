@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v159');
+console.log('[MeshWeb] app.js loaded, v161');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -70,6 +70,7 @@ class MeshCoreApp {
         this._msgFilter = '';
         this._repFilterTerms = [];
         this._collecting = false;
+        this._keepScreenOn = Store.bool('keepScreenOn', true);
         this._unsavedRxCount = 0; // packets received since last CSV export
         this._chartFrozenAt = Date.now();
 
@@ -98,7 +99,7 @@ class MeshCoreApp {
     }
 
     _syncWakeLock() {
-        if (this._collecting) this.acquireWakeLock();
+        if (this._collecting && this._keepScreenOn) this.acquireWakeLock();
         else this.releaseWakeLock();
     }
 
@@ -349,6 +350,17 @@ class MeshCoreApp {
         this.soundSelect?.addEventListener('change', () => {
             Store.set('sound', this.soundSelect.value);
         });
+
+        // Keep screen on
+        const keepScreenChk = document.getElementById('keepScreenChk');
+        if (keepScreenChk) {
+            keepScreenChk.checked = this._keepScreenOn;
+            keepScreenChk.addEventListener('change', () => {
+                this._keepScreenOn = keepScreenChk.checked;
+                Store.set('keepScreenOn', keepScreenChk.checked);
+                this._syncWakeLock();
+            });
+        }
 
         // UI scale
         const uiScaleSelect = document.getElementById('uiScaleSelect');
@@ -3307,15 +3319,18 @@ class MeshCoreApp {
     // --- Wake Lock ---
 
     async acquireWakeLock() {
-        if (!('wakeLock' in navigator)) return;
-        try {
-            this.wakeLock = await navigator.wakeLock.request('screen');
-            this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
-        } catch (e) { /* denied — battery saver etc. */ }
+        if ('wakeLock' in navigator) {
+            try {
+                this.wakeLock = await navigator.wakeLock.request('screen');
+                this.wakeLock.addEventListener('release', () => { this.wakeLock = null; });
+            } catch (e) { /* denied — battery saver etc. */ }
+        }
+        window.AndroidScreen?.keepOn?.(true);
     }
 
     releaseWakeLock() {
         if (this.wakeLock) { this.wakeLock.release(); this.wakeLock = null; }
+        window.AndroidScreen?.keepOn?.(false);
     }
 
     // --- Stats & status ---
