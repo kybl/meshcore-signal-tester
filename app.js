@@ -836,6 +836,8 @@ class MeshCoreApp {
                 'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import).',
             'display':
                 'How far back to look when displaying data. Does not delete anything — data outside this window is still stored and continues to influence repeater ID merging and collision detection. "All" shows the full storage window. Can only be set equal to or shorter than Auto-remove.',
+            'keepscreen':
+                'Keeps the display lit while collecting. Not required for capture — in the Android app, collection keeps running with the screen off via a background service. This is just a convenience for watching packets arrive live (e.g. while walking). In a plain browser tab, the screen turning off may suspend collection.',
             'repeater':
                 '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Click a row to select that repeater — dims others in all views (charts, Received packets, 3D map); click again to deselect. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'rssi':
