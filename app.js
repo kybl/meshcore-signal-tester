@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v164');
+console.log('[MeshWeb] app.js loaded, v165');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -3272,7 +3272,7 @@ class MeshCoreApp {
         const ctx = this.audioCtx;
         if (ctx.state === 'suspended') ctx.resume();
         const now = ctx.currentTime;
-        const baseFreq = 880;
+        const baseFreq = 700;
         const scale = mode === 'long' ? 4 : mode === 'medium' ? 2 : 1;
 
         const beep = (freq, start, dur) => {
