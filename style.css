@@ -124,6 +124,13 @@ header {
     margin-top: 4px;
 }
 
+.app-logo {
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+    flex-shrink: 0;
+}
+
 .app-title {
     font-size: 15px;
     font-weight: 700;

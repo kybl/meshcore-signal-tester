@@ -51,6 +51,7 @@ tasks.register('copyWebApp', Copy) {
         include 'signal3d.js'
         include 'style.css'
         include 'native-bridge.js'
+        include 'logo.svg'
         include 'vendor/**'
     }
     into new File(webGen, "www")
