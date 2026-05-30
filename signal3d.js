@@ -197,6 +197,7 @@ export class Signal3DMap {
         this.controls.addEventListener('change', () => {
             this.controls.target.y = 0;
             this._updateHeightScale();
+            this._updatePerspUniforms();
         });
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
@@ -288,13 +289,6 @@ export class Signal3DMap {
 
         const tick = () => {
             this.controls.update();
-            if (this._perspSize) {
-                const camDist = this.controls.getDistance();
-                for (const m of this._dotMeshes) {
-                    const u = m.material.userData?.uRefDistUniform;
-                    if (u) u.value = camDist;
-                }
-            }
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
             this._rafId = requestAnimationFrame(tick);
@@ -1044,6 +1038,15 @@ export class Signal3DMap {
         this._applyDotScale();
     }
 
+    _updatePerspUniforms() {
+        if (!this._perspSize) return;
+        const camDist = this.controls.getDistance();
+        for (const m of this._dotMeshes) {
+            const u = m.material.userData.uRefDistUniform;
+            if (u) u.value = camDist;
+        }
+    }
+
     _latLonToWorld(lat, lon) {
         if (!this._tileBounds || !this._planeDim) return null;
         const { x0, y0, nx, ny, zoom } = this._tileBounds;
@@ -1380,6 +1383,7 @@ export class Signal3DMap {
 
         this._rebuildPins();
         this._applyDotScale();
+        this._updatePerspUniforms();
     }
 
     _scaleMarkerToScreen() {

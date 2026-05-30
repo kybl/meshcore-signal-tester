@@ -1069,7 +1069,7 @@ html.light-theme .status.importing {
 .battery-status {
     font-size: 12px;
     font-weight: 700;
-    color: #333;
+    color: var(--text-primary);
     white-space: nowrap;
 }
 
