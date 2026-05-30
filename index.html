@@ -306,8 +306,12 @@
             </ul>
 
             <div class="help-section-title">Android app</div>
-            <p>A native Android wrapper is available for field use. It packages this web app into an APK so it works fully offline — no browser needed. The main benefit for field work is the <b>Keep screen on</b> option: when enabled, the screen stays lit while collecting data, which is useful for signal mapping on the move. The screen lock is released automatically when the app goes to the background.</p>
+            <p>A native Android wrapper is available for field use. It packages this web app into an APK so it works fully offline — no browser needed. The Bluetooth and GPS work runs in a native foreground service, so <b>data collection keeps going with the screen off or the app in the background</b> — you can drop the phone in your pocket and keep mapping signal as you move. A plain browser tab would suspend and stop collecting once the screen turns off, which is exactly what this avoids.</p>
+            <p>The <b>Keep screen on</b> toggle is a separate convenience for when you do want the display to stay lit — e.g. to watch packets arrive live while walking. It only affects the screen, not collection.</p>
             <p>Source code and APK releases: <a href="https://github.com/kybl/meshcore-signal-tester" target="_blank" rel="noopener">github.com/kybl/meshcore-signal-tester</a></p>
+
+            <div class="help-section-title">Why no iOS app?</div>
+            <p>This is a hobby project, and the author doesn't own any iOS device to build or test on — sorry. An iOS version is technically possible but would require a separate native rewrite of the Bluetooth layer (iOS has no Web Bluetooth and suspends background JavaScript), so it isn't planned. On iPhone/iPad you can still open this page in a browser, but Bluetooth won't work there — iOS browsers don't support Web Bluetooth at all.</p>
 
             <div class="help-section-title">About</div>
             <p>MeshCore Signal Tester was created by <a href="https://alesjanda.cz" target="_blank" rel="noopener">Aleš Janda</a>.</p>
