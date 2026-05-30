@@ -111,7 +111,7 @@
             },
             _dispatch: function (type, ev) {
                 (listeners[type] || []).slice().forEach(function (cb) {
-                    try { cb.call(ch, ev); } catch (e) { console.error(e); }
+                    try { cb.call(ch, ev); } catch (_) {}
                 });
             },
             writeValueWithoutResponse: function (data) {
@@ -187,7 +187,7 @@
             },
             _dispatch: function (type, ev) {
                 (deviceListeners[type] || []).slice().forEach(function (cb) {
-                    try { cb.call(device, ev); } catch (e) { console.error(e); }
+                    try { cb.call(device, ev); } catch (_) {}
                 });
             }
         };
@@ -315,7 +315,7 @@
             };
             Object.keys(watchers).forEach(function (k) {
                 var w = watchers[k];
-                try { w.s && w.s(pos); } catch (e) { console.error(e); }
+                try { w.s && w.s(pos); } catch (_) {}
                 if (w.once) delete watchers[k];
             });
         };
@@ -324,7 +324,7 @@
             var err = { code: code, message: message, PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 };
             Object.keys(watchers).forEach(function (k) {
                 var w = watchers[k];
-                try { w.e && w.e(err); } catch (e) { console.error(e); }
+                try { w.e && w.e(err); } catch (_) {}
                 if (w.once) delete watchers[k];
             });
         };
@@ -406,5 +406,4 @@
         };
     }
 
-    console.log('[native-bridge] MeshCore native host detected — Bluetooth/Geolocation bridged to Android.');
 })();

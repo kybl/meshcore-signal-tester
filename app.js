@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v170');
+
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -298,7 +298,7 @@ class MeshCoreApp {
         document.getElementById('savedDevices')?.addEventListener('click', e => {
             const quickBtn = e.target.closest('.saved-btn');
             const forgetBtn = e.target.closest('.forget-btn');
-            if (quickBtn) this.quickConnect(quickBtn.dataset.id).catch(e => console.error('Quick connect failed:', e));
+            if (quickBtn) this.quickConnect(quickBtn.dataset.id).catch(() => {});
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
@@ -330,7 +330,7 @@ class MeshCoreApp {
             this._clearAllData();
         });
 
-        document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(e => console.error('Discover failed:', e)));
+        document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(() => {}));
 
         this.soundSelect?.addEventListener('change', () => {
             Store.set('sound', this.soundSelect.value);
@@ -464,7 +464,7 @@ class MeshCoreApp {
         document.getElementById('importCsvBtn')?.addEventListener('click', () => importCsvInput?.click());
         importCsvInput?.addEventListener('change', () => {
             const file = importCsvInput.files?.[0];
-            if (file) { this._importCsv(file).catch(e => console.error('CSV import failed:', e)); importCsvInput.value = ''; }
+            if (file) { this._importCsv(file).catch(() => {}); importCsvInput.value = ''; }
         });
 
         const fsBtn = document.getElementById('mapFullscreenBtn');
@@ -681,8 +681,7 @@ class MeshCoreApp {
                     }
                 },
             });
-        } catch (err) {
-            console.error('Signal3DMap init failed:', err);
+        } catch (_) {
             this.signalMap = null;
             document.getElementById('mapWrap')?.classList.add('map-offline');
             const emptyEl = document.getElementById('mapEmpty');
@@ -932,7 +931,6 @@ class MeshCoreApp {
             await this.connectToDevice(device);
         } catch (error) {
             if (error.name !== 'NotFoundError') {
-                console.error('Bluetooth error:', error);
                 alert('Connection error: ' + error.message);
             }
             if (this.device) this.onDisconnected();
@@ -947,15 +945,13 @@ class MeshCoreApp {
             try {
                 const devices = await navigator.bluetooth.getDevices();
                 device = devices.find(d => d.id === deviceId);
-            } catch (e) {
-                console.warn('getDevices failed:', e);
+            } catch (_) {
             }
             if (device) {
                 try {
                     await this.connectToDevice(device);
                 } catch (error) {
                     if (error.name !== 'NotFoundError') {
-                        console.error('Quick connect error:', error);
                         alert('Connection error: ' + error.message);
                     }
                     if (this.device) this.onDisconnected();
@@ -984,7 +980,6 @@ class MeshCoreApp {
             await this.connectToDevice(device);
         } catch (error) {
             if (error.name !== 'NotFoundError') {
-                console.error('Quick connect error:', error);
                 alert('Connection error: ' + error.message);
             }
             if (this.device) this.onDisconnected();
@@ -1097,10 +1092,7 @@ class MeshCoreApp {
             new DataView(cmd.buffer).setUint32(1, this._contactsLastmod, true);
         this._setContactsLoading(true);
         try { await this.bleRxCharacteristic.writeValueWithoutResponse(cmd); }
-        catch (e) {
-            console.error('sendGetContacts:', e);
-            this._setContactsLoading(false);
-        }
+        catch (_) { this._setContactsLoading(false); }
     }
 
     _setContactsLoading(on) {
@@ -1262,9 +1254,7 @@ class MeshCoreApp {
         this._discoverTags.set(tag, Date.now());
         try {
             await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
-        } catch (e) {
-            console.error('sendDiscoverRequest:', e);
-        }
+        } catch (_) {}
     }
 
     // --- Saved devices (localStorage) ---
@@ -1317,16 +1307,10 @@ class MeshCoreApp {
 
     handlePayload(payload) {
         const pushCode = payload[0];
-        if (!this._seenOpcodes) this._seenOpcodes = new Set();
-        if (!this._seenOpcodes.has(pushCode)) {
-            this._seenOpcodes.add(pushCode);
-            console.log(`[BLE opcode] first 0x${pushCode.toString(16).padStart(2,'0')} len=${payload.length} bytes=[${Array.from(payload.slice(0,6)).map(b=>b.toString(16).padStart(2,'0')).join(' ')}]`);
-        }
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
                 const milliVolts = payload[1] | (payload[2] << 8);
-                console.log(`[BLE battery] raw bytes: ${Array.from(payload.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ')}  parsed mV: ${milliVolts}`);
                 this._updateBleBatteryVoltage(milliVolts);
             }
             return;
@@ -1334,7 +1318,6 @@ class MeshCoreApp {
 
         // Contact list responses (from CMD_GET_CONTACTS = 0x04)
         if (pushCode === 0x02) {
-            console.log(`contacts: start, count=${payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24)}`);
             this._contactsReceiving = true;
             return;
         }
@@ -1347,7 +1330,6 @@ class MeshCoreApp {
             this._setContactsLoading(false);
             if (payload.length >= 5)
                 this._contactsLastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
-            console.log(`contacts: done, total=${this._contacts.size}, lastmod=${this._contactsLastmod}`);
             this._updateContactsCount();
             this._lastColKey = null; // force column header redraw with names
             this._renderMsgTable();
@@ -1390,9 +1372,7 @@ class MeshCoreApp {
             const rawHex = this._bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
             if (packet.isValid) this._processPacket(packet, rawHex, snr, rssi);
-        } catch (e) {
-            console.error('Decode error:', e);
-        }
+        } catch (_) {}
     }
 
     _handleAdvertPush(_payload) {
@@ -3603,7 +3583,7 @@ class MeshCoreApp {
                         meta.pathItemBytes = decoded.pathHashSize ?? fi?.length / 2 ?? 0;
                         meta.totalBytes    = decoded.totalBytes;
                     }
-                } catch (e) { console.warn('Hex decode failed for row:', row.rawHex?.slice(0, 20), e.message); }
+                } catch (_) {}
             }
             if (!meta.text   && row.csvText)   meta.text   = row.csvText;
             if (!meta.sender && row.csvSender)  meta.sender = row.csvSender;
@@ -3694,7 +3674,7 @@ class MeshCoreApp {
 
         // stopNotifications BEFORE gatt.disconnect() so Chrome fully releases the notify pipe
         if (txChar) {
-            try { await txChar.stopNotifications(); } catch (e) { console.warn('stopNotifications:', e); }
+            try { await txChar.stopNotifications(); } catch (_) {}
         }
 
         if (device?.gatt) {
@@ -3705,7 +3685,7 @@ class MeshCoreApp {
                 try {
                     if (device.gatt.connected) device.gatt.disconnect();
                     else { clearTimeout(t); device.removeEventListener('gattserverdisconnected', onDisc); resolve(); }
-                } catch (e) { console.warn('gatt.disconnect:', e); clearTimeout(t); resolve(); }
+                } catch (_) { clearTimeout(t); resolve(); }
             });
         }
 
