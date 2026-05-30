@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v168');
+console.log('[MeshWeb] app.js loaded, v169');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -3420,7 +3420,7 @@ class MeshCoreApp {
         this._updateCornerNotices();
     }
 
-    _exportCsv() {
+    async _exportCsv() {
         if (this.hashData.size === 0) return;
         this._unsavedRxCount = 0;
 
@@ -3495,11 +3495,29 @@ class MeshCoreApp {
             ].map(esc).join(','));
         }
 
-        const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+        const csv = lines.join('\r\n');
+        const suggestedName = `meshcore-signal-tester-${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.csv`;
+
+        if (window.showSaveFilePicker) {
+            try {
+                const fh = await window.showSaveFilePicker({
+                    suggestedName,
+                    types: [{ description: 'CSV file', accept: { 'text/csv': ['.csv'] } }],
+                });
+                const writable = await fh.createWritable();
+                await writable.write(csv);
+                await writable.close();
+                return;
+            } catch (e) {
+                if (e.name === 'AbortError') return; // user cancelled
+            }
+        }
+        // Fallback for browsers without showSaveFilePicker
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `meshcore-signal-tester-${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.csv`;
+        a.download = suggestedName;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
