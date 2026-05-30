@@ -365,7 +365,7 @@ export class Signal3DMap {
                 this._userLoc = { lat: latitude, lon: longitude, accuracy };
                 this._setStatus(`📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}  (±${Math.round(accuracy)} m)`);
                 if (this.emptyEl && !this._rxPoints.length) {
-                    this.emptyEl.textContent = 'Waiting for packets to populate the 3D map.';
+                    this.emptyEl.textContent = 'Waiting for data…';
                 }
                 this._scheduleMapUpdate();
                 this._updateUserMarker();
@@ -722,7 +722,7 @@ export class Signal3DMap {
         this.onSelect?.(null);
         if (this.emptyEl) {
             this.emptyEl.classList.remove('hidden');
-            this.emptyEl.textContent = 'Waiting for packets to populate the 3D map.';
+            this.emptyEl.textContent = 'Waiting for data…';
         }
     }
 
