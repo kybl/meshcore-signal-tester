@@ -100,6 +100,7 @@ header {
     display: flex;
     flex-direction: column;
     gap: 0;
+    box-shadow: 0 3px 8px var(--shadow);
 }
 
 .header-row {
@@ -372,6 +373,7 @@ html.light-theme .status.importing {
     margin-left: -8px;
     margin-right: -8px;
     background: var(--bg-table-head);
+    box-shadow: 0 2px 6px var(--shadow);
     transition: background 0.15s;
 }
 
@@ -1843,7 +1845,7 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
 /* ---- Message table column selection ---- */
 th.msg-col-rep { cursor: pointer; }
 th.msg-col-rep:hover { background: var(--bg-sig-hover); }
-th.col-sel { background: var(--bg-col-sel) !important; }
+th.col-sel { background: var(--bg-col-sel) !important; color: var(--text-primary) !important; font-weight: 700; }
 th.col-dim { opacity: 0.4; }
 td.col-dim { opacity: 0.25; }
 
