@@ -1446,8 +1446,7 @@ class MeshCoreApp {
             this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: pubKeyHex, time: now, rawId: pubKeyHex });
         }
 
-        // Each DSC response → new row in Received Packets (same node can respond to
-        // multiple retries; always use current time so order is correct).
+        // Each DSC response → new row in Received Packets; always use current time so order is correct.
         // Column = the responding node's pub key prefix so all its DSC responses share one column.
         const dscHash = 'DSC:' + (++this._dscSeq);
         const rawHex = Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join('');
