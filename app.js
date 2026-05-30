@@ -2052,7 +2052,7 @@ class MeshCoreApp {
             if (msgTableEmpty) {
                 msgTableEmpty.textContent = displayCutoff
                     ? 'No packets in the current display window.'
-                    : 'No packets yet.';
+                    : 'Waiting for data…';
                 msgTableEmpty.classList.remove('hidden');
             }
             this.msgTableHead.innerHTML = '';
@@ -2943,6 +2943,16 @@ class MeshCoreApp {
         const cutoff = this._displayCutoffNow();
         const entries = Array.from(this.allRepeaters.entries())
             .filter(([id, d]) => this._colMatchesRepFilter(id) && (!cutoff || d.lastSeen >= cutoff));
+
+        const repTableScroll = this.repTableBody.closest('.rep-table-scroll');
+        const repTableEmpty  = document.getElementById('repTableEmpty');
+        const repExpandBar   = document.getElementById('repExpandBar');
+        const isEmpty = entries.length === 0;
+        if (repTableScroll) repTableScroll.style.display = isEmpty ? 'none' : '';
+        if (repExpandBar)   repExpandBar.style.display   = isEmpty ? 'none' : '';
+        if (repTableEmpty)  repTableEmpty.classList.toggle('hidden', !isEmpty);
+        if (isEmpty) { this.repTableBody.innerHTML = ''; return; }
+
         entries.sort(([idA, dA], [idB, dB]) => {
             if (key === 'id') {
                 // 'direct' sorts first ascending, last descending
