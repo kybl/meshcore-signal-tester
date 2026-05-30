@@ -591,7 +591,7 @@ html.light-theme .status.importing {
 }
 
 .chart-resize-handle {
-    height: 16px;
+    height: 14px;
     cursor: ns-resize;
     display: flex;
     align-items: center;
@@ -606,7 +606,7 @@ html.light-theme .status.importing {
 .chart-resize-handle:active { opacity: 1; }
 .chart-resize-handle::before {
     content: '▲  ▼';
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: 2px;
     color: var(--text-secondary);
     margin-right: 8px;
@@ -1538,7 +1538,7 @@ html.light-theme .btn-show-all-repeaters:hover {
 }
 
 .map-resize-handle {
-    height: 16px;
+    height: 14px;
     cursor: ns-resize;
     display: flex;
     align-items: center;
@@ -1553,7 +1553,7 @@ html.light-theme .btn-show-all-repeaters:hover {
 .map-resize-handle:active { opacity: 1; }
 .map-resize-handle::before {
     content: '▲  ▼';
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: 2px;
     color: var(--text-secondary);
     margin-right: 8px;
