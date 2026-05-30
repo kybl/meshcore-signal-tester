@@ -14,6 +14,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
 import android.webkit.ValueCallback
@@ -43,7 +45,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var jsApi: JsApi
 
-    private val main = Handler(Looper.getMainLooper())
+    val main = Handler(Looper.getMainLooper())
+
+    companion object {
+        // Show battery optimization warning at most once per process lifetime.
+        private var batteryCheckShown = false
+    }
 
     // ---- scanning state (one picker at a time) ----
     private var scanCallback: ScanCallback? = null
@@ -352,6 +359,37 @@ class MainActivity : AppCompatActivity() {
         }
         arr.put(JSONObject().put("id", address).put("name", name))
         prefs().edit().putString("known", arr.toString()).apply()
+    }
+
+    // ---- battery optimization check ------------------------------------
+
+    fun checkBatteryOptimization() {
+        main.post {
+            if (batteryCheckShown) return@post
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            if (pm.isIgnoringBatteryOptimizations(packageName)) return@post
+            batteryCheckShown = true
+            AlertDialog.Builder(this)
+                .setTitle("Allow unrestricted background use")
+                .setMessage(
+                    "Battery optimization is active for this app. " +
+                    "Android may suspend signal capture when the screen turns off — " +
+                    "which defeats the main purpose of the app.\n\n" +
+                    "Tap \"Open Settings\" and allow the app to run unrestricted in the background."
+                )
+                .setPositiveButton("Open Settings") { _, _ ->
+                    try {
+                        startActivity(Intent(
+                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:$packageName")
+                        ))
+                    } catch (_: Exception) {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
+                }
+                .setNegativeButton("Later", null)
+                .show()
+        }
     }
 
     // ---- helpers --------------------------------------------------------

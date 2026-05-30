@@ -21,6 +21,7 @@ class BleBridge(private val activity: MainActivity) {
 
     @JavascriptInterface
     fun connect(reqId: String, deviceId: String) {
+        activity.checkBatteryOptimization()
         activity.ble.connect(reqId, deviceId)
     }
 
