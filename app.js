@@ -298,7 +298,7 @@ class MeshCoreApp {
         document.getElementById('savedDevices')?.addEventListener('click', e => {
             const quickBtn = e.target.closest('.saved-btn');
             const forgetBtn = e.target.closest('.forget-btn');
-            if (quickBtn) this.quickConnect(quickBtn.dataset.id).catch(() => {});
+            if (quickBtn) this.quickConnect(quickBtn.dataset.id).catch(e => console.error('Quick connect failed:', e));
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
@@ -330,7 +330,7 @@ class MeshCoreApp {
             this._clearAllData();
         });
 
-        document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(() => {}));
+        document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(e => console.error('Discover failed:', e)));
 
         this.soundSelect?.addEventListener('change', () => {
             Store.set('sound', this.soundSelect.value);
@@ -464,7 +464,7 @@ class MeshCoreApp {
         document.getElementById('importCsvBtn')?.addEventListener('click', () => importCsvInput?.click());
         importCsvInput?.addEventListener('change', () => {
             const file = importCsvInput.files?.[0];
-            if (file) { this._importCsv(file).catch(() => {}); importCsvInput.value = ''; }
+            if (file) { this._importCsv(file).catch(e => console.error('CSV import failed:', e)); importCsvInput.value = ''; }
         });
 
         const fsBtn = document.getElementById('mapFullscreenBtn');
@@ -945,7 +945,8 @@ class MeshCoreApp {
             try {
                 const devices = await navigator.bluetooth.getDevices();
                 device = devices.find(d => d.id === deviceId);
-            } catch (_) {
+            } catch (e) {
+                console.warn('getDevices failed:', e);
             }
             if (device) {
                 try {
@@ -1254,7 +1255,7 @@ class MeshCoreApp {
         this._discoverTags.set(tag, Date.now());
         try {
             await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
-        } catch (_) {}
+        } catch (e) { console.error('sendDiscoverRequest:', e); }
     }
 
     // --- Saved devices (localStorage) ---
@@ -1372,7 +1373,7 @@ class MeshCoreApp {
             const rawHex = this._bufferToHex(loraPacket.buffer);
             const packet = MeshCoreDecoder.decode(rawHex);
             if (packet.isValid) this._processPacket(packet, rawHex, snr, rssi);
-        } catch (_) {}
+        } catch (e) { console.error('Decode error:', e); }
     }
 
     _handleAdvertPush(_payload) {
@@ -3583,7 +3584,7 @@ class MeshCoreApp {
                         meta.pathItemBytes = decoded.pathHashSize ?? fi?.length / 2 ?? 0;
                         meta.totalBytes    = decoded.totalBytes;
                     }
-                } catch (_) {}
+                } catch (e) { console.warn('Hex decode failed for row:', row.rawHex?.slice(0, 20), e.message); }
             }
             if (!meta.text   && row.csvText)   meta.text   = row.csvText;
             if (!meta.sender && row.csvSender)  meta.sender = row.csvSender;
@@ -3674,7 +3675,7 @@ class MeshCoreApp {
 
         // stopNotifications BEFORE gatt.disconnect() so Chrome fully releases the notify pipe
         if (txChar) {
-            try { await txChar.stopNotifications(); } catch (_) {}
+            try { await txChar.stopNotifications(); } catch (e) { console.warn('stopNotifications:', e); }
         }
 
         if (device?.gatt) {
