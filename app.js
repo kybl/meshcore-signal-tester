@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v169');
+console.log('[MeshWeb] app.js loaded, v170');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -3497,6 +3497,12 @@ class MeshCoreApp {
 
         const csv = lines.join('\r\n');
         const suggestedName = `meshcore-signal-tester-${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.csv`;
+
+        // Android native app: delegate to SAF picker (shows system "Save as" dialog)
+        if (window.AndroidFiles?.saveCsvWithPicker) {
+            window.AndroidFiles.saveCsvWithPicker(suggestedName, csv);
+            return;
+        }
 
         if (window.showSaveFilePicker) {
             try {

@@ -75,6 +75,26 @@ class MainActivity : AppCompatActivity() {
         cb?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
     }
 
+    // File picker for CSV export — shows "Save as" dialog via SAF
+    private var pendingCsvContent: String? = null
+    private val saveCsvLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri: Uri? ->
+        val content = pendingCsvContent ?: return@registerForActivityResult
+        pendingCsvContent = null
+        if (uri == null) return@registerForActivityResult
+        try {
+            contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun launchCsvSavePicker(filename: String, content: String) {
+        pendingCsvContent = content
+        saveCsvLauncher.launch(filename)
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,7 +116,7 @@ class MainActivity : AppCompatActivity() {
 
         webView.addJavascriptInterface(BleBridge(this), "AndroidBle")
         webView.addJavascriptInterface(GeoBridge(this), "AndroidGeo")
-        webView.addJavascriptInterface(FilesBridge(applicationContext), "AndroidFiles")
+        webView.addJavascriptInterface(FilesBridge(this), "AndroidFiles")
         webView.addJavascriptInterface(ScreenBridge(this), "AndroidScreen")
 
         // Serve bundled assets from a secure origin so remote map tiles load

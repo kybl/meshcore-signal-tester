@@ -1,7 +1,6 @@
 package cz.kyblsoft.meshcore
 
 import android.content.ContentValues
-import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.os.Handler
@@ -14,10 +13,19 @@ import java.io.FileOutputStream
 
 /**
  * JavaScript interface exposed as `window.AndroidFiles`.
- * Handles CSV save to the public Downloads folder.
+ * Handles CSV save — either via SAF "Save as" dialog or directly to Downloads.
  */
-class FilesBridge(private val context: Context) {
+class FilesBridge(private val activity: MainActivity) {
 
+    private val main = Handler(Looper.getMainLooper())
+
+    /** Show a native "Save as" dialog (Storage Access Framework). */
+    @JavascriptInterface
+    fun saveCsvWithPicker(filename: String, content: String) {
+        main.post { activity.launchCsvSavePicker(filename, content) }
+    }
+
+    /** Save directly to the public Downloads folder (legacy fallback). */
     @JavascriptInterface
     fun saveCsv(filename: String, content: String) {
         try {
@@ -27,7 +35,7 @@ class FilesBridge(private val context: Context) {
                     put(MediaStore.Downloads.MIME_TYPE, "text/csv")
                     put(MediaStore.Downloads.IS_PENDING, 1)
                 }
-                val resolver = context.contentResolver
+                val resolver = activity.contentResolver
                 val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                     ?: throw Exception("MediaStore insert returned null")
                 resolver.openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
@@ -40,12 +48,12 @@ class FilesBridge(private val context: Context) {
                 dir.mkdirs()
                 FileOutputStream(File(dir, filename)).use { it.write(content.toByteArray(Charsets.UTF_8)) }
             }
-            Handler(Looper.getMainLooper()).post {
-                Toast.makeText(context, "Uloženo do Stažených: $filename", Toast.LENGTH_LONG).show()
+            main.post {
+                Toast.makeText(activity, "Saved to Downloads: $filename", Toast.LENGTH_LONG).show()
             }
         } catch (e: Exception) {
-            Handler(Looper.getMainLooper()).post {
-                Toast.makeText(context, "Uložení selhalo: ${e.message}", Toast.LENGTH_LONG).show()
+            main.post {
+                Toast.makeText(activity, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
