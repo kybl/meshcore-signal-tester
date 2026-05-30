@@ -591,14 +591,13 @@ html.light-theme .status.importing {
 }
 
 .chart-resize-handle {
-    height: 14px;
+    height: 16px;
     cursor: ns-resize;
     display: flex;
     align-items: center;
     justify-content: center;
     user-select: none;
     touch-action: none;
-    opacity: 0.45;
     transition: opacity 0.15s;
     margin-bottom: 2px;
     border-radius: 0 0 4px 4px;
@@ -606,21 +605,28 @@ html.light-theme .status.importing {
 .chart-resize-handle:hover,
 .chart-resize-handle:active { opacity: 1; }
 .chart-resize-handle::before {
-    content: '↕';
-    font-size: 10px;
-    color: var(--text-muted);
-    margin-right: 5px;
+    content: '▲  ▼';
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--text-secondary);
+    margin-right: 8px;
     line-height: 1;
+    opacity: 0.8;
 }
 .chart-resize-handle::after {
     content: '';
     display: block;
-    width: 36px;
+    width: 40px;
     height: 2px;
     border-radius: 2px;
     background: var(--text-muted);
     box-shadow: 0 -4px 0 var(--text-muted), 0 4px 0 var(--text-muted);
+    opacity: 0.55;
 }
+.chart-resize-handle:hover::before,
+.chart-resize-handle:active::before { opacity: 1; color: var(--text-primary); }
+.chart-resize-handle:hover::after,
+.chart-resize-handle:active::after  { opacity: 1; }
 
 .rssi-chart {
     width: 100%;
@@ -1532,14 +1538,13 @@ html.light-theme .btn-show-all-repeaters:hover {
 }
 
 .map-resize-handle {
-    height: 14px;
+    height: 16px;
     cursor: ns-resize;
     display: flex;
     align-items: center;
     justify-content: center;
     user-select: none;
     touch-action: none;
-    opacity: 0.45;
     transition: opacity 0.15s;
     margin-bottom: 2px;
     border-radius: 0 0 4px 4px;
@@ -1547,21 +1552,28 @@ html.light-theme .btn-show-all-repeaters:hover {
 .map-resize-handle:hover,
 .map-resize-handle:active { opacity: 1; }
 .map-resize-handle::before {
-    content: '↕';
-    font-size: 10px;
-    color: var(--text-muted);
-    margin-right: 5px;
+    content: '▲  ▼';
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--text-secondary);
+    margin-right: 8px;
     line-height: 1;
+    opacity: 0.8;
 }
 .map-resize-handle::after {
     content: '';
     display: block;
-    width: 36px;
+    width: 40px;
     height: 2px;
     border-radius: 2px;
     background: var(--text-muted);
     box-shadow: 0 -4px 0 var(--text-muted), 0 4px 0 var(--text-muted);
+    opacity: 0.55;
 }
+.map-resize-handle:hover::before,
+.map-resize-handle:active::before { opacity: 1; color: var(--text-primary); }
+.map-resize-handle:hover::after,
+.map-resize-handle:active::after  { opacity: 1; }
 
 .map-fullscreen-btn {
     position: absolute;
