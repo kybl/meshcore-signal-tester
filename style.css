@@ -93,6 +93,27 @@ html.ui-larger body {
     padding: 8px;
 }
 
+.app-footer {
+    text-align: center;
+    padding: 14px 16px 20px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.app-footer a {
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: none;
+}
+
+.app-footer a:hover {
+    text-decoration: underline;
+}
+
+.footer-sep {
+    margin: 0 8px;
+    color: rgba(255, 255, 255, 0.3);
+}
+
 header {
     background: var(--bg-header);
     padding: 8px 16px;

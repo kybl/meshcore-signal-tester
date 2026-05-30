@@ -896,6 +896,12 @@ class MeshCoreApp {
             hideTip();
             openHelp();
         });
+        document.getElementById('footerHelp')?.addEventListener('click', e => {
+            e.preventDefault();
+            e.stopPropagation();
+            hideTip();
+            openHelp();
+        });
         document.getElementById('helpModalClose')?.addEventListener('click', e => {
             e.stopPropagation();
             closeHelp();
