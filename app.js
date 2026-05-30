@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v166');
+console.log('[MeshWeb] app.js loaded, v167');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -3048,10 +3048,10 @@ class MeshCoreApp {
             return `<tr data-col="${this._escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
                 <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this._dotColor(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
                 <td class="rl-num">${d.count}</td>
-                <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
-                <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
                 <td class="rl-num" style="color:${msc}">${d.maxSnr?.toFixed(1) ?? '—'}</td>
                 <td class="rl-num" style="color:${lsc}">${d.lastSnr?.toFixed(1) ?? '—'}</td>
+                <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
+                <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
                 <td class="rl-time">${this._formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
