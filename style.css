@@ -1713,7 +1713,7 @@ html.light-theme .btn-show-all-repeaters:hover {
 /* ---- Debug section ---- */
 
 .debug-inner {
-    padding: 6px 4px 4px;
+    padding: 2px 4px 4px;
 }
 
 .debug-hint {
@@ -1736,6 +1736,12 @@ html.light-theme .btn-show-all-repeaters:hover {
     gap: 8px;
     align-items: center;
     flex-wrap: wrap;
+}
+
+.debug-input-label {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
 }
 
 .debug-input {

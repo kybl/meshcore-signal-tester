@@ -225,7 +225,8 @@
                     <div class="debug-inner">
                         <p class="debug-hint">Inject a fake RX entry to test prefix-collision handling. Hex is interpreted high-byte first, the same way path IDs arrive from the decoder. Examples: <code>5E</code> (1-byte), <code>5E9F</code>, <code>5E9F1234</code>, or <code>direct</code>.</p>
                         <div class="debug-row">
-                            <input id="debugRepeater" type="text" class="debug-input" placeholder="Repeater hex prefix or 'direct'" autocomplete="off" spellcheck="false">
+                            <label class="debug-input-label" for="debugRepeater">Repeater hex prefix or 'direct'</label>
+                            <input id="debugRepeater" type="text" class="debug-input" autocomplete="off" spellcheck="false">
                             <button id="debugInject" class="btn-primary">Inject RX</button>
                             <span id="debugFeedback" class="debug-feedback"></span>
                         </div>
