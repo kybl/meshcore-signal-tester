@@ -109,10 +109,8 @@ class MeshCoreApp {
         this.batteryEl = document.getElementById('batteryStatus');
         this.rssiChartWrap = document.getElementById('rssiChartWrap');
         this.rssiChartSvg  = document.getElementById('rssiChart');
-        this.rssiChartLegend = document.getElementById('rssiChartLegend');
         this.snrChartWrap  = document.getElementById('snrChartWrap');
         this.snrChartSvg   = document.getElementById('snrChart');
-        this.snrChartLegend = document.getElementById('snrChartLegend');
         if (typeof ResizeObserver !== 'undefined') {
             const obs = new ResizeObserver(() => this._scheduleChartRender());
             document.querySelectorAll('.chart-svg-wrap').forEach(el => obs.observe(el));
@@ -245,19 +243,6 @@ class MeshCoreApp {
         const snrOutCb = document.getElementById('snrShowOutgoing');
         if (snrInCb)  snrInCb.addEventListener('change',  () => { this._snrShowIncoming = snrInCb.checked;  this._scheduleChartRender(); });
         if (snrOutCb) snrOutCb.addEventListener('change', () => { this._snrShowOutgoing = snrOutCb.checked; this._scheduleChartRender(); });
-
-        // Legend click for repeater selection
-        const bindLegendClick = legend => {
-            if (!legend) return;
-            legend.addEventListener('click', e => {
-                const item = e.target.closest('.legend-item[data-col]');
-                if (!item) return;
-                const col = item.dataset.col;
-                this._selectRepeater(this._selectedCol === col ? null : col);
-            });
-        };
-        bindLegendClick(this.rssiChartLegend);
-        bindLegendClick(this.snrChartLegend);
 
         document.getElementById('msgTableWrap')?.addEventListener('click', e => {
             // Detail row: close on click, or copy hex
@@ -426,19 +411,6 @@ class MeshCoreApp {
                 this.signalMap?.setSphereSize(this._sphereSize);
             });
         }
-
-        // Collapsible chart legends
-        document.querySelectorAll('.legend-toggle-btn').forEach(btn => {
-            const wrap = document.getElementById(btn.dataset.wrap);
-            const key  = btn.dataset.key;
-            const applyState = collapsed => {
-                wrap?.classList.toggle('legend-collapsed', collapsed);
-                btn.textContent = (collapsed ? '▸' : '▾') + ' Legend';
-                Store.set(key, collapsed);
-            };
-            applyState(Store.bool(key, false));
-            btn.addEventListener('click', () => applyState(!wrap?.classList.contains('legend-collapsed')));
-        });
 
         const repeaterHead = document.querySelector('.rep-table thead');
         if (repeaterHead) {
@@ -837,7 +809,7 @@ class MeshCoreApp {
             'display':
                 'How far back to look when displaying data. Does not delete anything — data outside this window is still stored and continues to influence repeater ID merging and collision detection. "All" shows the full storage window. Can only be set equal to or shorter than Auto-remove.',
             'keepscreen':
-                'In a browser — especially a mobile browser — this is necessary to keep collection running: when the screen turns off, the browser suspends JavaScript and stops capturing. In the Android app, collection runs in a background service so the screen can be off without losing data — unless the system\'s battery optimization is active and kills the service. Setting is remembered across sessions.',
+                'This could be necessary in a mobile browser to keep collection running — when the screen turns off, the browser suspends JavaScript and stops capturing. In the Android app, collection runs in a background service so the screen can be off without losing data — unless the system\'s battery optimization is active and kills the service. Setting is remembered across sessions.',
             'repeater':
                 '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Click a row to select that repeater — dims others in all views (charts, Received packets, 3D map); click again to deselect. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'rssi':
@@ -2485,7 +2457,6 @@ class MeshCoreApp {
     _renderChart(type) {
         const wrap   = type === 'rssi' ? this.rssiChartWrap   : this.snrChartWrap;
         const svg    = type === 'rssi' ? this.rssiChartSvg    : this.snrChartSvg;
-        const legend = type === 'rssi' ? this.rssiChartLegend : this.snrChartLegend;
         if (!svg) return;
         wrap?.classList.remove('hidden');
 
@@ -2698,51 +2669,6 @@ class MeshCoreApp {
             return vb - va;
         });
 
-        if (legend) {
-            const entries = visible.map(col => {
-                const c = this._dotColor(col);
-                const last = lastByCol.get(col);
-                const val = type === 'rssi' ? last.rssi : last.snr;
-                const valStr = val == null ? '—'
-                    : type === 'rssi'
-                        ? `${val} dBm`
-                        : `${val >= 0 ? '+' : ''}${val.toFixed(1)} dB`;
-                const selClass   = !selected ? '' : (selected === col ? ' legend-item-selected' : ' legend-item-dimmed');
-                return {
-                    val: val ?? -Infinity,
-                    html: `<span class="legend-item${selClass}" data-col="${this._escHtml(col)}"><span class="legend-dot" style="background:${c}"></span>${this._escHtml(this.displayId(col))} <span class="legend-val">(${valStr})</span></span>`,
-                };
-            });
-            if (type === 'rssi' && hasData) {
-                const nfPts = [...lastByCol.values()].filter(p => p.rssi != null && p.snr != null);
-                if (nfPts.length > 0) {
-                    const lastPt = nfPts.reduce((a, b) => a.time > b.time ? a : b);
-                    const nf = lastPt.rssi - lastPt.snr;
-                    entries.push({
-                        val: nf,
-                        html: `<span class="legend-item"><span class="legend-nf"></span>Noise floor <span class="legend-val">(${nf} dBm)</span></span>`,
-                    });
-                }
-                entries.sort((a, b) => b.val - a.val);
-            }
-            if (type === 'snr' && sentPts.length) {
-                const lastSentByCol = new Map();
-                for (const p of sentPts)
-                    if (!lastSentByCol.has(p.col) || p.time > lastSentByCol.get(p.col).time) lastSentByCol.set(p.col, p);
-                for (const [col, last] of lastSentByCol) {
-                    const c = this._dotColor(col);
-                    const valStr = `${last.snr >= 0 ? '+' : ''}${last.snr.toFixed(1)} dB`;
-                    const displayName = last.label && last.label !== col ? this._escHtml(last.label) : this._escHtml(this.displayId(col));
-                    const selClass = !selected ? '' : (selected === col ? ' legend-item-selected' : ' legend-item-dimmed');
-                    entries.push({
-                        val: last.snr,
-                        html: `<span class="legend-item${selClass}" data-col="${this._escHtml(col)}"><span style="color:${c};font-size:13px;line-height:1;flex-shrink:0">★</span>${displayName} ↗ <span class="legend-val">(${valStr})</span></span>`,
-                    });
-                }
-                entries.sort((a, b) => b.val - a.val);
-            }
-            legend.innerHTML = entries.map(e => e.html).join('');
-        }
     }
 
     _decimateChartPts(colPts, tMin, tMax, pixelWidth, type) {

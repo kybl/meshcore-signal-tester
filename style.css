@@ -641,64 +641,6 @@ html.light-theme .status.importing {
     overflow: visible;
 }
 
-.chart-legend-wrap {
-    padding: 2px 0;
-}
-
-.legend-toggle-btn {
-    background: none;
-    border: none;
-    font-size: 11px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    padding: 2px 0;
-    user-select: none;
-}
-
-.legend-toggle-btn:hover {
-    color: var(--text-primary);
-}
-
-.legend-collapsed .chart-legend {
-    display: none;
-}
-
-.chart-legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 14px;
-    padding: 4px 0 2px;
-    font-size: 11px;
-    color: var(--text-primary);
-}
-
-.legend-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-}
-
-.legend-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.legend-val {
-    opacity: 0.6;
-    font-size: 10px;
-}
-
-.legend-nf {
-    width: 18px;
-    height: 9px;
-    border-radius: 2px;
-    background: rgba(140, 140, 140, 0.35);
-    border: 1px solid rgba(120, 120, 120, 0.5);
-    flex-shrink: 0;
-}
-
 .msg-table-empty {
     padding: 14px 16px;
     font-size: 13px;
@@ -1127,23 +1069,6 @@ html.light-theme .status.importing {
     animation: detailClose 0.13s ease-in forwards;
 }
 
-.legend-item[data-col] {
-    cursor: pointer;
-    transition: opacity 0.15s;
-}
-
-.legend-item[data-col]:hover {
-    opacity: 0.75;
-}
-
-.legend-item-selected {
-    font-weight: 700;
-}
-
-.legend-item-dimmed {
-    opacity: 0.3;
-}
-
 /* ── Help system ─────────────────────────────────────── */
 
 .help-btn {
@@ -1198,6 +1123,17 @@ html.light-theme .status.importing {
 
 .help-icon.active {
     background: #667eea;
+    color: white;
+}
+
+html.light-theme .help-icon {
+    background: rgba(70, 90, 200, 0.12);
+    color: #3a50c0;
+    border-color: rgba(70, 90, 200, 0.30);
+}
+html.light-theme .help-icon:hover,
+html.light-theme .help-icon.active {
+    background: #4a5ed0;
     color: white;
 }
 
@@ -2101,7 +2037,7 @@ html.light-theme .ping-hint {
     color: #444;
 }
 .theme-toggle-btn {
-    background: rgba(255,255,255,0.90);
+    background: rgba(255,255,255,0.60);
     border: 1px solid rgba(255,255,255,0.5);
     color: #333;
     border-radius: 5px;
@@ -2111,7 +2047,7 @@ html.light-theme .ping-hint {
     line-height: 1.6;
 }
 .theme-toggle-btn:hover {
-    background: #fff;
+    background: rgba(255,255,255,0.80);
 }
 html.light-theme .theme-toggle-btn {
     background: rgba(0,0,0,0.35);
