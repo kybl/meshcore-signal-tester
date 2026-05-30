@@ -100,6 +100,8 @@ header {
     display: flex;
     flex-direction: column;
     gap: 0;
+    position: relative;
+    z-index: 10;
     box-shadow: 0 3px 8px var(--shadow);
 }
 
@@ -508,7 +510,7 @@ html.light-theme .status.importing {
 
 .rep-table th[data-sort-key]:hover {
     background: var(--bg-sig-hover);
-    color: var(--btn-primary-bg);
+    color: var(--text-primary);
 }
 
 .rep-table th.sort-asc::after { content: ' ↑'; }
