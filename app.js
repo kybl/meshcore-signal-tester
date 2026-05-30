@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v162');
+console.log('[MeshWeb] app.js loaded, v163');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -831,7 +831,7 @@ class MeshCoreApp {
             'contact-no-gps':
                 'The owner of this node hasn\'t configured its position.',
             'sound':
-                'off = silent. short / medium / long play a two-tone beep of increasing duration (long is 4× short) on each new packet. The first tone (1/3 of the beep) is a fixed 880 Hz click; the second tone (2/3) shifts pitch with RSSI — stronger signal → higher pitch. Setting is remembered across sessions.',
+                'off = silent. short / medium / long play a two-tone beep of increasing duration (long is 4× short) on each new packet. The first tone (1/3 of the beep) is a fixed 880 Hz click; the second tone (2/3) shifts pitch with SNR — higher SNR → higher pitch. Setting is remembered across sessions.',
             'ttl':
                 'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import).',
             'display':
@@ -1987,7 +1987,7 @@ class MeshCoreApp {
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
         const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
-        if (matchesMsgFilter && matchesRepFilter) this._playRxSound(rssi);
+        if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr);
         this._updateStats();
         this.emptyState?.classList.add('hidden');
     }
@@ -3265,7 +3265,7 @@ class MeshCoreApp {
 
     // --- Sound ---
 
-    _playRxSound(rssi) {
+    _playRxSound(snr) {
         const mode = this.soundSelect?.value ?? 'off';
         if (mode === 'off') return;
         if (!this.audioCtx) this.audioCtx = new AudioContext();
@@ -3290,12 +3290,13 @@ class MeshCoreApp {
         const dur = 0.05 * scale;
         const gap = 0.08 * scale;
         // The two tones run back-to-back over one window: the first tone takes
-        // 1/3 of the time, the second (pitched by RSSI) the remaining 2/3.
+        // 1/3 of the time, the second (pitched by SNR) the remaining 2/3.
+        // SNR range ~−20..+10 dB mapped to ~0.5..2× baseFreq (one octave up/down).
         const total = dur + gap;
         const d1 = total / 3;
         const d2 = total * 2 / 3;
         beep(baseFreq, 0, d1);
-        beep(baseFreq * Math.pow(2, (rssi + 100) / 30), d1, d2);
+        beep(baseFreq * Math.pow(2, ((snr ?? 0) + 10) / 30), d1, d2);
     }
 
     // --- BLE Device Battery ---
