@@ -6,9 +6,9 @@
 
 :root {
     color-scheme: dark;
-    --bg-gutter:      #071428;
+    --bg-gutter:      #fffacd;
     --bg-content:     #181824;
-    --bg-header:      #0e1e3a;
+    --bg-header:      #66d7fa;
     --bg-box:         #21212e;
     --bg-input:       #1c1c28;
     --bg-hover:       rgba(255,255,255,0.06);
@@ -32,11 +32,11 @@
 }
 html.light-theme {
     color-scheme: light;
-    --bg-gutter:      #3560a0;
+    --bg-gutter:      #fffacd;
     --btn-primary-bg: #667eea;
     --btn-primary-border: #5568d3;
     --bg-content:     #eef0f7;
-    --bg-header:      #80b0e0;
+    --bg-header:      #66d7fa;
     --bg-box:         #ffffff;
     --bg-input:       #ffffff;
     --bg-hover:       rgba(0,0,0,0.06);
