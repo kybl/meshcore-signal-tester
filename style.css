@@ -488,6 +488,7 @@ html.light-theme .status.importing {
 .rep-table th {
     position: sticky;
     top: 0;
+    z-index: 1;
     background: var(--bg-table-head);
     color: var(--text-secondary);
     font-weight: 600;
@@ -503,8 +504,8 @@ html.light-theme .status.importing {
 }
 
 .rep-table th[data-sort-key]:hover {
-    background: #d8d8ee;
-    color: #667eea;
+    background: var(--bg-sig-hover);
+    color: var(--btn-primary-bg);
 }
 
 .rep-table th.sort-asc::after { content: ' ↑'; }
