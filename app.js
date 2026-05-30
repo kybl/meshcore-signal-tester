@@ -1,8 +1,9 @@
+import { MeshCoreDecoder } from './vendor/meshcore-decoder.js';
+import { BInfo } from './vendor/meshcore-decoder.js';
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v165');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
