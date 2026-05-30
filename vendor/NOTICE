@@ -1,0 +1,12 @@
+Third-party libraries bundled in this directory
+================================================
+
+three.js (three.module.js, controls/OrbitControls.js, controls/MapControls.js)
+  https://threejs.org
+  Copyright 2010-2023 Three.js Authors
+  MIT License — https://github.com/mrdoob/three.js/blob/dev/LICENSE
+
+@michaelhart/meshcore-decoder (meshcore-decoder.js)
+  https://github.com/michaelhart/meshcore-decoder
+  Copyright Michael Hart
+  MIT License — https://github.com/michaelhart/meshcore-decoder/blob/main/LICENSE

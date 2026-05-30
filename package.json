@@ -1,18 +1,19 @@
 {
-  "name": "meshcore-rx-monitor",
+  "name": "meshcore-signal-tester",
   "version": "1.0.0",
-  "description": "Webová aplikace pro monitorování RX logů z MeshCore mesh sítě",
+  "description": "Web app for real-time monitoring of LoRa mesh traffic via Bluetooth — signal charts, 3D map, and Android wrapper for background capture with screen off",
   "type": "module",
   "scripts": {
     "serve": "python -m http.server 8000"
   },
   "keywords": [
     "meshcore",
+    "lora",
     "bluetooth",
     "mesh-network",
-    "rx-monitor"
+    "signal-map"
   ],
-  "author": "",
+  "author": "Aleš Janda <ales.janda@kyblsoft.cz>",
   "license": "MIT",
   "dependencies": {
     "@michaelhart/meshcore-decoder": "^0.1.0"
