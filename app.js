@@ -77,6 +77,8 @@ class MeshCoreApp {
         this.initUI();
         this.startCleanupTimer();
         this._renderSavedDevices();
+        this._renderRepTable();
+        this._renderMsgTable();
         // Render empty chart axes immediately so the section is visible from page load
         requestAnimationFrame(() => this._scheduleChartRender());
     }
