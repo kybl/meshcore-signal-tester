@@ -3796,7 +3796,9 @@ if (document.readyState === 'loading') {
 }
 
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && monitor?.device?.gatt?.connected) {
-        monitor.acquireWakeLock();
+    if (document.visibilityState === 'visible') {
+        monitor?._syncWakeLock();
+    } else {
+        monitor?.releaseWakeLock();
     }
 });
