@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v165');
+console.log('[MeshWeb] app.js loaded, v166');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -2128,7 +2128,7 @@ class MeshCoreApp {
                 return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="background:${this._dotColor(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
             }).join('');
             const subHeaders = visibleCols.map(() =>
-                `<th class="msg-sub-rssi">RSSI</th><th class="msg-sub-snr">SNR</th>`
+                `<th class="msg-sub-snr">SNR</th><th class="msg-sub-rssi">RSSI</th>`
             ).join('');
             this.msgTableHead.innerHTML = `
                 <tr>
@@ -2345,8 +2345,8 @@ class MeshCoreApp {
         const sc = this._signalColor(snr,  13, -10, 0);
         const rssiStr = rssi != null ? rssi : '—';
         const snrStr  = snr  != null ? snr.toFixed(1) : '—';
-        return `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssiStr}</td>` +
-               `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:${sc}">${snrStr}</td>`;
+        return `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:${sc}">${snrStr}</td>` +
+               `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssiStr}</td>`;
     }
 
     _scheduleChartRender() {
@@ -2813,7 +2813,7 @@ class MeshCoreApp {
         const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this._escHtml(cName)}</span>` : '';
         const valLine = isSent
             ? `Sent SNR ${nearest.snr?.toFixed(1) ?? '—'} dB ↗`
-            : `RSSI ${nearest.rssi ?? '—'} &nbsp; SNR ${nearest.snr?.toFixed(1) ?? '—'}`;
+            : `SNR ${nearest.snr?.toFixed(1) ?? '—'} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
         this.tooltip.innerHTML =
             `${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}<br>` +
             `${time}<br>${valLine}`;
