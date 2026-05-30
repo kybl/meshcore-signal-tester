@@ -673,7 +673,7 @@ html.light-theme .status.importing {
 .msg-table-empty {
     padding: 14px 16px;
     font-size: 13px;
-    color: rgba(255,255,255,0.55);
+    color: var(--text-muted);
     font-style: italic;
 }
 .msg-table-empty.hidden { display: none; }
@@ -1231,8 +1231,7 @@ header .help-icon.active {
     font-size: 13px;
     line-height: 1.6;
     color: #333;
-    margin: auto;
-    align-self: center;
+    margin: 0 auto 16px;
 }
 
 .help-modal-close {
