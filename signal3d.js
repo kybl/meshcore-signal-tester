@@ -94,7 +94,6 @@ export class Signal3DMap {
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
         this._perspSize   = opts.initialPerspSize !== false; // default on
-        this._dotScaleWithZoom = opts.initialDotScaleWithZoom !== false; // default on
         // Points / mesh handles — replaced per _rebuildDots call
         this._dotMeshes   = [];     // THREE.Points for spheres (sprite texture), one or more per call
         this._hitMesh     = null;   // invisible InstancedMesh for raycasting only
@@ -1009,33 +1008,9 @@ export class Signal3DMap {
         this._forceFit  = true;
     }
 
-    // Spire height (and dot size) scale linearly with camera distance so the
-    // beads stay legible whether zoomed in or out.
     _updateHeightScale() {
         const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
         this._rxPointsGroup.scale.y = ratio * 2;
-        this._applyDotScale();
-    }
-
-    // Scale dot material sizes very gently with height scale so balls remain
-    // visibly large even when spires are short.  pow(f, 0.25): scale of 0.1
-    // still leaves dots at ~56% size, 0.5 → ~84%.
-    // When _dotScaleWithZoom is false the factor is locked to 1 so dots stay
-    // the same pixel size regardless of how far the camera has pulled back.
-    _applyDotScale() {
-        const f = this._dotScaleWithZoom
-            ? Math.pow(Math.max(0.05, this._rxPointsGroup.scale.y / 2), 0.25)
-            : 1;
-        for (const m of this._dotMeshes) {
-            if (m.userData.baseDotSize !== undefined)
-                m.material.size = m.userData.baseDotSize * f;
-        }
-    }
-
-    setDotScaleWithZoom(v) {
-        if (!!v === this._dotScaleWithZoom) return;
-        this._dotScaleWithZoom = !!v;
-        this._applyDotScale();
     }
 
     _updatePerspUniforms() {
@@ -1256,7 +1231,7 @@ export class Signal3DMap {
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-            const dotSize = this._sphereSize * sizeMult * 14;
+            const dotSize = this._sphereSize * sizeMult * 7;
             const isLit = opacity >= 1.0;
             const mat = new THREE.PointsMaterial({
                 map:             tex,
@@ -1382,7 +1357,6 @@ export class Signal3DMap {
         addPoints(sentDim, 0.07, 1.6, this._starTex);
 
         this._rebuildPins();
-        this._applyDotScale();
         this._updatePerspUniforms();
     }
 
