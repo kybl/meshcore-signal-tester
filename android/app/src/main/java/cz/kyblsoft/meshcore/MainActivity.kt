@@ -48,8 +48,9 @@ class MainActivity : AppCompatActivity() {
     val main = Handler(Looper.getMainLooper())
 
     companion object {
-        // Show battery optimization warning at most once per process lifetime.
+        // Each warning is shown at most once per process lifetime.
         private var batteryCheckShown = false
+        private var bgLocationCheckShown = false
     }
 
     // ---- scanning state (one picker at a time) ----
@@ -62,9 +63,8 @@ class MainActivity : AppCompatActivity() {
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        // Whatever was granted, start the foreground service so capture can run
-        // with the screen off, then try to obtain "Allow all the time".
-        maybeRequestBackgroundLocation()
+        // Start the foreground service once basic permissions are resolved.
+        // Background location is requested separately, deferred to BLE connect.
         MeshcoreService.start(this)
     }
 
@@ -217,25 +217,12 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isEmpty()) {
-            maybeRequestBackgroundLocation()
             MeshcoreService.start(this)
         } else {
             requestPerms.launch(missing.toTypedArray())
         }
     }
 
-    private fun maybeRequestBackgroundLocation() {
-        if (Build.VERSION.SDK_INT < 29) return
-        val fineGranted = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        val bgGranted = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-        if (fineGranted && !bgGranted) {
-            requestBackgroundLocation.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-        }
-    }
 
     // ---- device picker (called from BleBridge) --------------------------
 
@@ -386,6 +373,30 @@ class MainActivity : AppCompatActivity() {
                     } catch (_: Exception) {
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     }
+                }
+                .setNegativeButton("Later", null)
+                .show()
+        }
+    }
+
+    fun checkBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < 29) return
+        main.post {
+            if (bgLocationCheckShown) return@post
+            val bgGranted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            if (bgGranted) return@post
+            bgLocationCheckShown = true
+            AlertDialog.Builder(this)
+                .setTitle("Allow location all the time")
+                .setMessage(
+                    "To record your GPS position while the screen is off, " +
+                    "this app needs the \"Allow all the time\" location permission.\n\n" +
+                    "Tap \"Grant Permission\" and choose \"Allow all the time\" in the next screen."
+                )
+                .setPositiveButton("Grant Permission") { _, _ ->
+                    requestBackgroundLocation.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
                 }
                 .setNegativeButton("Later", null)
                 .show()
