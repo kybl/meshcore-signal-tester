@@ -60,12 +60,14 @@ class MainActivity : AppCompatActivity() {
     private val foundAddrs = ArrayList<String>()
     private val foundNames = ArrayList<String>()
 
+    private var _onPermsGranted: (() -> Unit)? = null
+
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
-        // Start the foreground service once basic permissions are resolved.
-        // Background location is requested separately, deferred to BLE connect.
         MeshcoreService.start(this)
+        _onPermsGranted?.invoke()
+        _onPermsGranted = null
     }
 
     private val requestBackgroundLocation = registerForActivityResult(
@@ -188,7 +190,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-        requestRuntimePermissions()
+        // Permissions are requested lazily at BLE connect time.
     }
 
     override fun onDestroy() {
@@ -199,9 +201,9 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // ---- permissions ----------------------------------------------------
+    // ---- permission gate (called at connect/scan time) ------------------
 
-    private fun requestRuntimePermissions() {
+    fun ensureConnectPermissions(onGranted: () -> Unit) {
         val needed = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
@@ -218,17 +220,18 @@ class MainActivity : AppCompatActivity() {
         }
         if (missing.isEmpty()) {
             MeshcoreService.start(this)
+            onGranted()
         } else {
+            _onPermsGranted = onGranted
             requestPerms.launch(missing.toTypedArray())
         }
     }
-
 
     // ---- device picker (called from BleBridge) --------------------------
 
     fun requestDevice(reqId: String, filtersJson: String) {
         val prefixes = parsePrefixes(filtersJson)
-        main.post { startScanDialog(reqId, prefixes) }
+        main.post { ensureConnectPermissions { startScanDialog(reqId, prefixes) } }
     }
 
     @SuppressLint("MissingPermission")

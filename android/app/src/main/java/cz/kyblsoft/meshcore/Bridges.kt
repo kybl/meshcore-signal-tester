@@ -23,7 +23,11 @@ class BleBridge(private val activity: MainActivity) {
     fun connect(reqId: String, deviceId: String) {
         activity.checkBatteryOptimization()
         activity.checkBackgroundLocation()
-        activity.ble.connect(reqId, deviceId)
+        activity.main.post {
+            activity.ensureConnectPermissions {
+                activity.ble.connect(reqId, deviceId)
+            }
+        }
     }
 
     @JavascriptInterface
