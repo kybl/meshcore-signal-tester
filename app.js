@@ -2,7 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=87';
 
-console.log('[MeshWeb] app.js loaded, v163');
+console.log('[MeshWeb] app.js loaded, v164');
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -3291,12 +3291,12 @@ class MeshCoreApp {
         const gap = 0.08 * scale;
         // The two tones run back-to-back over one window: the first tone takes
         // 1/3 of the time, the second (pitched by SNR) the remaining 2/3.
-        // SNR range ~−20..+10 dB mapped to ~0.5..2× baseFreq (one octave up/down).
+        // SNR 0 dB = base pitch; ±10 dB = ±1 octave.
         const total = dur + gap;
         const d1 = total / 3;
         const d2 = total * 2 / 3;
         beep(baseFreq, 0, d1);
-        beep(baseFreq * Math.pow(2, ((snr ?? 0) + 10) / 30), d1, d2);
+        beep(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
     }
 
     // --- BLE Device Battery ---
