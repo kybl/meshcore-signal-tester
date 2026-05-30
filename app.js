@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=83';
+import { Signal3DMap } from './signal3d.js?v=84';
 
 // Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
 // Booleans are stored as 'true'/'false'; numbers as their string form.
@@ -663,6 +663,7 @@ class MeshCoreApp {
                 initialSphereSize: this._sphereSize,
                 initialClusterRadius: Store.num('clusterRadius', 0),
                 initialPerspSize: Store.bool('perspSize', true),
+                initialDotScaleWithZoom: Store.bool('dotScaleZoom', true),
                 onSelect:      col => {
                     this._selectRepeater(col);
                 },
@@ -726,10 +727,11 @@ class MeshCoreApp {
             });
         }
 
-        const showLinesChk  = document.getElementById('showLinesChk');
-        const showMarkerChk = document.getElementById('showMarkerChk');
-        const clusterSel    = document.getElementById('clusterRadiusSelect');
-        const perspSizeChk  = document.getElementById('perspSizeChk');
+        const showLinesChk      = document.getElementById('showLinesChk');
+        const showMarkerChk     = document.getElementById('showMarkerChk');
+        const clusterSel        = document.getElementById('clusterRadiusSelect');
+        const perspSizeChk      = document.getElementById('perspSizeChk');
+        const dotScaleZoomChk   = document.getElementById('dotScaleZoomChk');
         showLinesChk?.addEventListener('change', () => {
             this.signalMap?.setShowLines(showLinesChk.checked);
             Store.set('showLines', showLinesChk.checked);
@@ -746,6 +748,10 @@ class MeshCoreApp {
             this.signalMap?.setPerspSize(perspSizeChk.checked);
             Store.set('perspSize', perspSizeChk.checked);
         });
+        dotScaleZoomChk?.addEventListener('change', () => {
+            this.signalMap?.setDotScaleWithZoom(dotScaleZoomChk.checked);
+            Store.set('dotScaleZoom', dotScaleZoomChk.checked);
+        });
 
         // Restore saved values into the controls (the map itself was already
         // constructed with the same Store-backed defaults above).
@@ -754,7 +760,8 @@ class MeshCoreApp {
         const showMarker = Store.bool('showMarker', true);
         if (showMarkerChk) { showMarkerChk.checked = showMarker; this.signalMap?.setShowMarker(showMarker); }
         if (clusterSel)   clusterSel.value   = String(Store.num('clusterRadius', 0));
-        if (perspSizeChk) perspSizeChk.checked = Store.bool('perspSize', true);
+        if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
+        if (dotScaleZoomChk) dotScaleZoomChk.checked = Store.bool('dotScaleZoom', true);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
     }
