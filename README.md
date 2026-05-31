@@ -73,4 +73,4 @@ On connect the app sends `CMD_APP_START` (opcode `0x01`) to enable push notifica
 
 ## Author
 
-Created by **Aleš Janda**. Feedback, bug reports, and questions are welcome at [ales.janda@kyblsoft.cz](mailto:ales.janda@kyblsoft.cz) or via [GitHub Issues](https://github.com/kybl/meshcore-signal-tester/issues).
+Created by **[Aleš Janda](https://alesjanda.cz)**. Feedback, bug reports, and questions are welcome at [ales.janda@kyblsoft.cz](mailto:ales.janda@kyblsoft.cz) or via [GitHub Issues](https://github.com/kybl/meshcore-signal-tester/issues).
