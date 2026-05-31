@@ -1010,6 +1010,13 @@ class MeshCoreApp {
         this.updateStatus('Connecting...', 'disconnected');
         this.device = device;
 
+        // Nordic UART Service (NUS) — a de-facto industry standard from Nordic
+        // Semiconductor for tunnelling a serial-port-style byte stream over BLE.
+        // Bluetooth SIG defines no official "serial port" service, so MeshCore
+        // (and Meshtastic, and most BLE IoT/mesh gear) use these fixed UUIDs.
+        // RX/TX are named from the device's perspective:
+        //   NUS_RX  — we WRITE to it; bytes flow into the device
+        //   NUS_TX  — we get NOTIFICATIONS from it; bytes flow out of the device
         const NUS_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
         const NUS_RX     = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
         const NUS_TX     = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
