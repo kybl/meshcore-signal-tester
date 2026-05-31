@@ -3247,7 +3247,7 @@ class MeshCoreApp {
 
     _updateBleBattery(pct) {
         if (!this.batteryEl || !this.device) return;
-        this.batteryEl.innerHTML = `<span class="hstat-label">Device </span>🔋${pct}%`;
+        this.batteryEl.innerHTML = `<span class="hstat-label">Device </span><span class="batt-icon">🔋</span>${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (pct <= 20) this.batteryEl.classList.add('battery-low');
     }
@@ -3256,7 +3256,7 @@ class MeshCoreApp {
         if (!this.batteryEl || !this.device) return;
         // LiPo: 3000 mV = 0%, 4200 mV = 100%
         const pct = Math.round(Math.min(100, Math.max(0, (milliVolts - 3000) / 1200 * 100)));
-        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span>🔋${pct}%`;
+        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span><span class="batt-icon">🔋</span>${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (pct <= 20) this.batteryEl.classList.add('battery-low');
     }

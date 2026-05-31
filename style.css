@@ -1062,6 +1062,13 @@ html.light-theme .status.importing {
     color: #c33;
 }
 
+.batt-icon {
+    filter: grayscale(1) brightness(1.4);
+}
+html.light-theme .batt-icon {
+    filter: grayscale(1) brightness(0.45);
+}
+
 @keyframes detailOpen {
     from { opacity: 0; transform: translateY(-5px); }
     to   { opacity: 1; transform: translateY(0); }
