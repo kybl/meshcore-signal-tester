@@ -385,7 +385,7 @@ class MeshCoreApp {
         }
 
         // Point size controls
-        this._dotSize    = Store.num('dotSize', 3.5);
+        this._dotSize    = Store.num('dotSizeN', 1);
         this._sphereSize = Store.num('sphereSize', 1);
 
         const dotSizeInput = document.getElementById('dotSizeInput');
@@ -396,7 +396,7 @@ class MeshCoreApp {
             dotSizeInput.addEventListener('input', () => {
                 this._dotSize = parseFloat(dotSizeInput.value);
                 if (dotSizeVal) dotSizeVal.textContent = this._dotSize;
-                Store.set('dotSize', this._dotSize);
+                Store.set('dotSizeN', this._dotSize);
                 this._scheduleChartRender();
             });
         }
@@ -2599,11 +2599,12 @@ class MeshCoreApp {
         }
 
         // Render dimmed circles first, then highlighted on top (SVG painter order)
+        const ds = this._dotSize * 3.5;
         for (const [col, dPts] of decimGroups) {
             if (selected && selected === col) continue;
             for (const p of dPts) {
                 if (valOf(p) == null) continue;
-                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize}" fill="${this._dotColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" stroke="${dotStroke}" stroke-width="0.8"/>`);
+                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${ds}" fill="${this._dotColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" stroke="${dotStroke}" stroke-width="0.8"/>`);
             }
         }
         if (selected) {
@@ -2611,7 +2612,7 @@ class MeshCoreApp {
             if (selPts) {
                 for (const p of selPts) {
                     if (valOf(p) == null) continue;
-                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${this._dotSize * 1.43}" fill="${this._dotColor(p.col)}" fill-opacity="0.95" stroke="${dotStroke}" stroke-width="1"/>`);
+                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${ds * 1.43}" fill="${this._dotColor(p.col)}" fill-opacity="0.95" stroke="${dotStroke}" stroke-width="1"/>`);
                 }
             }
         }
@@ -2628,7 +2629,7 @@ class MeshCoreApp {
                 }
                 return pts.join(' ');
             };
-            const rNorm = this._dotSize * 1.5;
+            const rNorm = ds * 1.5;
             const rSel  = rNorm * 1.43;
             for (const p of sentPts) {
                 if (selected && selected === p.col) continue;
