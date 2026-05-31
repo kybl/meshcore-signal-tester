@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=113">
+    <link rel="stylesheet" href="style.css?v=114">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -70,6 +70,36 @@
             <div class="ping-bar" id="discoverBar">
                 <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ — nearby nodes reply with their public key and the uplink SNR they measured (firmware ≥ v1.10)">Discover nodes</button>
                 <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and the SNR they measured for your signal.<span class="help-icon" data-help="discover">?</span></span>
+            </div>
+            <div class="section-wrap" id="repeaterWrap">
+                <div class="section-header">
+                    <span class="section-title">Seen repeaters</span>
+                    <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
+                </div>
+                <div class="section-body" id="repeaterBody">
+                    <div class="section-body-inner">
+                        <div class="rep-table-scroll" id="repTableScroll">
+                            <table class="rep-table">
+                                <thead><tr>
+                                    <th data-sort-key="id">Repeater<span class="help-icon" data-help="repeater">?</span></th>
+                                    <th data-sort-key="count">RX</th>
+                                    <th data-sort-key="maxSnr">Max SNR</th>
+                                    <th data-sort-key="lastSnr">Last SNR</th>
+                                    <th data-sort-key="maxRssi">Max RSSI</th>
+                                    <th data-sort-key="lastRssi">Last RSSI</th>
+                                    <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
+                                </tr></thead>
+                                <tbody id="repTableBody"></tbody>
+                            </table>
+                        </div>
+                        <div id="repTableEmpty" class="rep-table-empty hidden">Waiting for data…</div>
+                        <div class="rep-expand-bar" id="repExpandBar">
+                            <label class="rep-expand-label">
+                                <input type="checkbox" id="repExpandTable"> Show all rows
+                            </label>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="section-wrap" id="snrChartWrap">
                 <div class="section-header">
@@ -156,37 +186,6 @@
                             <div id="mapEmpty" class="map-empty">Allow location and capture some packets to populate the 3D map.</div>
                             <div id="mapInfo" class="map-info hidden"></div>
                             <button id="mapFullscreenBtn" class="map-fullscreen-btn" title="Fullscreen">⛶</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="section-wrap" id="repeaterWrap">
-                <div class="section-header">
-                    <span class="section-title">Seen repeaters</span>
-                    <button class="collapse-btn" data-target="repeaterBody" title="Toggle section">▾</button>
-                </div>
-                <div class="section-body" id="repeaterBody">
-                    <div class="section-body-inner">
-                        <div class="rep-table-scroll" id="repTableScroll">
-                            <table class="rep-table">
-                                <thead><tr>
-                                    <th data-sort-key="id">Repeater<span class="help-icon" data-help="repeater">?</span></th>
-                                    <th data-sort-key="count">RX</th>
-                                    <th data-sort-key="maxSnr">Max SNR</th>
-                                    <th data-sort-key="lastSnr">Last SNR</th>
-                                    <th data-sort-key="maxRssi">Max RSSI</th>
-                                    <th data-sort-key="lastRssi">Last RSSI</th>
-                                    <th data-sort-key="lastSeen" class="sort-desc">Last seen</th>
-                                </tr></thead>
-                                <tbody id="repTableBody"></tbody>
-                            </table>
-                        </div>
-                        <div id="repTableEmpty" class="rep-table-empty hidden">Waiting for data…</div>
-                        <div class="rep-expand-bar" id="repExpandBar">
-                            <label class="rep-expand-label">
-                                <input type="checkbox" id="repExpandTable"> Show all rows
-                            </label>
                         </div>
                     </div>
                 </div>
