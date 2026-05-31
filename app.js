@@ -1108,7 +1108,7 @@ class MeshCoreApp {
             new DataView(cmd.buffer).setUint32(1, this._contactsLastmod, true);
         this._setContactsLoading(true);
         try { await this.bleRxCharacteristic.writeValueWithoutResponse(cmd); }
-        catch (_) { this._setContactsLoading(false); }
+        catch (e) { this._setContactsError('Contact request failed: ' + (e?.message || e)); }
     }
 
     _setContactsLoading(on) {
@@ -1120,6 +1120,15 @@ class MeshCoreApp {
         if (on) this._contactsLoadingTimeout = setTimeout(() => {
             if (this.contactsLoadingMsg) this.contactsLoadingMsg.textContent = 'Contact fetch failed — try reconnecting.';
         }, 15000);
+    }
+
+    _setContactsError(msg) {
+        clearTimeout(this._contactsLoadingTimeout);
+        if (this.contactsLoadingMsg) {
+            this.contactsLoadingMsg.style.display = '';
+            this.contactsLoadingMsg.textContent = msg;
+        }
+        console.error('[contacts]', msg);
     }
 
     _parseContact(payload) {
