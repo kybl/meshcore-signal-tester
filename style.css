@@ -1047,17 +1047,6 @@ html.light-theme .status.importing {
     box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 
-#ttlSelect {
-    font-size: 12px;
-    padding: 2px 4px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-input);
-    color: var(--text-primary);
-    cursor: pointer;
-    accent-color: #667eea;
-}
-
 .battery-status {
     font-size: 12px;
     font-weight: 700;
