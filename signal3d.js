@@ -747,6 +747,7 @@ export class Signal3DMap {
     setShowMarker(v) {
         this._showMarker = !!v;
         if (this._userMarker) this._userMarker.visible = this._showMarker;
+        this._scheduleMapUpdate();
     }
 
     setClusterRadius(r) {
@@ -864,7 +865,7 @@ export class Signal3DMap {
         const locs = this._rxPoints
             .filter(p => (!cutoff || p.time >= cutoff) && (!this._filterFn || this._filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
-        if (this._userLoc) locs.push({ lat: this._userLoc.lat, lon: this._userLoc.lon });
+        if (this._userLoc && this._showMarker) locs.push({ lat: this._userLoc.lat, lon: this._userLoc.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
         for (const l of locs) {
