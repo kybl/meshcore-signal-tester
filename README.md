@@ -19,6 +19,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 - **Repeater filter** — comma-separated prefix filter that applies to all sections simultaneously (table, charts, map)
 - **Keep screen on** — optional toggle (default on) that prevents the screen from sleeping while collecting data; persisted in localStorage
 - **Device battery** — displays BLE battery level if the device exposes the standard Battery Service (0x180F)
+- **Light / dark theme** — toggle in the header; preference is persisted in localStorage
 
 ## Requirements
 
