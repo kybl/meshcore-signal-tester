@@ -818,9 +818,9 @@ class MeshCoreApp {
             'snr':
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
             'chart-snr':
-                'Click a dot or legend label to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Circles = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover.',
+                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Circles = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover.',
             'chart-interact':
-                'Click a dot or legend label to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. The shaded area shows the estimated noise floor (RSSI − SNR).',
+                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. The shaded area shows the estimated noise floor (RSSI − SNR).',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':

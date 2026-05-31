@@ -7,7 +7,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 - **Bluetooth connection** — connects to a MeshCore companion device via Web Bluetooth; previously paired devices appear as one-click reconnect buttons
 - **Packet decoding** — uses `@michaelhart/meshcore-decoder` to decode MeshCore packets; extracts type, path, repeater IDs, RSSI, SNR, and payload fields
 - **Seen repeaters table** — per-repeater statistics (RX count, max/last RSSI, max/last SNR, last seen); sortable columns
-- **RSSI & SNR history charts** — scrolling time-series per repeater with noise floor estimate; click a legend label or chart dot to highlight one repeater across all views
+- **RSSI & SNR history charts** — scrolling time-series per repeater with noise floor estimate; click a chart dot to highlight one repeater across all views
 - **Signal 3D map** — places each received packet as a dot at your GPS position; height encodes SNR (taller = higher SNR); map tile sources: Mapy.com (basic/outdoor/aerial/winter) and OpenStreetMap (standard/OpenTopoMap)
 - **Received packets table** — one row per unique packet hash, one column pair (RSSI/SNR) per repeater; click a cell to expand full packet detail with ms-precision reception time and raw hex; filterable and CSV-exportable
 - **Repeater ID prefix resolution** — path IDs can arrive as 1–3-byte prefixes of full 4-byte node IDs; the app progressively promotes shorter labels to longer ones, and splits columns into collision labels (e.g. `1234/1289`) when an ID turns out to be ambiguous
@@ -37,7 +37,7 @@ The key benefit over a browser tab: BLE and GPS run in a **native foreground ser
 
 APK releases are published on [GitHub](https://github.com/kybl/meshcore-signal-tester/releases).
 
-**iOS:** There is no iOS version. This is a hobby project and the author doesn't own an iOS device to build or test on. iOS browsers also don't support Web Bluetooth, so even the web version won't connect there.
+**iOS:** There is no iOS version. This is a hobby project and the author doesn't own an iOS device to build or test on.
 
 ## File structure
 
