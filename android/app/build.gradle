@@ -15,8 +15,18 @@ android {
         versionName "1.0"
     }
 
+    signingConfigs {
+        release {
+            storeFile file(project.findProperty("KEYSTORE_PATH") ?: "release.keystore")
+            storePassword project.findProperty("KEYSTORE_PASS") ?: ""
+            keyAlias     project.findProperty("KEY_ALIAS")      ?: "meshcore"
+            keyPassword  project.findProperty("KEY_PASS")       ?: ""
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }

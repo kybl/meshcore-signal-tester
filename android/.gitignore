@@ -6,3 +6,8 @@ local.properties
 .idea/
 captures/
 .cxx/
+
+# Signing — never commit keystores or credentials
+*.keystore
+*.jks
+keystore.properties
