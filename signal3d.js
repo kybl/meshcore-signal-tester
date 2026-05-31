@@ -1354,8 +1354,8 @@ export class Signal3DMap {
         );
         const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
         const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
-        addPoints(sentLit, 1.0,  1.6, this._starTex);
-        addPoints(sentDim, 0.07, 1.6, this._starTex);
+        addPoints(sentLit, 1.0,  3.2, this._starTex);
+        addPoints(sentDim, 0.07, 3.2, this._starTex);
 
         this._rebuildPins();
         this._updatePerspUniforms();
