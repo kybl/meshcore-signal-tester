@@ -385,7 +385,7 @@ class MeshCoreApp {
         }
 
         // Point size controls
-        this._dotSize    = Store.num('dotSizeN', 1);
+        this._dotSize    = Store.num('dotSize', 1);
         this._sphereSize = Store.num('sphereSize', 1);
 
         const dotSizeInput = document.getElementById('dotSizeInput');
@@ -396,7 +396,7 @@ class MeshCoreApp {
             dotSizeInput.addEventListener('input', () => {
                 this._dotSize = parseFloat(dotSizeInput.value);
                 if (dotSizeVal) dotSizeVal.textContent = this._dotSize;
-                Store.set('dotSizeN', this._dotSize);
+                Store.set('dotSize', this._dotSize);
                 this._scheduleChartRender();
             });
         }
