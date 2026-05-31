@@ -1063,7 +1063,7 @@ html.light-theme .status.importing {
 }
 
 .batt-icon {
-    filter: grayscale(1) brightness(1.4);
+    filter: grayscale(1) brightness(0.85);
 }
 html.light-theme .batt-icon {
     filter: grayscale(1) brightness(0.45);
