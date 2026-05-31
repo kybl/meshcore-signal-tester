@@ -366,16 +366,6 @@ html.light-theme .status.importing {
     opacity: 0.8;
 }
 
-.sound-select {
-    font-size: 12px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-input);
-    color: var(--text-primary);
-    cursor: pointer;
-    padding: 1px 3px;
-    accent-color: #667eea;
-}
 
 .section-title {
     font-size: 10px;
@@ -981,13 +971,14 @@ html.light-theme .status.importing {
 }
 
 .ttl-header-select {
-    font-size: 11px;
+    font-size: 12px;
     padding: 1px 4px;
     border-radius: 4px;
     background: var(--bg-input);
     color: var(--text-primary);
     border: 1px solid var(--border);
     cursor: pointer;
+    accent-color: #667eea;
 }
 
 #uiScaleSelect {
@@ -2045,8 +2036,7 @@ html.light-theme .contacts-loading { color: #1a6080; }
     width: 100%;
 }
 
-.ttl-header-select option,
-.sound-select option {
+.ttl-header-select option {
     font-size: 13px;
 }
 .contacts-loading {
