@@ -3257,6 +3257,7 @@ class MeshCoreApp {
 
     _updateBleBattery(pct) {
         if (!this.batteryEl || !this.device) return;
+        if (pct >= 100) return; // BLE Battery Service often reports 100% incorrectly
         this.batteryEl.innerHTML = `<span class="hstat-label">Device </span><span class="batt-icon">🔋</span>${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (pct <= 20) this.batteryEl.classList.add('battery-low');
