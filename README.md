@@ -21,6 +21,20 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 - **Device battery** — displays BLE battery level if the device exposes the standard Battery Service (0x180F)
 - **Light / dark theme** — toggle in the header; preference is persisted in localStorage
 
+## Screenshots
+
+<img src="docs/charts.webp" width="100%" alt="Seen Repeaters table and SNR/RSSI history charts">
+
+*Seen Repeaters table with per-repeater statistics, SNR history chart (incoming + outgoing ★), and RSSI history with noise floor estimate.*
+
+<img src="docs/3dmap.webp" width="100%" alt="Signal 3D map">
+
+*Signal 3D map — each dot is positioned at the GPS location where the packet was received; height encodes SNR.*
+
+<img src="docs/packets.webp" width="100%" alt="Received Packets table with expanded packet detail">
+
+*Received Packets table grouped by message hash; expanded row shows full decoded packet including path, payload, and GPS position.*
+
 ## Requirements
 
 - Chrome, Edge, or Opera (Web Bluetooth API required; Safari and Firefox are not supported)
