@@ -39,6 +39,8 @@ class MainActivity : AppCompatActivity() {
 
     lateinit var ble: BleManager
         private set
+    lateinit var serial: SerialManager
+        private set
     lateinit var location: LocationHelper
         private set
 
@@ -113,6 +115,7 @@ class MainActivity : AppCompatActivity() {
 
         jsApi = JsApi(webView)
         ble = BleManager(applicationContext, jsApi)
+        serial = SerialManager(applicationContext, jsApi)
         location = LocationHelper(applicationContext, jsApi)
 
         with(webView.settings) {
@@ -124,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.addJavascriptInterface(BleBridge(this), "AndroidBle")
+        webView.addJavascriptInterface(SerialBridge(this), "AndroidSerial")
         webView.addJavascriptInterface(GeoBridge(this), "AndroidGeo")
         webView.addJavascriptInterface(FilesBridge(this), "AndroidFiles")
         webView.addJavascriptInterface(ScreenBridge(this), "AndroidScreen")
@@ -203,12 +207,12 @@ class MainActivity : AppCompatActivity() {
 
     // ---- permission gate (called at connect/scan time) ------------------
 
-    fun ensureConnectPermissions(onGranted: () -> Unit) {
+    fun ensureConnectPermissions(includeBluetooth: Boolean = true, onGranted: () -> Unit) {
         val needed = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
-        if (Build.VERSION.SDK_INT >= 31) {
+        if (includeBluetooth && Build.VERSION.SDK_INT >= 31) {
             needed += Manifest.permission.BLUETOOTH_SCAN
             needed += Manifest.permission.BLUETOOTH_CONNECT
         }
@@ -232,6 +236,38 @@ class MainActivity : AppCompatActivity() {
     fun requestDevice(reqId: String, filtersJson: String) {
         val prefixes = parsePrefixes(filtersJson)
         main.post { ensureConnectPermissions { startScanDialog(reqId, prefixes) } }
+    }
+
+    // ---- USB serial picker (called from SerialBridge) -------------------
+
+    fun requestSerialPort(reqId: String) {
+        val drivers = serial.availableDrivers()
+        if (drivers.isEmpty()) {
+            Toast.makeText(
+                this,
+                "No USB serial device found. Plug in your device and tap Connect USB again.",
+                Toast.LENGTH_LONG
+            ).show()
+            jsApi.resolve(reqId, false, errJson("NotFoundError", "No USB serial devices found"))
+            return
+        }
+        // A single device goes straight to the system USB permission prompt;
+        // multiple devices get a chooser first.
+        if (drivers.size == 1) {
+            serial.requestPermission(reqId, drivers[0])
+            return
+        }
+        val labels = drivers.map { serial.deviceLabel(it.device) }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Select USB device")
+            .setItems(labels) { _, which -> serial.requestPermission(reqId, drivers[which]) }
+            .setNegativeButton("Cancel") { _, _ ->
+                jsApi.resolve(reqId, false, errJson("NotFoundError", "User cancelled device selection"))
+            }
+            .setOnCancelListener {
+                jsApi.resolve(reqId, false, errJson("NotFoundError", "User cancelled device selection"))
+            }
+            .show()
     }
 
     @SuppressLint("MissingPermission")

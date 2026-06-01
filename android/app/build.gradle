@@ -78,4 +78,7 @@ dependencies {
     // (https://appassets.androidplatform.net) instead of file://, so map
     // tile servers see a real Origin and WebGL textures load correctly.
     implementation 'androidx.webkit:webkit:1.11.0'
+    // USB host serial driver (CDC-ACM, CP21xx, CH34x, FTDI, Prolific) — backs
+    // the navigator.serial polyfill so the web app's USB connection works.
+    implementation 'com.github.mik3y:usb-serial-for-android:3.10.0'
 }

@@ -3,5 +3,5 @@
     <string name="app_name">MeshCore Signal Tester</string>
     <string name="notif_channel_name">Signal capture</string>
     <string name="notif_title">MeshCore Signal Tester</string>
-    <string name="notif_text">Capturing signal — Bluetooth + GPS active</string>
+    <string name="notif_text">Capturing signal — radio + GPS active</string>
 </resources>

@@ -8,3 +8,6 @@
 # in obfuscating it, and R8 inlining/renaming Kotlin lambdas and @Synchronized
 # methods in BleManager breaks the GATT operation queue.
 -keep class cz.kyblsoft.meshcore.** { *; }
+
+# usb-serial-for-android instantiates driver classes by name; keep them intact.
+-keep class com.hoho.android.usbserial.** { *; }

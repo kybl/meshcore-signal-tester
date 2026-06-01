@@ -10,6 +10,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // usb-serial-for-android is published via JitPack
+        maven { url 'https://jitpack.io' }
     }
 }
 

@@ -7,21 +7,26 @@ drop the Bluetooth connection when the screen turns off; this app doesn't.
 
 ## How it works
 
-A plain WebView cannot do Web Bluetooth, so the app does **not** just show the
-page. Instead:
+A plain WebView cannot do Web Bluetooth or Web Serial, so the app does **not**
+just show the page. Instead:
 
 - **Native BLE** (`BleManager.kt`) owns the GATT connection (Nordic UART
   Service) and serialises GATT operations.
+- **Native USB serial** (`SerialManager.kt`) owns the USB host connection via
+  the [`usb-serial-for-android`](https://github.com/mik3y/usb-serial-for-android)
+  library (CDC-ACM, CP21xx, CH34x, FTDI, Prolific), so a companion plugged in
+  over USB-C works just like a Bluetooth one.
 - **Native GPS** (`LocationHelper.kt`) streams fixes from the framework
   `LocationManager` (no Google Play Services needed).
 - A **foreground service** (`MeshcoreService.kt`) holds a partial wake lock and
   declares the `location` + `connectedDevice` service types, so Android keeps
-  the process — and therefore the BLE/GPS callbacks — running with the screen
-  off.
+  the process — and therefore the BLE/USB/GPS callbacks — running with the
+  screen off.
 - The web UI runs in a `WebView` (`MainActivity.kt`). `native-bridge.js` (loaded
-  by the page) polyfills `navigator.bluetooth` and `navigator.geolocation` onto
-  the native interfaces `AndroidBle` / `AndroidGeo`, so the existing `app.js`
-  and `signal3d.js` run **unchanged**.
+  by the page) polyfills `navigator.bluetooth`, `navigator.serial` and
+  `navigator.geolocation` onto the native interfaces `AndroidBle` /
+  `AndroidSerial` / `AndroidGeo`, so the existing `app.js` and `signal3d.js`
+  run **unchanged**.
 
 The web files are bundled into the APK at build time (see `copyWebApp` in
 `app/build.gradle`) and served from `https://appassets.androidplatform.net/…`,
@@ -58,6 +63,15 @@ After installing, for screen-off capture to survive:
 
 Then connect to your device in the app, lock the screen, and walk. The ongoing
 notification confirms the capture service is alive.
+
+## Connecting over USB
+
+Tap **Connect USB** instead of **Connect Bluetooth**. Plug the companion into
+the phone's USB-C port (an OTG adapter may be needed on some phones) and grant
+the "Allow access to the USB device" prompt. Previously authorised devices show
+up as one-tap reconnect buttons, the same as Bluetooth devices. Background
+capture with the screen off works over USB too — the foreground service's
+`connectedDevice` type keeps the process alive even without Bluetooth.
 
 ## Package
 
