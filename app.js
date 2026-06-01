@@ -36,6 +36,14 @@ class MeshCoreApp {
     constructor() {
         this.device = null;
         this.bleRxCharacteristic = null;
+        // Transport abstraction: 'ble' (Nordic UART, one frame per notification)
+        // or 'serial' (Web Serial, length-prefixed frames). null = disconnected.
+        this.transportKind = null;
+        this.serialPort = null;
+        this.serialReader = null;
+        this._serialReadBuffer = new Uint8Array(0);
+        this._serialClosing = false;
+        this._onSerialDisconnect = null;
         this.hashData = new Map();
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
@@ -196,6 +204,13 @@ class MeshCoreApp {
         });
 
         this.connectBtn.onclick = () => this.connectBluetooth();
+
+        this.connectUsbBtn = document.getElementById('connectUsbBtn');
+        if (this.connectUsbBtn) {
+            // Hide the USB button entirely if the browser has no Web Serial API
+            if (!navigator.serial) this.connectUsbBtn.classList.add('hidden');
+            else this.connectUsbBtn.onclick = () => this.connectUsb();
+        }
 
         // Pair-hover: hovering RSSI or SNR highlights both cells for that repeater
         if (this.msgTableBody) {
@@ -925,6 +940,7 @@ class MeshCoreApp {
         }
         try {
             this.connectBtn.disabled = true;
+            this._setUsbBtnVisible(false);
             this.updateStatus('Scanning...', 'disconnected');
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
@@ -1001,13 +1017,25 @@ class MeshCoreApp {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
+        this._setUsbBtnVisible(true);
+    }
+
+    // The USB button is hidden while a connection (of either kind) is being set
+    // up or is active; the primary connectBtn doubles as the Cancel/Disconnect
+    // control for both transports.
+    _setUsbBtnVisible(visible) {
+        if (!this.connectUsbBtn || !navigator.serial) return;
+        this.connectUsbBtn.classList.toggle('hidden', !visible);
+        this.connectUsbBtn.disabled = false;
     }
 
     async connectToDevice(device) {
         this.connectBtn.textContent = 'Cancel';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.disconnect();
+        this._setUsbBtnVisible(false);
         this.updateStatus('Connecting...', 'disconnected');
+        this.transportKind = 'ble';
         this.device = device;
 
         // Nordic UART Service (NUS) — a de-facto industry standard from Nordic
@@ -1082,6 +1110,9 @@ class MeshCoreApp {
     _startConnectionMonitor() {
         clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
+        // Serial disconnects are detected by the read loop / port 'disconnect'
+        // event, not by polling gatt.connected — skip the monitor for serial.
+        if (this.transportKind === 'serial') return;
         // Delay first check: gatt.connected can be transiently false during GATT setup
         this._monitorDelay = setTimeout(() => {
             this._monitorDelay = null;
@@ -1093,21 +1124,161 @@ class MeshCoreApp {
         }, 5000);
     }
 
+    // --- USB / Web Serial connection ---
+
+    async connectUsb() {
+        if (!navigator.serial) {
+            alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
+            return;
+        }
+        try {
+            this.connectBtn.disabled = true;
+            this._setUsbBtnVisible(false);
+            this.updateStatus('Scanning...', 'disconnected');
+            // No filters — MeshCore companions appear behind many USB-serial
+            // bridges (CP210x, CH340, native USB CDC), so we let the user pick.
+            const port = await navigator.serial.requestPort({ filters: [] });
+            await this.connectToSerialPort(port);
+        } catch (error) {
+            if (error.name !== 'NotFoundError') {
+                alert('Connection error: ' + error.message);
+            }
+            if (this.serialPort || this.device) this.onDisconnected();
+            else this._resetConnectBtn();
+        }
+    }
+
+    async connectToSerialPort(port) {
+        this.connectBtn.textContent = 'Cancel';
+        this.connectBtn.disabled = false;
+        this.connectBtn.onclick = () => this.disconnect();
+        this._setUsbBtnVisible(false);
+        this.updateStatus('Connecting...', 'disconnected');
+
+        await port.open({ baudRate: 115200 });
+
+        this.transportKind = 'serial';
+        this.serialPort = port;
+        // A lightweight stand-in for the BLE device object so that the many
+        // `this.device` "are we connected?" guards across the app keep working.
+        this.device = { kind: 'serial' };
+        this._serialReadBuffer = new Uint8Array(0);
+        this._serialClosing = false;
+        this.serialReader = port.readable.getReader();
+
+        // Physical unplug fires a 'disconnect' event on the port.
+        this._onSerialDisconnect = () => this.onDisconnected();
+        port.addEventListener('disconnect', this._onSerialDisconnect);
+
+        this._startSerialReadLoop(port);
+
+        await this.sendAppStart();
+        await new Promise(r => setTimeout(r, 300));
+        await this.sendGetContacts();
+
+        this.updateStatus('Connected', 'connected');
+        this.connectBtn.textContent = 'Disconnect';
+        this.connectBtn.disabled = false;
+        this.connectBtn.onclick = () => this.disconnect();
+        this._collecting = true;
+        this._updatePauseBtn();
+        if (this.emptyState) {
+            const p = this.emptyState.querySelector('p');
+            if (p) p.textContent = 'Connected. Waiting for first RX log…';
+        }
+    }
+
+    async _startSerialReadLoop(port) {
+        try {
+            while (this.serialPort === port) {
+                const { value, done } = await this.serialReader.read();
+                if (done) break;
+                if (value && value.length) this._onSerialBytes(value);
+            }
+        } catch (e) {
+            // TypeError is expected when the reader lock is released on disconnect.
+            if (!this._serialClosing && !(e instanceof TypeError)) {
+                console.warn('Serial read error:', e);
+            }
+        }
+        // Read loop ended unexpectedly (cable pulled / device reset) — tear down.
+        if (this.serialPort === port && !this._serialClosing) this.onDisconnected();
+    }
+
+    // Reassemble length-prefixed serial frames from a (possibly partial) byte
+    // chunk. Frame = [type, lenLSB, lenMSB, ...payload]; type 0x3e ('>') is
+    // radio→app, 0x3c ('<') is app→radio. Unknown leading bytes are skipped to
+    // resynchronise after any corruption.
+    _onSerialBytes(chunk) {
+        if (this._serialReadBuffer.length) {
+            const merged = new Uint8Array(this._serialReadBuffer.length + chunk.length);
+            merged.set(this._serialReadBuffer, 0);
+            merged.set(chunk, this._serialReadBuffer.length);
+            this._serialReadBuffer = merged;
+        } else {
+            this._serialReadBuffer = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        }
+
+        const buf = this._serialReadBuffer;
+        const HDR = 3;
+        let offset = 0;
+        while (buf.length - offset >= HDR) {
+            const type = buf[offset];
+            if (type !== 0x3e && type !== 0x3c) { offset++; continue; }
+            const len = buf[offset + 1] | (buf[offset + 2] << 8);
+            if (len === 0) { offset++; continue; }
+            if (buf.length - offset < HDR + len) break; // wait for the rest of the frame
+            const frame = buf.slice(offset + HDR, offset + HDR + len);
+            offset += HDR + len;
+            try { this.handlePayload(frame); }
+            catch (e) { console.error('Frame handling error:', e); }
+        }
+        this._serialReadBuffer = offset > 0 ? buf.slice(offset) : buf;
+    }
+
+    // Wrap a MeshCore command in a serial frame and write it to the port.
+    async _serialSendFrame(data) {
+        if (!this.serialPort) return;
+        const frame = new Uint8Array(3 + data.length);
+        frame[0] = 0x3c; // "<" app → radio
+        frame[1] = data.length & 0xff;
+        frame[2] = (data.length >> 8) & 0xff;
+        frame.set(data, 3);
+        const writer = this.serialPort.writable.getWriter();
+        try { await writer.write(frame); }
+        finally { try { writer.releaseLock(); } catch (e) {} }
+    }
+
+    // Transport-agnostic frame send: raw notification write over BLE, or
+    // length-prefixed frame over serial.
+    async _sendFrame(bytes) {
+        if (this.transportKind === 'serial') {
+            await this._serialSendFrame(bytes);
+        } else if (this.bleRxCharacteristic) {
+            await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
+        }
+    }
+
+    // True when a transport is up and able to accept commands.
+    _canSend() {
+        return this.transportKind === 'serial' ? !!this.serialPort : !!this.bleRxCharacteristic;
+    }
+
     async sendAppStart() {
         // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
         const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
-        await this.bleRxCharacteristic.writeValueWithoutResponse(payload);
+        await this._sendFrame(payload);
     }
 
     async sendGetContacts() {
-        if (!this.bleRxCharacteristic) return;
+        if (!this._canSend()) return;
         // CMD_GET_CONTACTS = 0x04; optional 4-byte LE lastmod for incremental sync
         const cmd = new Uint8Array(this._contactsLastmod > 0 ? 5 : 1);
         cmd[0] = 0x04;
         if (this._contactsLastmod > 0)
             new DataView(cmd.buffer).setUint32(1, this._contactsLastmod, true);
         this._setContactsLoading(true);
-        try { await this.bleRxCharacteristic.writeValueWithoutResponse(cmd); }
+        try { await this._sendFrame(cmd); }
         catch (e) { this._setContactsError('Contact request failed: ' + (e?.message || e)); }
     }
 
@@ -1243,7 +1414,7 @@ class MeshCoreApp {
     // Send one DISCOVER_REQ, then wait 2 s to collect responses before re-enabling the button.
     async startDiscoverSequence(filterMask) {
         const btn = document.getElementById('discoverBtn');
-        if (!this.bleRxCharacteristic) {
+        if (!this._canSend()) {
             if (btn) { btn.textContent = '⚠ Not connected'; setTimeout(() => { btn.textContent = 'Discover nodes'; }, 2500); }
             return;
         }
@@ -1267,7 +1438,7 @@ class MeshCoreApp {
     }
 
     async sendDiscoverRequest(filterMask, tag) {
-        if (!this.bleRxCharacteristic) return;
+        if (!this._canSend()) return;
         // CMD_SEND_CONTROL_DATA (0x37) + CTL_TYPE_NODE_DISCOVER_REQ (0x80) + filter + tag (4 B LE)
         // filter bits: 0=Chat, 1=Repeater, 2=Room, 3=Sensor
         if (tag === undefined) tag = (Math.random() * 0xFFFFFFFF) >>> 0;
@@ -1278,7 +1449,7 @@ class MeshCoreApp {
         if (!this._discoverTags) this._discoverTags = new Map();
         this._discoverTags.set(tag, Date.now());
         try {
-            await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
+            await this._sendFrame(bytes);
         } catch (e) { console.error('sendDiscoverRequest:', e); }
     }
 
@@ -3688,6 +3859,13 @@ class MeshCoreApp {
     }
 
     async disconnect() {
+        // Serial teardown is handled synchronously inside onDisconnected().
+        if (this.transportKind === 'serial') {
+            this._serialClosing = true;
+            this.onDisconnected();
+            return;
+        }
+
         // Grab refs before onDisconnected nulls them
         const device = this.device;
         const txChar = this.txCharacteristic;
@@ -3751,17 +3929,34 @@ class MeshCoreApp {
         this._batteryCharacteristic = null;
         this.txCharacteristic = null;
         this.bleRxCharacteristic = null;
+        // Serial teardown: release the reader lock (this unblocks the read loop)
+        // and close the port. Releasing the lock with a read pending makes that
+        // read() reject with a TypeError, which the read loop swallows.
+        if (this._onSerialDisconnect && this.serialPort) {
+            try { this.serialPort.removeEventListener('disconnect', this._onSerialDisconnect); } catch (e) {}
+        }
+        this._onSerialDisconnect = null;
+        try { this.serialReader?.releaseLock(); } catch (e) {}
+        this.serialReader = null;
+        if (this.serialPort) {
+            const sp = this.serialPort;
+            this.serialPort = null;
+            Promise.resolve().then(() => sp.close()).catch(() => {});
+        }
+        this._serialReadBuffer = new Uint8Array(0);
+        this.transportKind = null;
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
+        this._setUsbBtnVisible(true);
         this._collecting = false;
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
-            if (p) p.textContent = 'Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.';
+            if (p) p.textContent = 'Connect to a MeshCore companion device via Bluetooth or USB to start monitoring RX logs.';
         }
     }
 }

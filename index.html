@@ -27,6 +27,7 @@
             <span id="status" class="status disconnected">Disconnected</span>
             <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
             <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
+            <button id="connectUsbBtn" class="btn-primary">Connect USB</button>
             <span id="batteryStatus" class="battery-status hidden"></span>
             <div id="savedDevices" class="saved-devices hidden"></div>
             <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀️</button>
@@ -57,7 +58,7 @@
     <div class="container">
         <main>
             <div id="emptyState" class="empty-state">
-                <p>Connect to a MeshCore companion device via Bluetooth to start monitoring RX logs.</p>
+                <p>Connect to a MeshCore companion device via Bluetooth or USB to start monitoring RX logs.</p>
             </div>
 
             <div class="rep-filter-bar" id="repFilterBar">
@@ -272,10 +273,10 @@
         <div class="help-modal">
             <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
             <div class="help-modal-title">MeshCore Signal Tester</div>
-            <p class="help-modal-intro">Connects via Bluetooth to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Ping</b> button sends a zero-hop self-advertisement so nearby repeaters announce themselves; everything else is passive listening.</p>
+            <p class="help-modal-intro">Connects via Bluetooth or USB to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Ping</b> button sends a zero-hop self-advertisement so nearby repeaters announce themselves; everything else is passive listening.</p>
 
             <div class="help-section-title">Getting started</div>
-            <p>Click <b>Connect Bluetooth</b> and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
+            <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection) and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously paired Bluetooth devices appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -320,6 +321,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=183"></script>
+    <script type="module" src="app.js?v=184"></script>
 </body>
 </html>

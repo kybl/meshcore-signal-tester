@@ -1,6 +1,6 @@
 # MeshCore Signal Tester
 
-Web application for real-time monitoring of LoRa mesh traffic from a MeshCore companion radio via Bluetooth.
+Web application for real-time monitoring of LoRa mesh traffic from a MeshCore companion radio via Bluetooth or USB.
 
 ### Live app: [meshcore.kyblsoft.cz/signal-tester](https://meshcore.kyblsoft.cz/signal-tester)
 #### Android app available in [repo releases](https://github.com/kybl/meshcore-signal-tester/releases).</sub>
@@ -8,6 +8,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 ## Features
 
 - **Bluetooth connection** — connects to a MeshCore companion device via Web Bluetooth; previously paired devices appear as one-click reconnect buttons
+- **USB connection** — connects to a MeshCore companion device over USB serial via the Web Serial API (Chrome/Edge/Opera desktop)
 - **Packet decoding** — uses `@michaelhart/meshcore-decoder` to decode MeshCore packets; extracts type, path, repeater IDs, RSSI, SNR, and payload fields; packets are grouped by message so it's visible which repeaters forwarded which message
 - **Seen repeaters table** — per-repeater statistics (RX count, max/last RSSI, max/last SNR, last seen); sortable columns
 - **RSSI & SNR history charts** — scrolling time-series per repeater with noise floor estimate; click a chart dot to highlight one repeater across all views
@@ -38,13 +39,13 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 
 ## Requirements
 
-- Chrome, Edge, or Opera (Web Bluetooth API required; Safari and Firefox are not supported)
+- Chrome, Edge, or Opera (Web Bluetooth / Web Serial APIs required; Safari and Firefox are not supported)
 - Page must be served over **HTTPS or localhost**
 
 ## How to use
 
 1. Serve the directory over HTTPS or open `index.html` via `localhost`
-2. Click **Connect Bluetooth** and select your MeshCore companion device
+2. Click **Connect Bluetooth** (wireless) or **Connect USB** (wired serial) and select your MeshCore companion device
 3. Packet data appears automatically as the device receives LoRa traffic
 
 ## Android app
@@ -69,9 +70,11 @@ APK releases are published on [GitHub](https://github.com/kybl/meshcore-signal-t
 | `vendor/` | Locally bundled JS deps (three.js, MapControls, meshcore-decoder) so the app runs fully offline |
 | `android/` | Native Android wrapper for background (screen-off) capture |
 
-## Bluetooth protocol
+## Transport protocols
 
-Uses Nordic UART Service (NUS):
+Both transports carry the same MeshCore companion command/response frames; only the framing differs.
+
+### Bluetooth — Nordic UART Service (NUS)
 
 | Role | UUID |
 |------|------|
@@ -79,13 +82,31 @@ Uses Nordic UART Service (NUS):
 | Write (app → device) | `6e400002-b5a3-f393-e0a9-e50e24dcca9e` |
 | Notify (device → app) | `6e400003-b5a3-f393-e0a9-e50e24dcca9e` |
 
+Each BLE notification (and each write) carries exactly one complete frame — no extra framing.
+
+### USB — Web Serial
+
+Opened at **115200 baud**. The byte stream is split into frames with a 3-byte header:
+
+| Byte | Meaning |
+|------|---------|
+| 0 | Frame type — `0x3c` (`<`) app → radio, `0x3e` (`>`) radio → app |
+| 1–2 | Payload length, unsigned 16-bit little-endian |
+| 3… | Payload (the same frame body sent over BLE) |
+
+The app accumulates incoming bytes and extracts complete frames as they arrive, resynchronising past any unexpected bytes. This matches the framing used by [`meshcore.js`](https://github.com/meshcore-dev/meshcore.js) and the official MeshCore web app.
+
+### Common command flow
+
 On connect the app sends `CMD_APP_START` (opcode `0x01`) to enable push notifications. The device then sends LoRa RX events (opcodes `0x84`, `0x88`, `0x8e`) carrying SNR, RSSI, and a raw LoRa payload, plus battery voltage events (opcode `0x0c`).
 
 ## References
 
 - [MeshCore Decoder](https://github.com/michaelhart/meshcore-decoder) — TypeScript library for packet decoding
 - [Web Bluetooth API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API) — MDN documentation
+- [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API) — MDN documentation
 - [Nordic UART Service](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/libraries/bluetooth_services/services/nus.html) — NUS specification
+- [meshcore.js](https://github.com/meshcore-dev/meshcore.js) — reference JS client (BLE / serial / TCP transports)
 
 ## Author
 
