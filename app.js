@@ -962,6 +962,11 @@ class MeshCoreApp {
     }
 
     async quickConnect(deviceId) {
+        const saved = this.getSavedDevices().find(d => d.id === deviceId);
+        if (saved?.transport === 'serial') {
+            return this.quickConnectSerial(saved);
+        }
+
         // Try getDevices() for zero-friction reconnect (Chrome 85+, may need flag)
         if (navigator.bluetooth?.getDevices) {
             let device;
@@ -986,10 +991,10 @@ class MeshCoreApp {
         }
 
         // Fall back to requestDevice — use saved name as filter so picker pre-selects it
-        const saved = this.getSavedDevices().find(d => d.id === deviceId);
         const name = saved?.name;
         try {
             this.connectBtn.disabled = true;
+            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
             this.updateStatus('Scanning...', 'disconnected');
             const filters = (name && name !== 'Unknown')
                 ? [{ name }]
@@ -1007,6 +1012,46 @@ class MeshCoreApp {
                 alert('Connection error: ' + error.message);
             }
             if (this.device) this.onDisconnected();
+            else this._resetConnectBtn();
+        }
+    }
+
+    async quickConnectSerial(saved) {
+        if (!navigator.serial) {
+            alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
+            return;
+        }
+        try {
+            this.connectBtn.disabled = true;
+            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
+            this.updateStatus('Scanning...', 'disconnected');
+
+            // Look for an already-authorised port matching the saved vid/pid so
+            // we can skip the picker entirely. Only match when we have a real
+            // USB id — otherwise distinct ports would be indistinguishable.
+            let port = null;
+            if (saved.usbVendorId != null || saved.usbProductId != null) {
+                try {
+                    const ports = await navigator.serial.getPorts();
+                    port = ports.find(p => {
+                        let info = {};
+                        try { info = p.getInfo?.() || {}; } catch (e) {}
+                        return info.usbVendorId === saved.usbVendorId
+                            && info.usbProductId === saved.usbProductId;
+                    }) || null;
+                } catch (e) { console.warn('getPorts failed:', e); }
+            }
+
+            // No authorised match (first use on this machine, permission reset,
+            // etc.) — fall back to the picker, exactly like the BLE path does.
+            if (!port) port = await navigator.serial.requestPort({ filters: [] });
+
+            await this.connectToSerialPort(port);
+        } catch (error) {
+            if (error.name !== 'NotFoundError') {
+                alert('Connection error: ' + error.message);
+            }
+            if (this.serialPort || this.device) this.onDisconnected();
             else this._resetConnectBtn();
         }
     }
@@ -1176,6 +1221,8 @@ class MeshCoreApp {
         await this.sendAppStart();
         await new Promise(r => setTimeout(r, 300));
         await this.sendGetContacts();
+
+        this.saveSerialPort(port);
 
         this.updateStatus('Connected', 'connected');
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
@@ -1463,8 +1510,35 @@ class MeshCoreApp {
         const existing = devices.find(d => d.id === device.id);
         if (existing) {
             existing.name = device.name || existing.name;
+            existing.transport = 'ble';
         } else {
-            devices.push({ id: device.id, name: device.name || 'Unknown' });
+            devices.push({ id: device.id, name: device.name || 'Unknown', transport: 'ble' });
+        }
+        Store.set('devices', JSON.stringify(devices));
+        this._renderSavedDevices();
+    }
+
+    // Serial ports expose no stable id or name — only the USB vendor/product id
+    // (and only for USB-backed ports). We key the saved entry on those so a
+    // previously-authorised port can be re-opened without the picker. Two
+    // identical adapters are indistinguishable and collapse to one entry.
+    saveSerialPort(port) {
+        let info = {};
+        try { info = port.getInfo?.() || {}; } catch (e) {}
+        const vid = info.usbVendorId;
+        const pid = info.usbProductId;
+        const hex4 = n => (n == null ? '????' : n.toString(16).padStart(4, '0').toUpperCase());
+        const id = `serial:${hex4(vid)}:${hex4(pid)}`;
+        const name = (vid != null || pid != null) ? `USB ${hex4(vid)}:${hex4(pid)}` : 'USB device';
+        const devices = this.getSavedDevices();
+        const existing = devices.find(d => d.id === id);
+        if (existing) {
+            existing.name = name;
+            existing.transport = 'serial';
+            existing.usbVendorId = vid;
+            existing.usbProductId = pid;
+        } else {
+            devices.push({ id, name, transport: 'serial', usbVendorId: vid, usbProductId: pid });
         }
         Store.set('devices', JSON.stringify(devices));
         this._renderSavedDevices();

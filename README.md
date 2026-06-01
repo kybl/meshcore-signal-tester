@@ -8,7 +8,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 ## Features
 
 - **Bluetooth connection** — connects to a MeshCore companion device via Web Bluetooth; previously paired devices appear as one-click reconnect buttons
-- **USB connection** — connects to a MeshCore companion device over USB serial via the Web Serial API (Chrome/Edge/Opera desktop)
+- **USB connection** — connects to a MeshCore companion device over USB serial via the Web Serial API (Chrome/Edge/Opera desktop); previously used ports appear as one-click reconnect buttons alongside Bluetooth devices (labelled by USB vendor/product id, since serial ports expose no name)
 - **Packet decoding** — uses `@michaelhart/meshcore-decoder` to decode MeshCore packets; extracts type, path, repeater IDs, RSSI, SNR, and payload fields; packets are grouped by message so it's visible which repeaters forwarded which message
 - **Seen repeaters table** — per-repeater statistics (RX count, max/last RSSI, max/last SNR, last seen); sortable columns
 - **RSSI & SNR history charts** — scrolling time-series per repeater with noise floor estimate; click a chart dot to highlight one repeater across all views
