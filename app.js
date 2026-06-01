@@ -206,11 +206,10 @@ class MeshCoreApp {
         this.connectBtn.onclick = () => this.connectBluetooth();
 
         this.connectUsbBtn = document.getElementById('connectUsbBtn');
-        if (this.connectUsbBtn) {
-            // Hide the USB button entirely if the browser has no Web Serial API
-            if (!navigator.serial) this.connectUsbBtn.classList.add('hidden');
-            else this.connectUsbBtn.onclick = () => this.connectUsb();
-        }
+        // The USB button is always shown and enabled. If Web Serial isn't
+        // available, the click handler explains that — the control never
+        // silently disappears (matching how the Bluetooth button behaves).
+        if (this.connectUsbBtn) this.connectUsbBtn.onclick = () => this.connectUsb();
 
         // Pair-hover: hovering RSSI or SNR highlights both cells for that repeater
         if (this.msgTableBody) {
@@ -940,7 +939,7 @@ class MeshCoreApp {
         }
         try {
             this.connectBtn.disabled = true;
-            this._setUsbBtnVisible(false);
+            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
             this.updateStatus('Scanning...', 'disconnected');
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
@@ -1014,26 +1013,33 @@ class MeshCoreApp {
 
     _resetConnectBtn() {
         this.updateStatus('Disconnected', 'disconnected');
+        this._setConnectIdle();
+    }
+
+    // Idle state: both buttons offer to start a connection.
+    _setConnectIdle() {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
-        this._setUsbBtnVisible(true);
+        if (this.connectUsbBtn) {
+            this.connectUsbBtn.textContent = 'Connect USB';
+            this.connectUsbBtn.disabled = false;
+            this.connectUsbBtn.onclick = () => this.connectUsb();
+        }
     }
 
-    // The USB button is hidden while a connection (of either kind) is being set
-    // up or is active; the primary connectBtn doubles as the Cancel/Disconnect
-    // control for both transports.
-    _setUsbBtnVisible(visible) {
-        if (!this.connectUsbBtn || !navigator.serial) return;
-        this.connectUsbBtn.classList.toggle('hidden', !visible);
-        this.connectUsbBtn.disabled = false;
+    // Make one transport's button the active Cancel/Disconnect control and
+    // disable the other so a second connection can't be started. Neither button
+    // is ever hidden — that's less confusing than a control that comes and goes.
+    _setActiveTransportBtn(kind, label, onClick) {
+        const active = kind === 'serial' ? this.connectUsbBtn : this.connectBtn;
+        const other  = kind === 'serial' ? this.connectBtn : this.connectUsbBtn;
+        if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; }
+        if (other)  { other.disabled = true; }
     }
 
     async connectToDevice(device) {
-        this.connectBtn.textContent = 'Cancel';
-        this.connectBtn.disabled = false;
-        this.connectBtn.onclick = () => this.disconnect();
-        this._setUsbBtnVisible(false);
+        this._setActiveTransportBtn('ble', 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting...', 'disconnected');
         this.transportKind = 'ble';
         this.device = device;
@@ -1095,9 +1101,7 @@ class MeshCoreApp {
         this.saveDevice(device);
 
         this.updateStatus('Connected', 'connected');
-        this.connectBtn.textContent = 'Disconnect';
-        this.connectBtn.disabled = false;
-        this.connectBtn.onclick = () => this.disconnect();
+        this._setActiveTransportBtn('ble', 'Disconnect', () => this.disconnect());
         this._collecting = true;
         this._updatePauseBtn();
         if (this.emptyState) {
@@ -1133,7 +1137,7 @@ class MeshCoreApp {
         }
         try {
             this.connectBtn.disabled = true;
-            this._setUsbBtnVisible(false);
+            this.connectUsbBtn.disabled = true;
             this.updateStatus('Scanning...', 'disconnected');
             // No filters — MeshCore companions appear behind many USB-serial
             // bridges (CP210x, CH340, native USB CDC), so we let the user pick.
@@ -1149,10 +1153,7 @@ class MeshCoreApp {
     }
 
     async connectToSerialPort(port) {
-        this.connectBtn.textContent = 'Cancel';
-        this.connectBtn.disabled = false;
-        this.connectBtn.onclick = () => this.disconnect();
-        this._setUsbBtnVisible(false);
+        this._setActiveTransportBtn('serial', 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting...', 'disconnected');
 
         await port.open({ baudRate: 115200 });
@@ -1177,9 +1178,7 @@ class MeshCoreApp {
         await this.sendGetContacts();
 
         this.updateStatus('Connected', 'connected');
-        this.connectBtn.textContent = 'Disconnect';
-        this.connectBtn.disabled = false;
-        this.connectBtn.onclick = () => this.disconnect();
+        this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
         this._collecting = true;
         this._updatePauseBtn();
         if (this.emptyState) {
@@ -3948,10 +3947,7 @@ class MeshCoreApp {
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
-        this.connectBtn.textContent = 'Connect Bluetooth';
-        this.connectBtn.disabled = false;
-        this.connectBtn.onclick = () => this.connectBluetooth();
-        this._setUsbBtnVisible(true);
+        this._setConnectIdle();
         this._collecting = false;
         this._updatePauseBtn();
         if (this.emptyState) {
