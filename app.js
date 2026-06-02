@@ -2718,9 +2718,8 @@ class MeshCoreApp {
 
     showChartTooltip(e, type, pin = false) {
         if (!this.tooltip) return;
-        // While an infobox is pinned (shown via a click/tap), hover/move events
-        // must not override or move it.
-        if (this._tooltipPinned && !pin) return;
+        // Note: hover still updates the infobox even while a point is pinned, so
+        // the live preview keeps working after a repeater is selected.
         const incomingPts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
         const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;

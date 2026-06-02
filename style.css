@@ -1080,10 +1080,10 @@ html.light-theme .status.importing {
     position: absolute;
 }
 
-/* A pinned infobox (shown on click/tap) can be clicked to dismiss it. */
+/* A pinned infobox (shown on click/tap) can be clicked to dismiss it. No
+   pointer cursor — it isn't a link, clicking just closes it. */
 #chartTooltip.pinned {
     pointer-events: auto;
-    cursor: pointer;
 }
 
 /* Light theme: keep the infobox light, consistent with the 3D map infobox. */
