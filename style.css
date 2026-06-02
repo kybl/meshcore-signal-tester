@@ -1073,6 +1073,13 @@ html.light-theme .status.importing {
     box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 
+/* Positioned in document (body-local) coordinates so it stays anchored to the
+   chart point and scrolls with the page. `position: fixed` would break under
+   the body `transform: scale()` used by the text-size / desktop zoom feature. */
+#chartTooltip {
+    position: absolute;
+}
+
 /* A pinned infobox (shown on click/tap) can be clicked to dismiss it. */
 #chartTooltip.pinned {
     pointer-events: auto;

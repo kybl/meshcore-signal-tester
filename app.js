@@ -2783,20 +2783,27 @@ class MeshCoreApp {
             `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
 
         // Anchor the infobox to the data point itself (not the cursor/tap, which
-        // can land a bit off), centred above it, then clamp to the viewport using
-        // the box's measured size so it never spills past the right/bottom edge.
+        // can land a bit off), centred above it. The tooltip is position:absolute
+        // inside <body>; since <body> may carry a transform: scale() (text-size /
+        // desktop zoom), convert the point's viewport position into body-local
+        // (un-scaled, scroll-included) coordinates so it stays anchored and
+        // scrolls with the page.
         this.tooltip.style.display = 'block';
         const nv = type === 'rssi' ? nearest.rssi : nearest.snr;
-        const px = rect.left + xOf(nearest.time);
-        const py = rect.top  + yOf(nv);
+        let scale = 1;
+        const tr = getComputedStyle(document.body).transform;
+        const m = tr && tr !== 'none' ? tr.match(/matrix\(([^)]+)\)/) : null;
+        if (m) scale = parseFloat(m[1].split(',')[0]) || 1;
+        const px = (rect.left + xOf(nearest.time) + window.scrollX) / scale;
+        const py = (rect.top  + yOf(nv)           + window.scrollY) / scale;
         const tw = this.tooltip.offsetWidth;
         const th = this.tooltip.offsetHeight;
         const margin = 8;
+        const viewTop = window.scrollY / scale;
         let left = px - tw / 2;
-        let top  = py - th - 12;            // above the point
-        if (top < margin) top = py + 16;    // not enough room above → below it
-        left = Math.max(margin, Math.min(left, window.innerWidth  - tw - margin));
-        top  = Math.max(margin, Math.min(top,  window.innerHeight - th - margin));
+        let top  = py - th - 12;                 // above the point
+        if (top < viewTop + margin) top = py + 16; // not enough room above → below it
+        left = Math.max(margin, Math.min(left, document.body.clientWidth - tw - margin));
         this.tooltip.style.left = `${left}px`;
         this.tooltip.style.top  = `${top}px`;
         if (pin) {
