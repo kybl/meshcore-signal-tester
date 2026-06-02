@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=90';
+import { Signal3DMap } from './signal3d.js?v=97';
 
 
 
@@ -72,6 +72,7 @@ class MeshCoreApp {
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
         this._selectedCol = null;
+        this._tooltipPinned = false;
         this._snrShowIncoming = true;
         this._snrShowOutgoing = true;
         this._rxTimestamps = [];
@@ -195,6 +196,7 @@ class MeshCoreApp {
         this.repTableBody = document.getElementById('repTableBody');
         this.soundSelect = document.getElementById('soundSelect');
         this.soundSelect.value = Store.get('sound', this.soundSelect.value);
+        this._updateSoundHighlight();
         this.tooltip = document.getElementById('chartTooltip');
 
         document.getElementById('pauseBtn')?.addEventListener('click', () => {
@@ -237,23 +239,17 @@ class MeshCoreApp {
 
         const bindChartTooltip = (svg, type) => {
             if (!svg) return;
-            let lastTouch = 0;
+            // Desktop: hover shows a transient preview. A tap/click (here and on
+            // touch) pins the infobox via _onChartClick — it then stays put (no
+            // auto-hide) until tapped again or dismissed by clicking the infobox.
             svg.addEventListener('mousemove', e => this.showChartTooltip(e, type));
-            svg.addEventListener('mouseleave', () => {
-                if (Date.now() - lastTouch > 400) this.hideChartTooltip();
-            });
+            svg.addEventListener('mouseleave', () => this.hideChartTooltip());
             svg.addEventListener('click', e => this._onChartClick(e, type));
-            svg.addEventListener('touchstart', e => {
-                lastTouch = Date.now();
-                if (e.touches.length === 1) this.showChartTooltip(e.touches[0], type);
-            }, { passive: true });
-            svg.addEventListener('touchend', () => {
-                lastTouch = Date.now();
-                setTimeout(() => this.hideChartTooltip(), 2500);
-            });
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');
         bindChartTooltip(this.snrChartSvg,  'snr');
+        // Click the infobox itself to dismiss it.
+        this.tooltip?.addEventListener('click', () => this.hideChartTooltip(true));
 
         const snrInCb  = document.getElementById('snrShowIncoming');
         const snrOutCb = document.getElementById('snrShowOutgoing');
@@ -350,6 +346,7 @@ class MeshCoreApp {
 
         this.soundSelect?.addEventListener('change', () => {
             Store.set('sound', this.soundSelect.value);
+            this._updateSoundHighlight();
         });
 
         // Keep screen on
@@ -696,6 +693,7 @@ class MeshCoreApp {
                         this._updateCornerNotices();
                     }
                 },
+                onToggleMapPin: col => this._toggleMapPinForCol(col),
             });
         } catch (_) {
             this.signalMap = null;
@@ -757,6 +755,7 @@ class MeshCoreApp {
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
+        document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.flyToUser());
     }
 
     _activeCols() {
@@ -814,11 +813,11 @@ class MeshCoreApp {
             'contacts':
                 'Nodes known from the contact list synced from your device (name, public key, GPS position). Used to label repeaters, show their position on the 3D map, and resolve short IDs. Updated automatically on connect and when new adverts arrive.',
             'contact-unknown':
-                'This repeater is not in the contact list and hasn\'t responded to discovery yet. If you know roughly where it is, try "Discover nodes" in the Active Ping section — it may respond and reveal its name and position. Connecting your device via Bluetooth and syncing contacts can also help significantly.',
+                'This repeater is not in the contact list and hasn\'t responded to discovery yet. If you know roughly where it is, try the "Discover nodes" button — it may respond and reveal its name and position. Connecting your device via Bluetooth and syncing contacts can also help significantly.',
             'contact-no-gps':
                 'The owner of this node hasn\'t configured its position.',
             'sound':
-                'off = silent. short / medium / long play a two-tone beep of increasing duration (long is 4× short) on each new packet. The first tone (1/3 of the beep) is a fixed 700 Hz click; the second tone (2/3) shifts pitch with SNR — higher SNR → higher pitch. Setting is remembered across sessions.',
+                'off = silent. short / medium / long play a two-tone beep of increasing duration (long is 4× short) on each new packet. The first tone (1/3 of the beep) is a fixed 700 Hz click; the second tone (2/3) shifts pitch with SNR — higher SNR → higher pitch. When a repeater filter is active, the alert sounds only for packets from the filtered repeater(s). Setting is remembered across sessions.',
             'ttl':
                 'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import).',
             'display':
@@ -832,9 +831,9 @@ class MeshCoreApp {
             'snr':
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
             'chart-snr':
-                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Circles = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover.',
+                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, SNR/RSSI and time in a small box; click the box to dismiss it. Circles (●) = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover.',
             'chart-interact':
-                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. The shaded area shows the estimated noise floor (RSSI − SNR).',
+                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, RSSI/SNR and time in a small box; click the box to dismiss it. The shaded area shows the estimated noise floor (RSSI − SNR).',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':
@@ -844,7 +843,7 @@ class MeshCoreApp {
             'msg-type':
                 'Type abbreviations — AD: Advert · GT: GroupText · TR: Traceroute · RS: Response · RQ: Request · PN: Ping · TX: TextMessage · PT: Path · CT: Control · PV: Private · RD: Repeater DSC (discover response, includes uplink SNR). Full type is shown in the expanded row.',
             'signal3d':
-                'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. Use ⚙ (top right) to change map source, dot size, guide lines, and the location marker. Navigation: drag to pan · scroll/pinch to zoom · right-drag to tilt/rotate.',
+                'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. When the repeater\'s own position is known, the info panel offers an eye button (turn the camera toward it) and a pushpin (keep it on the map — tilted = shown only temporarily, upright = kept permanently). "Center on me" moves the camera to your current location; "Show all repeaters" adds every known position. Use ⚙ (top right) to change map source, dot size, guide lines, and the location marker. Navigation: drag to pan · scroll/pinch to zoom · two-finger twist (or right-drag) to tilt/rotate.',
             'discover':
                 'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
         };
@@ -1147,6 +1146,7 @@ class MeshCoreApp {
 
         this.updateStatus('Connected', 'connected');
         this._setActiveTransportBtn('ble', 'Disconnect', () => this.disconnect());
+        this._updateSoundHighlight();
         this._collecting = true;
         this._updatePauseBtn();
         if (this.emptyState) {
@@ -1226,6 +1226,7 @@ class MeshCoreApp {
 
         this.updateStatus('Connected', 'connected');
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
+        this._updateSoundHighlight();
         this._collecting = true;
         this._updatePauseBtn();
         if (this.emptyState) {
@@ -1412,6 +1413,20 @@ class MeshCoreApp {
         return matches.filter(c => c.name && (c.lat !== 0 || c.lon !== 0));
     }
 
+    // Toggle whether all GPS contacts of a repeater column are kept on the 3D
+    // map permanently. Driven by the pushpin button in the map infobox (A).
+    _toggleMapPinForCol(col) {
+        const contacts = this._contactsForMapButtons(col);
+        if (!contacts.length) return;
+        const anyPinned = contacts.some(c => this._mapPins.has(c.pubKeyFullHex));
+        for (const c of contacts) {
+            if (anyPinned) this._mapPins.delete(c.pubKeyFullHex);
+            else           this._mapPins.add(c.pubKeyFullHex);
+        }
+        this._updateMapPins();
+        this._updateCornerNotices();
+    }
+
     _updateMapPins() {
         if (!this.signalMap) return;
         const markers = [];
@@ -1457,11 +1472,24 @@ class MeshCoreApp {
         if (this.contactsHstat) this.contactsHstat.style.display = this._contacts.size > 0 ? '' : 'none';
     }
 
+    _updateSoundHighlight() {
+        const label = this.soundSelect?.closest('.sound-toggle');
+        if (!label) return;
+        // Only highlight when sound is enabled AND a device is connected — without
+        // a connection nothing produces sound anyway.
+        const active = (this.soundSelect.value || 'off') !== 'off' && this._canSend();
+        label.classList.toggle('sound-active', active);
+    }
+
     // Send one DISCOVER_REQ, then wait 2 s to collect responses before re-enabling the button.
     async startDiscoverSequence(filterMask) {
         const btn = document.getElementById('discoverBtn');
         if (!this._canSend()) {
-            if (btn) { btn.textContent = '⚠ Not connected'; setTimeout(() => { btn.textContent = 'Discover nodes'; }, 2500); }
+            if (btn) {
+                btn.textContent = '⚠ Not connected';
+                btn.classList.add('btn-error');
+                setTimeout(() => { btn.textContent = 'Discover nodes'; btn.classList.remove('btn-error'); }, 2500);
+            }
             return;
         }
         if (this._discoverActive) return; // prevent double-click overlap
@@ -2686,9 +2714,13 @@ class MeshCoreApp {
         }
         if (!nearest || minDist > 2500) {
             if (this._selectedCol) this._selectRepeater(null);
+            this.hideChartTooltip(true);
             return;
         }
-        this._selectRepeater(this._selectedCol === nearest.col ? null : nearest.col);
+        const deselect = this._selectedCol === nearest.col;
+        this._selectRepeater(deselect ? null : nearest.col);
+        if (deselect) this.hideChartTooltip(true);
+        else this.showChartTooltip(e, type, true);
     }
 
     _xLabelStepMs(rangeMs, chartWidthPx) {
@@ -2945,8 +2977,10 @@ class MeshCoreApp {
         return result.sort((a, b) => a.time - b.time);
     }
 
-    showChartTooltip(e, type) {
+    showChartTooltip(e, type, pin = false) {
         if (!this.tooltip) return;
+        // Note: hover still updates the infobox even while a point is pinned, so
+        // the live preview keeps working after a repeater is selected.
         const incomingPts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
         const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
@@ -2989,7 +3023,7 @@ class MeshCoreApp {
             const d = dx * dx + dy * dy;
             if (d < minDist) { minDist = d; nearest = p; }
         }
-        if (!nearest || minDist > 1600) { this.hideChartTooltip(); return; }
+        if (!nearest || minDist > 1600) { if (!this._tooltipPinned) this.hideChartTooltip(); return; }
 
         const isSent = sentPts.includes(nearest);
         const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -2998,23 +3032,54 @@ class MeshCoreApp {
             ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
             : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
-        const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this._escHtml(cName)}</span>` : '';
+        const nameHtml = cName ? `<span class="ct-colname">${this._escHtml(cName)}</span>` : '';
+        // Signal values and time share one line, with the time pushed to the end
+        // (matching the 3D map infobox layout).
         const valLine = isSent
             ? `Sent SNR ${nearest.snr?.toFixed(1) ?? '—'} dB ↗`
             : `SNR ${nearest.snr?.toFixed(1) ?? '—'} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
         this.tooltip.innerHTML =
-            `${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}<br>` +
-            `${time}<br>${valLine}`;
+            `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}</div>` +
+            `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
 
-        const tx = e.clientX + 14;
-        const ty = e.clientY - 10;
-        this.tooltip.style.left = `${Math.min(tx, window.innerWidth - 160)}px`;
-        this.tooltip.style.top  = `${Math.max(ty, 4)}px`;
+        // Anchor the infobox to the data point itself (not the cursor/tap, which
+        // can land a bit off), centred above it. The tooltip is position:absolute
+        // inside <body>; since <body> may carry a transform: scale() (text-size /
+        // desktop zoom), convert the point's viewport position into body-local
+        // (un-scaled, scroll-included) coordinates so it stays anchored and
+        // scrolls with the page.
         this.tooltip.style.display = 'block';
+        const nv = type === 'rssi' ? nearest.rssi : nearest.snr;
+        let scale = 1;
+        const tr = getComputedStyle(document.body).transform;
+        const m = tr && tr !== 'none' ? tr.match(/matrix\(([^)]+)\)/) : null;
+        if (m) scale = parseFloat(m[1].split(',')[0]) || 1;
+        const px = (rect.left + xOf(nearest.time) + window.scrollX) / scale;
+        const py = (rect.top  + yOf(nv)           + window.scrollY) / scale;
+        const tw = this.tooltip.offsetWidth;
+        const th = this.tooltip.offsetHeight;
+        const margin = 8;
+        const viewTop = window.scrollY / scale;
+        let left = px - tw / 2;
+        let top  = py - th - 12;                 // above the point
+        if (top < viewTop + margin) top = py + 16; // not enough room above → below it
+        left = Math.max(margin, Math.min(left, document.body.clientWidth - tw - margin));
+        this.tooltip.style.left = `${left}px`;
+        this.tooltip.style.top  = `${top}px`;
+        if (pin) {
+            this._tooltipPinned = true;
+            this.tooltip.classList.add('pinned');
+        }
     }
 
-    hideChartTooltip() {
-        if (this.tooltip) this.tooltip.style.display = 'none';
+    hideChartTooltip(force = false) {
+        // A pinned infobox only hides when explicitly dismissed (force = true).
+        if (this._tooltipPinned && !force) return;
+        this._tooltipPinned = false;
+        if (this.tooltip) {
+            this.tooltip.style.display = 'none';
+            this.tooltip.classList.remove('pinned');
+        }
     }
 
     // --- Cleanup ---
@@ -3293,24 +3358,15 @@ class MeshCoreApp {
             const contacts = col && col !== 'direct' ? this._contactsByPrefix(col) : [];
             const contactsWithName = contacts.filter(c => c.name);
             const mapBtns = col ? this._contactsForMapButtons(col) : [];
-            const isAutoShown = col && col === this._selectedCol;
             const checkId = `${noticePrefix}ShowMore`;
             let mapHtml = '';
+            // Only when the repeater's GPS location is known: a "Show on map"
+            // button that scrolls to the 3D map and turns the camera toward it
+            // (same as the eye in the map infobox). Keeping it on the map is done
+            // via the pushpin in the map infobox.
             if (mapBtns.length) {
-                mapHtml += `<div class="cn-map-btns">`;
-                // Collapse all contacts into a single button regardless of count
-                const anyPinned = mapBtns.some(c => this._mapPins.has(c.pubKeyFullHex));
                 const allPubkeys = mapBtns.map(c => c.pubKeyFullHex).join('|');
-                let label, cls;
-                if (anyPinned) {
-                    label = '✕ Remove pin'; cls = 'cn-map-btn cn-map-btn-active';
-                } else if (isAutoShown) {
-                    label = '📌 Keep on map'; cls = 'cn-map-btn';
-                } else {
-                    label = '📍 Show on map'; cls = 'cn-map-btn';
-                }
-                mapHtml += `<button class="${cls}" data-pubkeys="${this._escHtml(allPubkeys)}">${label}</button>`;
-                mapHtml += `</div>`;
+                mapHtml += `<div class="cn-map-btns"><button class="cn-map-btn" data-pubkeys="${this._escHtml(allPubkeys)}">📍 Show on map</button></div>`;
             }
             let html = `<div class="cn-showmore-row"><label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>${mapHtml}</div>`;
             if (showMore && stats) {
@@ -3342,13 +3398,15 @@ class MeshCoreApp {
             document.querySelectorAll(`#${noticePrefix}NoticeExtra .cn-map-btn`).forEach(btn => {
                 btn.addEventListener('click', () => {
                     const pks = (btn.dataset.pubkeys || '').split('|').filter(Boolean);
-                    const anyPinned = pks.some(pk => this._mapPins.has(pk));
-                    for (const pk of pks) {
-                        if (anyPinned) this._mapPins.delete(pk);
-                        else this._mapPins.add(pk);
+                    // Turn the map camera toward the repeater (centroid of its GPS
+                    // contacts), then scroll the 3D map into view.
+                    const locs = pks.map(pk => this._contacts.get(pk))
+                                    .filter(c => c && (c.lat || c.lon));
+                    if (locs.length) {
+                        const lat = locs.reduce((s, c) => s + c.lat, 0) / locs.length;
+                        const lon = locs.reduce((s, c) => s + c.lon, 0) / locs.length;
+                        this.signalMap?.faceLatLon(lat, lon);
                     }
-                    this._updateMapPins();
-                    this._updateCornerNotices();
                     document.getElementById('mapWrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 });
             });
@@ -4022,6 +4080,7 @@ class MeshCoreApp {
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
         this._setConnectIdle();
+        this._updateSoundHighlight();
         this._collecting = false;
         this._updatePauseBtn();
         if (this.emptyState) {

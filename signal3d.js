@@ -101,8 +101,7 @@ export class Signal3DMap {
         this._lineSegsDim = null;   // vertical lines for dim (unselected) points
         this._hitPoints = [];
         this._clickedPoint = null;  // the specific point instance last clicked
-        // Shared hit-test geometry & sprite textures (created once)
-        this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
+        // Shared sprite textures (created once)
         this._sphereTex   = this._makeSphereTex();
         this._starTex     = this._makeStarTex();
         this._outgoingPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
@@ -111,6 +110,7 @@ export class Signal3DMap {
         this.onFilter        = opts.onFilter        || null;
         this.onRemoveMarker  = opts.onRemoveMarker  || null;
         this.onPinMarker     = opts.onPinMarker     || null;
+        this.onToggleMapPin  = opts.onToggleMapPin  || null;
         // Sprite lists for static marker hit-testing
         this._pinSprites  = [];   // [{sprite, col, pubKeyFullHex, isClose}]
 
@@ -202,6 +202,8 @@ export class Signal3DMap {
             clearTimeout(this._viewUpdateTimer);
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
         });
+        // User interaction cancels any running camera fly/turn animation.
+        this.controls.addEventListener('start', () => { this._camAnim = null; });
 
         // Two-finger twist: rotate camera azimuth by the angular change between the
         // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
@@ -282,11 +284,18 @@ export class Signal3DMap {
                     this.onSelect?.(null);
                 } else if (e.target.closest('.smi-filter')) {
                     this.onFilter?.(this._selectedCol);
+                } else if (e.target.closest('.smi-look')) {
+                    const loc = this._repeaterLocation(this._selectedCol);
+                    if (loc) this.faceLatLon(loc.lat, loc.lon);
+                } else if (e.target.closest('.smi-pin')) {
+                    this.onToggleMapPin?.(this._selectedCol);
+                    this._updateInfoPanel();   // reflect the new pin state
                 }
             });
         }
 
         const tick = () => {
+            this._stepCameraAnim();
             this.controls.update();
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
@@ -495,17 +504,42 @@ export class Signal3DMap {
 
         let newCol = null;
         let clickedPt = null;
-        if (this._hitMesh) {
-            const hits = this._raycaster.intersectObject(this._hitMesh);
-            if (hits.length > 0) {
-                const c = this._hitPoints[hits[0].instanceId];
-                if (c) {
-                    // Clicking the exact same bead again deselects. Clicking any
-                    // other bead — even one of the already-selected repeater —
-                    // shows that specific bead's SNR/RSSI in the info panel.
-                    if (this._clickedPoint === c) { newCol = null; clickedPt = null; }
-                    else { newCol = c.col; clickedPt = c; }
-                }
+        // Screen-space pick against the actually-rendered dot positions. The dots
+        // are drawn at ~constant screen size (dampened-perspective shader), so a
+        // 3D ray-vs-world-sphere test mis-selects when dots stack vertically
+        // (same lat/lon, different SNR height) or sit near each other. Projecting
+        // each dot and choosing the one nearest the cursor matches what the user
+        // sees — and clicking the guide line (away from the ball) no longer hits.
+        {
+            const px = e.clientX - rect.left, py = e.clientY - rect.top;
+            const groupSy = this._rxPointsGroup?.scale.y ?? 1;
+            const PICK_RADIUS = 16; // CSS px around a dot centre
+            const TIE = 8;          // dots this close on screen count as overlapping
+            const _v = new THREE.Vector3();
+            const candidates = [];
+            for (const p of this._hitPoints) {
+                const wp = this._latLonToWorld(p.lat, p.lon);
+                if (!wp) continue;
+                _v.set(wp.x, this._signalToHeight(p.snr) * groupSy, wp.z);
+                const camDist = this.camera.position.distanceTo(_v);
+                _v.project(this.camera);
+                if (_v.z > 1) continue; // behind the camera
+                const sx = (_v.x * 0.5 + 0.5) * rect.width;
+                const sy = (-_v.y * 0.5 + 0.5) * rect.height;
+                const d = Math.hypot(sx - px, sy - py);
+                if (d <= PICK_RADIUS) candidates.push({ p, d, camDist });
+            }
+            // Nearest to the cursor wins; for dots overlapping on screen prefer the
+            // front-most (the one visually on top).
+            let best = null;
+            for (const c of candidates) {
+                if (!best) { best = c; continue; }
+                if (Math.abs(c.d - best.d) <= TIE) { if (c.camDist < best.camDist) best = c; }
+                else if (c.d < best.d) best = c;
+            }
+            if (best) {
+                if (this._clickedPoint === best.p) { newCol = null; clickedPt = null; }
+                else { newCol = best.p.col; clickedPt = best.p; }
             }
         }
         this._clickedPoint = clickedPt;
@@ -536,9 +570,30 @@ export class Signal3DMap {
                           rssiStr ? `RSSI <b>${this._escHtml(rssiStr)}</b>` : null].filter(Boolean);
         const sigHtml = sigParts.length
             ? `<div class="smi-sig">${sigParts.join(' &nbsp; ')}<span class="smi-time">${timeStr}</span></div>` : '';
+        // When the repeater's own GPS location is known (it has a static marker),
+        // offer an "eye" button (turn the map toward it) and a pushpin button
+        // (keep it on the map permanently / remove). Tilted pin = shown only
+        // temporarily; upright pin = kept on the map.
+        const hasLoc = this._repeaterLocation(col) != null;
+        let actionsHtml = '';
+        if (hasLoc) {
+            const pinned = (this._pins || []).some(m => m.col === col && (m.lat || m.lon) && m.isPinned);
+            const pinTitle = pinned
+                ? 'Kept on the map — click to remove'
+                : 'Shown temporarily — click to keep on the map';
+            // Inline SVG pushpin (orientation is controlled by CSS rotation, not by
+            // platform emoji rendering): tilted = temporary, upright = kept.
+            const pinSvg = `<svg class="smi-pin-svg" viewBox="0 0 24 24" aria-hidden="true">` +
+                `<rect x="10.5" y="7" width="3" height="6" fill="currentColor"/>` +
+                `<path d="M12 22 L10.5 13 L13.5 13 Z" fill="currentColor"/>` +
+                `<ellipse cx="12" cy="6" rx="7.5" ry="3.6" fill="#e53935"/></svg>`;
+            actionsHtml =
+                `<button class="smi-look" title="Turn the map toward this repeater">👁</button>` +
+                `<button class="smi-pin${pinned ? ' pinned' : ''}" title="${pinTitle}">${pinSvg}</button>`;
+        }
         this.infoEl.innerHTML =
             `<button class="smi-close" title="Deselect">✕</button>` +
-            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}</div>` +
+            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}${actionsHtml}</div>` +
             sigHtml;
         this.infoEl.classList.remove('hidden');
     }
@@ -660,7 +715,7 @@ export class Signal3DMap {
         sprite.renderOrder = 10;
         const aspect = c.width / c.height;
         sprite.scale.set(aspect * 2.4, 2.4, 1);
-        sprite.position.set(0, 7.0, 0);
+        sprite.position.set(0, 3.6, 0);
         return sprite;
     }
 
@@ -686,16 +741,8 @@ export class Signal3DMap {
             base.position.y = 0.06;
             group.add(base);
 
-            // Thin mast
-            const mast = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.07, 0.1, 2.8, 8),
-                new THREE.MeshBasicMaterial({ color: col3 })
-            );
-            mast.position.y = 1.4;
-            group.add(mast);
-
-            // 📡 emoji sprite — click target for selection
-            const emojiSprite = this._makeEmojiSprite('📡', 3.8);
+            // 📡 emoji sprite — sits on the ground (no mast). Click target for selection.
+            const emojiSprite = this._makeEmojiSprite('📡', 1.2);
             group.add(emojiSprite);
             this._pinSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: false });
 
@@ -1009,6 +1056,118 @@ export class Signal3DMap {
         this._forceFit  = true;
     }
 
+    // ---- Camera fly / turn animations ----
+
+    // Known GPS location of a repeater column, or null. Looked up from the
+    // static markers (a repeater only has a location once it has advertised GPS).
+    // On a collision (several repeaters sharing this column, each with its own
+    // GPS) we aim at the centroid — the midpoint of all known locations.
+    _repeaterLocation(col) {
+        if (!col) return null;
+        const ms = (this._pins || []).filter(p => p.col === col && (p.lat || p.lon));
+        if (!ms.length) return null;
+        const lat = ms.reduce((s, p) => s + p.lat, 0) / ms.length;
+        const lon = ms.reduce((s, p) => s + p.lon, 0) / ms.length;
+        return { lat, lon };
+    }
+
+    // Drive a camera animation via a per-frame apply(easedProgress) closure.
+    _animate(apply, duration = 700) {
+        this._camAnim = { apply, start: performance.now(), duration };
+    }
+
+    _stepCameraAnim() {
+        const a = this._camAnim;
+        if (!a) return;
+        const k = Math.min(1, (performance.now() - a.start) / a.duration);
+        const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // easeInOutQuad
+        a.apply(e);
+        this.controls.target.y = 0;
+        this._updateHeightScale();
+        if (k >= 1) this._camAnim = null;
+    }
+
+    // Recenter the view on the user's current GPS location (keeps angle/zoom).
+    // Returns false (and shows a status message) when the location is unknown.
+    flyToUser() {
+        if (!this._userLoc) {
+            this._setStatus('Location not known yet — tap “Enable location” first.');
+            return false;
+        }
+        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
+        if (!pos) return false;
+        const delta    = new THREE.Vector3(pos.x - this.controls.target.x, 0, pos.z - this.controls.target.z);
+        const fromT    = this.controls.target.clone();
+        const fromE    = this.camera.position.clone();
+        const toT      = new THREE.Vector3(pos.x, 0, pos.z);
+        const toE      = this.camera.position.clone().add(delta);
+        this._animate(e => {
+            this.controls.target.lerpVectors(fromT, toT, e);
+            this.camera.position.lerpVectors(fromE, toE, e);
+        });
+        return true;
+    }
+
+    // Turn the camera (orbit around its current target) so it looks toward the
+    // given location — i.e. that direction becomes "into the screen". Keeps the
+    // zoom (orbit radius) constant. If the target is so far / the view so
+    // top-down that it would fall above the frame, the camera is also tilted
+    // toward the horizon (polar angle) so the repeater becomes visible.
+    faceLatLon(lat, lon) {
+        const R = this._latLonToWorld(lat, lon);
+        if (!R) return false;
+        const T = this.controls.target.clone();
+        const dx = R.x - T.x, dz = R.z - T.z;
+        const d = Math.hypot(dx, dz);
+        if (d < 1e-3) return false; // already centred there
+
+        // Current camera position in spherical coords around the target.
+        const cx = this.camera.position.x - T.x;
+        const cy = this.camera.position.y - T.y;
+        const cz = this.camera.position.z - T.z;
+        const r = Math.hypot(cx, cy, cz) || 1;
+        const phi0   = Math.acos(Math.max(-1, Math.min(1, cy / r))); // polar from +Y
+        const theta0 = Math.atan2(cz, cx);                            // azimuth
+        // Camera must sit on the far side of the target from R so the view faces R.
+        const thetaTo = Math.atan2(-dz, -dx);
+        let dTheta = thetaTo - theta0;
+        while (dTheta >  Math.PI) dTheta -= 2 * Math.PI;
+        while (dTheta < -Math.PI) dTheta += 2 * Math.PI;
+
+        // Vertical angle of R above the view centre (target) once R is straight
+        // ahead. R is always above centre (it's farther along the ground), so if
+        // that angle exceeds half the vertical FOV we tilt toward the horizon
+        // (larger polar angle) until it fits comfortably.
+        const maxPhi  = this.controls.maxPolarAngle ?? (Math.PI / 2 - 0.08);
+        const fovRad  = this.camera.fov * Math.PI / 180;
+        const offsetAt = phi => (Math.PI / 2 - phi) - Math.atan2(r * Math.cos(phi), d + r * Math.sin(phi));
+        let phiTo = phi0;
+        if (offsetAt(phi0) > fovRad / 2 * 0.85) {
+            const want = fovRad / 2 * 0.6;       // place R ~60% toward the top edge
+            if (offsetAt(maxPhi) >= want) {
+                phiTo = maxPhi;                  // as horizontal as allowed
+            } else {
+                let lo = phi0, hi = maxPhi;      // offset decreases as phi grows
+                for (let i = 0; i < 24; i++) {
+                    const m = (lo + hi) / 2;
+                    if (offsetAt(m) > want) lo = m; else hi = m;
+                }
+                phiTo = hi;
+            }
+        }
+        const dPhi = phiTo - phi0;
+
+        this._animate(e => {
+            const theta = theta0 + dTheta * e;
+            const phi   = phi0   + dPhi   * e;
+            const sinP  = Math.sin(phi);
+            this.camera.position.x = T.x + r * sinP * Math.cos(theta);
+            this.camera.position.z = T.z + r * sinP * Math.sin(theta);
+            this.camera.position.y = T.y + r * Math.cos(phi);
+        });
+        return true;
+    }
+
     _updateHeightScale() {
         const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
         this._rxPointsGroup.scale.y = ratio * 2;
@@ -1209,8 +1368,6 @@ export class Signal3DMap {
         const litPts = sel ? visible.filter(p => p.col === sel) : visible;
         const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
 
-        const _m4 = new THREE.Matrix4(), _v = new THREE.Vector3();
-        const _s  = new THREE.Vector3(), _q = new THREE.Quaternion();
         const _col = new THREE.Color();
 
         const fovFactor  = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
@@ -1284,24 +1441,8 @@ export class Signal3DMap {
         addPoints(litPts, 1.0,  2.0);
         addPoints(dimPts, 0.07, 2.0);
 
-        // Invisible InstancedMesh for raycasting (stays separate from visual rendering)
+        // Points used for screen-space click picking (see _onCanvasClick).
         this._hitPoints = visible;
-        this._hitMesh = new THREE.InstancedMesh(
-            this._hitGeo,
-            new THREE.MeshBasicMaterial({ visible: false }),
-            visible.length
-        );
-        for (let i = 0; i < visible.length; i++) {
-            const p   = visible[i];
-            const pos = this._latLonToWorld(p.lat, p.lon);
-            if (!pos) { _m4.makeScale(0, 0, 0); this._hitMesh.setMatrixAt(i, _m4); continue; }
-            const h  = this._signalToHeight(p.snr);
-            const hr = this._sphereSize + 1.8;
-            _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(hr, hr, hr));
-            this._hitMesh.setMatrixAt(i, _m4);
-        }
-        this._hitMesh.instanceMatrix.needsUpdate = true;
-        this._rxPointsGroup.add(this._hitMesh);
 
         // Vertical lines — split into lit (coloured) and dim (flat grey, low opacity)
         const makeLines = (pts, mat) => {

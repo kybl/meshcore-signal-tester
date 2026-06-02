@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=116">
+    <link rel="stylesheet" href="style.css?v=124">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -110,7 +110,7 @@
                 <div class="section-body" id="snrChartBody">
                     <div class="section-body-inner">
                         <div class="snr-toggle-bar">
-                            <label class="snr-toggle-label"><input type="checkbox" id="snrShowIncoming" checked> Incoming</label>
+                            <label class="snr-toggle-label"><input type="checkbox" id="snrShowIncoming" checked> Incoming ●</label>
                             <label class="snr-toggle-label"><input type="checkbox" id="snrShowOutgoing" checked> Outgoing ★</label>
                         </div>
                         <div class="chart-box">
@@ -124,7 +124,7 @@
 
             <div class="section-wrap" id="rssiChartWrap">
                 <div class="section-header">
-                    <span class="section-title">Repeaters RSSI history<span class="help-icon" data-help="chart-interact">?</span></span>
+                    <span class="section-title">RSSI history<span class="help-icon" data-help="chart-interact">?</span></span>
                     <button class="collapse-btn" data-target="rssiChartBody" title="Toggle section">▾</button>
                 </div>
                 <div class="section-body" id="rssiChartBody">
@@ -145,6 +145,7 @@
                     <div class="map-inner">
                         <div class="map-controls">
                             <button id="enableLocationBtn" class="btn-primary">Enable location</button>
+                            <button id="centerOnMeBtn" class="btn-show-all-repeaters" title="Move the camera to my current location">📍 Center on me</button>
                             <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
                             <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
                             <div class="map-settings-wrap">
@@ -273,7 +274,7 @@
         <div class="help-modal">
             <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
             <div class="help-modal-title">MeshCore Signal Tester</div>
-            <p class="help-modal-intro">Connects via Bluetooth or USB to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Ping</b> button sends a zero-hop self-advertisement so nearby repeaters announce themselves; everything else is passive listening.</p>
+            <p class="help-modal-intro">Connects via Bluetooth or USB to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Discover nodes</b> button sends an active discovery request so nearby nodes announce themselves and report the signal quality they measured for you; everything else is passive listening.</p>
 
             <div class="help-section-title">Getting started</div>
             <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection) and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously used devices (Bluetooth and USB) appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
@@ -321,6 +322,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=186"></script>
+    <script type="module" src="app.js?v=194"></script>
 </body>
 </html>

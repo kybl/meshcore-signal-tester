@@ -288,6 +288,14 @@ html.light-theme .status.importing {
     cursor: not-allowed;
 }
 
+/* Discover pressed while not connected: flash the button red. */
+.btn-pause.btn-error,
+.btn-pause.btn-error:hover:not(:disabled) {
+    background: #c0392b;
+    color: #fff;
+    border-color: #c0392b;
+}
+
 .btn-pause.collecting {
     background: var(--bg-box);
     color: #e05a20;
@@ -309,6 +317,24 @@ html.light-theme .status.importing {
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
+    padding: 2px 6px;
+    border-radius: 6px;
+    transition: background 0.2s, box-shadow 0.2s, color 0.2s;
+}
+
+/* Sound enabled: prominently highlight the icon, label and dropdown. */
+.sound-toggle.sound-active {
+    background: rgba(255, 210, 70, 0.85);
+    color: #3a2e00;
+    font-weight: 700;
+    box-shadow: 0 0 0 1.5px rgba(224, 176, 20, 0.85), 0 0 9px rgba(255, 205, 50, 0.6);
+}
+
+.sound-toggle.sound-active .ttl-header-select {
+    background: #fff6d6;
+    border-color: #d9a800;
+    color: #3a2e00;
+    font-weight: 700;
 }
 
 .size-label {
@@ -1047,6 +1073,55 @@ html.light-theme .status.importing {
     box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
 
+/* Positioned in document (body-local) coordinates so it stays anchored to the
+   chart point and scrolls with the page. `position: fixed` would break under
+   the body `transform: scale()` used by the text-size / desktop zoom feature. */
+#chartTooltip {
+    position: absolute;
+    z-index: 150; /* below the corner notice (B, z-index 200) */
+}
+
+/* A pinned infobox (shown on click/tap) can be clicked to dismiss it. No
+   pointer cursor — it isn't a link, clicking just closes it. */
+#chartTooltip.pinned {
+    pointer-events: auto;
+}
+
+/* Light theme: keep the infobox light, consistent with the 3D map infobox. */
+html.light-theme .chart-tooltip {
+    background: rgba(255, 255, 255, 0.95);
+    color: #222;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.ct-name {
+    display: flex;
+    align-items: center;
+}
+
+.ct-colname {
+    color: #7ab;
+    font-size: 11px;
+    margin-left: 4px;
+}
+html.light-theme .ct-colname {
+    color: #2a7da0;
+}
+
+.ct-sig {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+}
+
+.ct-time {
+    margin-left: auto;
+    font-size: 10px;
+    opacity: 0.7;
+    white-space: nowrap;
+}
+
 .battery-status {
     font-size: 12px;
     font-weight: 700;
@@ -1668,6 +1743,44 @@ html.light-theme .btn-show-all-repeaters:hover {
 
 .smi-close:hover {
     color: #333;
+}
+
+.smi-look,
+.smi-pin {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 2px;
+    margin-left: 6px;
+    opacity: 0.8;
+    flex-shrink: 0;
+}
+
+.smi-look:hover,
+.smi-pin:hover {
+    opacity: 1;
+}
+
+/* Inline SVG pushpin: drawn pointing straight down, so upright = kept on the
+   map and a CSS tilt = shown only temporarily. Platform-independent. */
+.smi-pin {
+    display: inline-flex;
+    align-items: center;
+    transform: rotate(32deg);
+    transition: transform 0.15s ease;
+}
+
+.smi-pin.pinned {
+    transform: rotate(0deg);
+    opacity: 1;
+}
+
+.smi-pin-svg {
+    width: 16px;
+    height: 16px;
+    display: block;
 }
 
 .smi-name {
