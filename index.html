@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=124">
+    <link rel="stylesheet" href="style.css?v=125">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -57,6 +57,16 @@
     </header>
     <div class="container">
         <main>
+            <div id="repeaterNotice" class="repeater-notice hidden">
+                <button id="repeaterNoticeClose" class="repeater-notice-close" aria-label="Dismiss">✕</button>
+                <strong>Repeater with stock firmware — limited signal data.</strong>
+                Incoming packets can't be tied to a specific node: flood traffic shows the
+                <em>originator</em>, not the node actually heard, and direct traffic is usually your own
+                nearby companion. Received packets are grouped only as <code>direct</code> / <code>unknown</code>.
+                For full per-hop SNR/RSSI with the real last hop, flash the repeater with a
+                <code>MESH_PACKET_LOGGING</code> build (it streams RAW packets this app can decode).
+            </div>
+
             <div id="emptyState" class="empty-state">
                 <p>Connect to a MeshCore companion device via Bluetooth or USB to start monitoring RX logs.</p>
             </div>
@@ -322,6 +332,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=194"></script>
+    <script type="module" src="app.js?v=195"></script>
 </body>
 </html>

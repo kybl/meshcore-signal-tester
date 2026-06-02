@@ -2199,3 +2199,40 @@ html.light-theme .theme-toggle-btn:hover {
     background: rgba(0,0,0,0.55);
     color: #fff;
 }
+
+/* Repeater stock-firmware caveat banner */
+.repeater-notice {
+    position: relative;
+    margin: 0 0 14px;
+    padding: 12px 36px 12px 14px;
+    border: 1px solid #B8860B;
+    border-left: 4px solid #E0A800;
+    border-radius: 6px;
+    background: rgba(224, 168, 0, 0.10);
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+.repeater-notice strong { color: var(--text-primary); }
+.repeater-notice code {
+    background: var(--bg-input);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+}
+.repeater-notice-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    line-height: 20px;
+    text-align: center;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+}
+.repeater-notice-close:hover { background: var(--bg-hover); color: var(--text-primary); }

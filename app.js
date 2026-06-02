@@ -44,6 +44,16 @@ class MeshCoreApp {
         this._serialReadBuffer = new Uint8Array(0);
         this._serialClosing = false;
         this._onSerialDisconnect = null;
+        // Connection mode for a serial link: 'companion' (binary frame protocol)
+        // or 'repeater' (plain-text CLI). Decided by probing on connect. null
+        // while detecting, and for BLE (always companion).
+        this.connectionMode = null;
+        this._serialTextBuffer = '';
+        this._textDecoder = new TextDecoder();
+        this._sawCompanionFrame = false;   // set when a companion frame is seen during detection
+        this._sawRepeaterRaw = false;      // set if the repeater emits RAW packet dumps (logging build)
+        this._repeaterStockNoticed = false;
+        this._repeaterRxSeq = 0;
         this.hashData = new Map();
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
@@ -343,6 +353,8 @@ class MeshCoreApp {
         });
 
         document.getElementById('discoverBtn')?.addEventListener('click', () => this.startDiscoverSequence(0x0F).catch(e => console.error('Discover failed:', e)));
+
+        document.getElementById('repeaterNoticeClose')?.addEventListener('click', () => document.getElementById('repeaterNotice')?.classList.add('hidden'));
 
         this.soundSelect?.addEventListener('change', () => {
             Store.set('sound', this.soundSelect.value);
@@ -1086,6 +1098,7 @@ class MeshCoreApp {
         this._setActiveTransportBtn('ble', 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting...', 'disconnected');
         this.transportKind = 'ble';
+        this.connectionMode = 'companion';   // BLE is always the companion protocol
         this.device = device;
 
         // Nordic UART Service (NUS) — a de-facto industry standard from Nordic
@@ -1204,12 +1217,15 @@ class MeshCoreApp {
         await port.open({ baudRate: 115200 });
 
         this.transportKind = 'serial';
+        this.connectionMode = null;        // unknown until detection completes
         this.serialPort = port;
         // A lightweight stand-in for the BLE device object so that the many
         // `this.device` "are we connected?" guards across the app keep working.
         this.device = { kind: 'serial' };
         this._serialReadBuffer = new Uint8Array(0);
+        this._serialTextBuffer = '';
         this._serialClosing = false;
+        this._sawCompanionFrame = false;
         this.serialReader = port.readable.getReader();
 
         // Physical unplug fires a 'disconnect' event on the port.
@@ -1218,12 +1234,29 @@ class MeshCoreApp {
 
         this._startSerialReadLoop(port);
 
+        // --- Device-type detection ---
+        // A MeshCore *companion* replies to CMD_APP_START with a self-info frame
+        // (push 0x02). A *repeater* speaks a plain-text CLI and ignores the
+        // binary frame (it just lands as junk in its line buffer). So probe with
+        // APP_START; if nothing companion-shaped comes back, drive the device as
+        // a repeater over the text CLI instead.
+        this.updateStatus('Detecting device…', 'disconnected');
         await this.sendAppStart();
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 1200));
+        if (this.serialPort !== port) return;   // disconnected mid-detection
+
+        if (this._sawCompanionFrame) {
+            await this._finishCompanionConnect(port);
+        } else {
+            await this._finishRepeaterConnect(port);
+        }
+    }
+
+    // Finalise a companion (binary frame protocol) serial connection.
+    async _finishCompanionConnect(port) {
+        this.connectionMode = 'companion';
         await this.sendGetContacts();
-
         this.saveSerialPort(port);
-
         this.updateStatus('Connected', 'connected');
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
@@ -1233,6 +1266,41 @@ class MeshCoreApp {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connected. Waiting for first RX log…';
         }
+    }
+
+    // Finalise a repeater (text CLI) serial connection: switch serial parsing to
+    // line mode, flush the binary probe junk out of the repeater's command
+    // buffer, then start packet logging.
+    async _finishRepeaterConnect(port) {
+        this.connectionMode = 'repeater';
+        // From here the stream is text; drop whatever the frame detector held.
+        this._serialReadBuffer = new Uint8Array(0);
+        this._serialTextBuffer = '';
+        // A leading newline terminates the leftover APP_START bytes sitting in
+        // the repeater's CLI buffer (run as one bogus command, harmlessly), so
+        // the following 'log start' parses cleanly.
+        await this._serialWriteText('\r\n');
+        await new Promise(r => setTimeout(r, 150));
+        await this._serialWriteText('log start\r\n');
+
+        this.saveSerialPort(port);
+        this.updateStatus('Connected (repeater)', 'connected');
+        this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
+        this._updateSoundHighlight();
+        this._collecting = true;
+        this._updatePauseBtn();
+        if (this.emptyState) {
+            const p = this.emptyState.querySelector('p');
+            if (p) p.textContent = 'Connected to a repeater. Waiting for RX log lines…';
+        }
+    }
+
+    // Write plain text to the serial port (repeater CLI commands).
+    async _serialWriteText(text) {
+        if (!this.serialPort) return;
+        const writer = this.serialPort.writable.getWriter();
+        try { await writer.write(new TextEncoder().encode(text)); }
+        finally { try { writer.releaseLock(); } catch (e) {} }
     }
 
     async _startSerialReadLoop(port) {
@@ -1257,6 +1325,8 @@ class MeshCoreApp {
     // radio→app, 0x3c ('<') is app→radio. Unknown leading bytes are skipped to
     // resynchronise after any corruption.
     _onSerialBytes(chunk) {
+        // Repeater links speak text, not binary frames.
+        if (this.connectionMode === 'repeater') { this._onSerialText(chunk); return; }
         if (this._serialReadBuffer.length) {
             const merged = new Uint8Array(this._serialReadBuffer.length + chunk.length);
             merged.set(this._serialReadBuffer, 0);
@@ -1281,6 +1351,73 @@ class MeshCoreApp {
             catch (e) { console.error('Frame handling error:', e); }
         }
         this._serialReadBuffer = offset > 0 ? buf.slice(offset) : buf;
+    }
+
+    // --- Repeater text-CLI parsing ---
+
+    // Accumulate the serial byte stream and dispatch complete text lines.
+    _onSerialText(chunk) {
+        this._serialTextBuffer += this._textDecoder.decode(chunk, { stream: true });
+        let nl;
+        while ((nl = this._serialTextBuffer.indexOf('\n')) >= 0) {
+            const line = this._serialTextBuffer.slice(0, nl).replace(/\r$/, '').trim();
+            this._serialTextBuffer = this._serialTextBuffer.slice(nl + 1);
+            if (line) {
+                try { this._handleRepeaterLine(line); }
+                catch (e) { console.error('Repeater line error:', e, line); }
+            }
+        }
+    }
+
+    _handleRepeaterLine(line) {
+        // RAW packet dumps only appear on MESH_PACKET_LOGGING builds. Note their
+        // presence — a later phase decodes them for full path / last-hop data.
+        if (/\bU RAW:/.test(line)) { this._sawRepeaterRaw = true; return; }
+
+        // Packet-log summary line, e.g.:
+        //  12:34:56 - 1/6/2026 U: RX, len=22 (type=2, route=D, payload_len=20) SNR=13 RSSI=-5 score=1000 [C7 -> 43]
+        const m = line.match(/^(\d{2}):(\d{2}):(\d{2}) - (\d{1,2})\/(\d{1,2})\/(\d{4}) U: (RX|TX|TX FAIL!), len=(\d+) \(type=(\d+), route=([DF]), payload_len=(\d+)\)(?:\s+SNR=(-?\d+)\s+RSSI=(-?\d+)\s+score=(-?\d+))?(?:\s*\[([0-9A-Fa-f]{2}) -> ([0-9A-Fa-f]{2})\])?/);
+        if (m) { this._handleRepeaterLogLine(m); return; }
+
+        // neighbors-table rows and command acks are handled in a later phase.
+    }
+
+    _handleRepeaterLogLine(m) {
+        if (m[7] !== 'RX') return;   // outgoing TX carries no SNR/RSSI — ignore entirely
+
+        const [, hh, mm, ss, day, mon, yr] = m;
+        const len        = parseInt(m[8], 10);
+        const payloadType = parseInt(m[9], 10);
+        const route      = m[10];                 // 'D' | 'F'
+        const payloadLen = parseInt(m[11], 10);
+        const snr  = m[12] != null ? parseInt(m[12], 10) : null;
+        const rssi = m[13] != null ? parseInt(m[13], 10) : null;
+        const src  = m[15] ? m[15].toUpperCase() : null;
+        const dest = m[16] ? m[16].toUpperCase() : null;
+
+        // Stock firmware gives no usable hop identity: a flood line names the
+        // origin (not the node we actually heard), and direct traffic is almost
+        // always our own nearby companion. So bucket by route only, never merge.
+        const col  = route === 'D' ? 'direct' : 'unknown';
+        const hash = 'rep-' + (++this._repeaterRxSeq);
+        const type = (route === 'D' ? 'Direct ' : 'Flood ') + Utils.getPayloadTypeName(payloadType);
+
+        let ts = new Date(+yr, +mon - 1, +day, +hh, +mm, +ss).getTime();
+        if (isNaN(ts)) ts = Date.now();
+
+        const meta = { repeaterLog: true, route, payloadType, len, payloadLen, src, dest };
+        this._ingestPacket(hash, col, type, null, snr, rssi, meta, null, { timestamp: ts });
+
+        // Summary lines with no accompanying RAW dump ⇒ stock firmware ⇒ limited
+        // data. Surface the caveat once.
+        if (!this._sawRepeaterRaw && !this._repeaterStockNoticed) {
+            this._repeaterStockNoticed = true;
+            this._showRepeaterNotice();
+        }
+    }
+
+    _showRepeaterNotice() {
+        document.getElementById('repeaterNotice')?.classList.remove('hidden');
     }
 
     // Wrap a MeshCore command in a serial frame and write it to the port.
@@ -1492,6 +1629,13 @@ class MeshCoreApp {
             }
             return;
         }
+        // Repeater CLI: trigger an active neighbour discovery. Responses refresh
+        // the repeater's neighbours table (ingested by a later phase).
+        if (this.connectionMode === 'repeater') {
+            await this._serialWriteText('discover.neighbors\r\n');
+            if (btn) { btn.textContent = 'Discovering…'; setTimeout(() => { btn.textContent = 'Discover nodes'; }, 2000); }
+            return;
+        }
         if (this._discoverActive) return; // prevent double-click overlap
         this._discoverActive = true;
 
@@ -1604,6 +1748,14 @@ class MeshCoreApp {
 
     handlePayload(payload) {
         const pushCode = payload[0];
+        // A recognised companion push code proves the serial peer is a companion
+        // (consumed by device-type detection on connect).
+        if (!this._sawCompanionFrame &&
+            (pushCode === 0x0c || pushCode === 0x02 || pushCode === 0x03 || pushCode === 0x04 ||
+             pushCode === 0x8a || pushCode === 0x88 || pushCode === 0x84 || pushCode === 0x8e ||
+             pushCode === 0x80 || pushCode === 0x89)) {
+            this._sawCompanionFrame = true;
+        }
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
@@ -4075,7 +4227,14 @@ class MeshCoreApp {
             Promise.resolve().then(() => sp.close()).catch(() => {});
         }
         this._serialReadBuffer = new Uint8Array(0);
+        this._serialTextBuffer = '';
         this.transportKind = null;
+        this.connectionMode = null;
+        this._sawCompanionFrame = false;
+        this._sawRepeaterRaw = false;
+        this._repeaterStockNoticed = false;
+        this._repeaterRxSeq = 0;
+        document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
