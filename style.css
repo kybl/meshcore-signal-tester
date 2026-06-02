@@ -1744,7 +1744,8 @@ html.light-theme .btn-show-all-repeaters:hover {
     color: #333;
 }
 
-.smi-look {
+.smi-look,
+.smi-pin {
     background: none;
     border: none;
     cursor: pointer;
@@ -1756,7 +1757,21 @@ html.light-theme .btn-show-all-repeaters:hover {
     flex-shrink: 0;
 }
 
-.smi-look:hover {
+.smi-look:hover,
+.smi-pin:hover {
+    opacity: 1;
+}
+
+/* Pushpin: the 📌 glyph is drawn tilted by default (shown only temporarily);
+   rotate it upright once the repeater is kept on the map. */
+.smi-pin {
+    display: inline-block;
+    transform: rotate(0deg);
+    transition: transform 0.15s ease;
+}
+
+.smi-pin.pinned {
+    transform: rotate(45deg);
     opacity: 1;
 }
 

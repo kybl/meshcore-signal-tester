@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=93';
+import { Signal3DMap } from './signal3d.js?v=94';
 
 
 
@@ -679,6 +679,7 @@ class MeshCoreApp {
                         this._updateCornerNotices();
                     }
                 },
+                onToggleMapPin: col => this._toggleMapPinForCol(col),
             });
         } catch (_) {
             this.signalMap = null;
@@ -1192,6 +1193,20 @@ class MeshCoreApp {
     _contactsForMapButtons(col) {
         const matches = this._contactsByPrefix(col);
         return matches.filter(c => c.name && (c.lat !== 0 || c.lon !== 0));
+    }
+
+    // Toggle whether all GPS contacts of a repeater column are kept on the 3D
+    // map permanently. Driven by the pushpin button in the map infobox (A).
+    _toggleMapPinForCol(col) {
+        const contacts = this._contactsForMapButtons(col);
+        if (!contacts.length) return;
+        const anyPinned = contacts.some(c => this._mapPins.has(c.pubKeyFullHex));
+        for (const c of contacts) {
+            if (anyPinned) this._mapPins.delete(c.pubKeyFullHex);
+            else           this._mapPins.add(c.pubKeyFullHex);
+        }
+        this._updateMapPins();
+        this._updateCornerNotices();
     }
 
     _updateMapPins() {
@@ -3098,24 +3113,15 @@ class MeshCoreApp {
             const contacts = col && col !== 'direct' ? this._contactsByPrefix(col) : [];
             const contactsWithName = contacts.filter(c => c.name);
             const mapBtns = col ? this._contactsForMapButtons(col) : [];
-            const isAutoShown = col && col === this._selectedCol;
             const checkId = `${noticePrefix}ShowMore`;
             let mapHtml = '';
+            // Only when the repeater's GPS location is known: a "Show on map"
+            // button that scrolls to the 3D map and turns the camera toward it
+            // (same as the eye in the map infobox). Keeping it on the map is done
+            // via the pushpin in the map infobox.
             if (mapBtns.length) {
-                mapHtml += `<div class="cn-map-btns">`;
-                // Collapse all contacts into a single button regardless of count
-                const anyPinned = mapBtns.some(c => this._mapPins.has(c.pubKeyFullHex));
                 const allPubkeys = mapBtns.map(c => c.pubKeyFullHex).join('|');
-                let label, cls;
-                if (anyPinned) {
-                    label = '✕ Remove pin'; cls = 'cn-map-btn cn-map-btn-active';
-                } else if (isAutoShown) {
-                    label = '📌 Keep on map'; cls = 'cn-map-btn';
-                } else {
-                    label = '📍 Show on map'; cls = 'cn-map-btn';
-                }
-                mapHtml += `<button class="${cls}" data-pubkeys="${this._escHtml(allPubkeys)}">${label}</button>`;
-                mapHtml += `</div>`;
+                mapHtml += `<div class="cn-map-btns"><button class="cn-map-btn" data-pubkeys="${this._escHtml(allPubkeys)}">📍 Show on map</button></div>`;
             }
             let html = `<div class="cn-showmore-row"><label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>${mapHtml}</div>`;
             if (showMore && stats) {
@@ -3147,13 +3153,15 @@ class MeshCoreApp {
             document.querySelectorAll(`#${noticePrefix}NoticeExtra .cn-map-btn`).forEach(btn => {
                 btn.addEventListener('click', () => {
                     const pks = (btn.dataset.pubkeys || '').split('|').filter(Boolean);
-                    const anyPinned = pks.some(pk => this._mapPins.has(pk));
-                    for (const pk of pks) {
-                        if (anyPinned) this._mapPins.delete(pk);
-                        else this._mapPins.add(pk);
+                    // Turn the map camera toward the repeater (centroid of its GPS
+                    // contacts), then scroll the 3D map into view.
+                    const locs = pks.map(pk => this._contacts.get(pk))
+                                    .filter(c => c && (c.lat || c.lon));
+                    if (locs.length) {
+                        const lat = locs.reduce((s, c) => s + c.lat, 0) / locs.length;
+                        const lon = locs.reduce((s, c) => s + c.lon, 0) / locs.length;
+                        this.signalMap?.faceLatLon(lat, lon);
                     }
-                    this._updateMapPins();
-                    this._updateCornerNotices();
                     document.getElementById('mapWrap')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 });
             });

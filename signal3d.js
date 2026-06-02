@@ -110,6 +110,7 @@ export class Signal3DMap {
         this.onFilter        = opts.onFilter        || null;
         this.onRemoveMarker  = opts.onRemoveMarker  || null;
         this.onPinMarker     = opts.onPinMarker     || null;
+        this.onToggleMapPin  = opts.onToggleMapPin  || null;
         // Sprite lists for static marker hit-testing
         this._pinSprites  = [];   // [{sprite, col, pubKeyFullHex, isClose}]
 
@@ -286,6 +287,9 @@ export class Signal3DMap {
                 } else if (e.target.closest('.smi-look')) {
                     const loc = this._repeaterLocation(this._selectedCol);
                     if (loc) this.faceLatLon(loc.lat, loc.lon);
+                } else if (e.target.closest('.smi-pin')) {
+                    this.onToggleMapPin?.(this._selectedCol);
+                    this._updateInfoPanel();   // reflect the new pin state
                 }
             });
         }
@@ -567,13 +571,23 @@ export class Signal3DMap {
         const sigHtml = sigParts.length
             ? `<div class="smi-sig">${sigParts.join(' &nbsp; ')}<span class="smi-time">${timeStr}</span></div>` : '';
         // When the repeater's own GPS location is known (it has a static marker),
-        // offer an "eye" button that turns the map to look toward it.
+        // offer an "eye" button (turn the map toward it) and a pushpin button
+        // (keep it on the map permanently / remove). Tilted pin = shown only
+        // temporarily; upright pin = kept on the map.
         const hasLoc = this._repeaterLocation(col) != null;
-        const lookHtml = hasLoc
-            ? `<button class="smi-look" title="Turn the map toward this repeater">👁</button>` : '';
+        let actionsHtml = '';
+        if (hasLoc) {
+            const pinned = (this._pins || []).some(m => m.col === col && (m.lat || m.lon) && m.isPinned);
+            const pinTitle = pinned
+                ? 'Kept on the map — click to remove'
+                : 'Shown temporarily — click to keep on the map';
+            actionsHtml =
+                `<button class="smi-look" title="Turn the map toward this repeater">👁</button>` +
+                `<button class="smi-pin${pinned ? ' pinned' : ''}" title="${pinTitle}">📌</button>`;
+        }
         this.infoEl.innerHTML =
             `<button class="smi-close" title="Deselect">✕</button>` +
-            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}${lookHtml}</div>` +
+            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}${actionsHtml}</div>` +
             sigHtml;
         this.infoEl.classList.remove('hidden');
     }
