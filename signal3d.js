@@ -671,7 +671,7 @@ export class Signal3DMap {
         sprite.renderOrder = 10;
         const aspect = c.width / c.height;
         sprite.scale.set(aspect * 2.4, 2.4, 1);
-        sprite.position.set(0, 7.0, 0);
+        sprite.position.set(0, 3.6, 0);
         return sprite;
     }
 
@@ -697,16 +697,8 @@ export class Signal3DMap {
             base.position.y = 0.06;
             group.add(base);
 
-            // Thin mast
-            const mast = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.07, 0.1, 2.8, 8),
-                new THREE.MeshBasicMaterial({ color: col3 })
-            );
-            mast.position.y = 1.4;
-            group.add(mast);
-
-            // 📡 emoji sprite — click target for selection
-            const emojiSprite = this._makeEmojiSprite('📡', 3.8);
+            // 📡 emoji sprite — sits on the ground (no mast). Click target for selection.
+            const emojiSprite = this._makeEmojiSprite('📡', 1.2);
             group.add(emojiSprite);
             this._pinSprites.push({ sprite: emojiSprite, col: markerCol, pubKeyFullHex, isClose: false, isLabel: false });
 
@@ -1024,10 +1016,15 @@ export class Signal3DMap {
 
     // Known GPS location of a repeater column, or null. Looked up from the
     // static markers (a repeater only has a location once it has advertised GPS).
+    // On a collision (several repeaters sharing this column, each with its own
+    // GPS) we aim at the centroid — the midpoint of all known locations.
     _repeaterLocation(col) {
         if (!col) return null;
-        const m = (this._pins || []).find(p => p.col === col && (p.lat || p.lon));
-        return m ? { lat: m.lat, lon: m.lon } : null;
+        const ms = (this._pins || []).filter(p => p.col === col && (p.lat || p.lon));
+        if (!ms.length) return null;
+        const lat = ms.reduce((s, p) => s + p.lat, 0) / ms.length;
+        const lon = ms.reduce((s, p) => s + p.lon, 0) / ms.length;
+        return { lat, lon };
     }
 
     // Drive a camera animation via a per-frame apply(easedProgress) closure.
