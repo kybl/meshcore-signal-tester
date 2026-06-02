@@ -86,7 +86,7 @@ On connect the app sends `CMD_APP_START` (opcode `0x01`) to enable push notifica
 
 - [MeshCore Decoder](https://github.com/michaelhart/meshcore-decoder) — TypeScript library for packet decoding
 - [Web Bluetooth API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API) — MDN documentation
-- [Nordic UART Service](https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/libraries/bluetooth_services/services/nus.html) — NUS specification
+- [Nordic UART Service](https://nrfconnectdocs.nordicsemi.com/ncs/latest/nrf/libraries/bluetooth/services/nus.html) — NUS specification
 
 ## Author
 
