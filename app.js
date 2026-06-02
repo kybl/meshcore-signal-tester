@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=90';
+import { Signal3DMap } from './signal3d.js?v=91';
 
 
 
@@ -740,6 +740,7 @@ class MeshCoreApp {
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
+        document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.flyToUser());
     }
 
     _activeCols() {

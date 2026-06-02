@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=119">
+    <link rel="stylesheet" href="style.css?v=120">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -144,6 +144,7 @@
                     <div class="map-inner">
                         <div class="map-controls">
                             <button id="enableLocationBtn" class="btn-primary">Enable location</button>
+                            <button id="centerOnMeBtn" class="btn-show-all-repeaters" title="Move the camera to my current location">📍 Center on me</button>
                             <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
                             <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
                             <div class="map-settings-wrap">
@@ -320,6 +321,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=186"></script>
+    <script type="module" src="app.js?v=187"></script>
 </body>
 </html>

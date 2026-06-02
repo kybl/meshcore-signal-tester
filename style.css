@@ -1744,6 +1744,22 @@ html.light-theme .btn-show-all-repeaters:hover {
     color: #333;
 }
 
+.smi-look {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 2px;
+    margin-left: 6px;
+    opacity: 0.8;
+    flex-shrink: 0;
+}
+
+.smi-look:hover {
+    opacity: 1;
+}
+
 .smi-name {
     font-size: 12px;
     margin-bottom: 2px;

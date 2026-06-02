@@ -202,6 +202,8 @@ export class Signal3DMap {
             clearTimeout(this._viewUpdateTimer);
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
         });
+        // User interaction cancels any running camera fly/turn animation.
+        this.controls.addEventListener('start', () => { this._camAnim = null; });
 
         // Two-finger twist: rotate camera azimuth by the angular change between the
         // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
@@ -282,11 +284,15 @@ export class Signal3DMap {
                     this.onSelect?.(null);
                 } else if (e.target.closest('.smi-filter')) {
                     this.onFilter?.(this._selectedCol);
+                } else if (e.target.closest('.smi-look')) {
+                    const loc = this._repeaterLocation(this._selectedCol);
+                    if (loc) this.faceLatLon(loc.lat, loc.lon);
                 }
             });
         }
 
         const tick = () => {
+            this._stepCameraAnim();
             this.controls.update();
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
@@ -536,9 +542,14 @@ export class Signal3DMap {
                           rssiStr ? `RSSI <b>${this._escHtml(rssiStr)}</b>` : null].filter(Boolean);
         const sigHtml = sigParts.length
             ? `<div class="smi-sig">${sigParts.join(' &nbsp; ')}<span class="smi-time">${timeStr}</span></div>` : '';
+        // When the repeater's own GPS location is known (it has a static marker),
+        // offer an "eye" button that turns the map to look toward it.
+        const hasLoc = this._repeaterLocation(col) != null;
+        const lookHtml = hasLoc
+            ? `<button class="smi-look" title="Turn the map toward this repeater">👁</button>` : '';
         this.infoEl.innerHTML =
             `<button class="smi-close" title="Deselect">✕</button>` +
-            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}</div>` +
+            `<div class="smi-name">${dot}<b>${this._escHtml(this.displayId(col))}</b>${nameHtml}${lookHtml}</div>` +
             sigHtml;
         this.infoEl.classList.remove('hidden');
     }
@@ -1007,6 +1018,82 @@ export class Signal3DMap {
     fitCamera() {
         this._cameraFit = false;
         this._forceFit  = true;
+    }
+
+    // ---- Camera fly / turn animations ----
+
+    // Known GPS location of a repeater column, or null. Looked up from the
+    // static markers (a repeater only has a location once it has advertised GPS).
+    _repeaterLocation(col) {
+        if (!col) return null;
+        const m = (this._pins || []).find(p => p.col === col && (p.lat || p.lon));
+        return m ? { lat: m.lat, lon: m.lon } : null;
+    }
+
+    // Drive a camera animation via a per-frame apply(easedProgress) closure.
+    _animate(apply, duration = 700) {
+        this._camAnim = { apply, start: performance.now(), duration };
+    }
+
+    _stepCameraAnim() {
+        const a = this._camAnim;
+        if (!a) return;
+        const k = Math.min(1, (performance.now() - a.start) / a.duration);
+        const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // easeInOutQuad
+        a.apply(e);
+        this.controls.target.y = 0;
+        this._updateHeightScale();
+        if (k >= 1) this._camAnim = null;
+    }
+
+    // Recenter the view on the user's current GPS location (keeps angle/zoom).
+    // Returns false (and shows a status message) when the location is unknown.
+    flyToUser() {
+        if (!this._userLoc) {
+            this._setStatus('Location not known yet — tap “Enable location” first.');
+            return false;
+        }
+        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
+        if (!pos) return false;
+        const delta    = new THREE.Vector3(pos.x - this.controls.target.x, 0, pos.z - this.controls.target.z);
+        const fromT    = this.controls.target.clone();
+        const fromE    = this.camera.position.clone();
+        const toT      = new THREE.Vector3(pos.x, 0, pos.z);
+        const toE      = this.camera.position.clone().add(delta);
+        this._animate(e => {
+            this.controls.target.lerpVectors(fromT, toT, e);
+            this.camera.position.lerpVectors(fromE, toE, e);
+        });
+        return true;
+    }
+
+    // Turn the camera (orbit around its current target) so it looks toward the
+    // given location — i.e. that direction becomes "into the screen". Rotates
+    // around the target so the zoom/height stay constant.
+    faceLatLon(lat, lon) {
+        const R = this._latLonToWorld(lat, lon);
+        if (!R) return false;
+        const T = this.controls.target;
+        const dx = R.x - T.x, dz = R.z - T.z;
+        if (Math.hypot(dx, dz) < 1e-3) return false; // already centred there
+        const cx = this.camera.position.x - T.x;
+        const cz = this.camera.position.z - T.z;
+        const horiz = Math.hypot(cx, cz);
+        const y     = this.camera.position.y;
+        const tx = T.x, tz = T.z;
+        const fromAz = Math.atan2(cz, cx);
+        // Camera must sit on the far side of the target from R so the view faces R.
+        const toAz   = Math.atan2(-dz, -dx);
+        let dAz = toAz - fromAz;
+        while (dAz >  Math.PI) dAz -= 2 * Math.PI;
+        while (dAz < -Math.PI) dAz += 2 * Math.PI;
+        this._animate(e => {
+            const az = fromAz + dAz * e;
+            this.camera.position.x = tx + horiz * Math.cos(az);
+            this.camera.position.z = tz + horiz * Math.sin(az);
+            this.camera.position.y = y;
+        });
+        return true;
     }
 
     _updateHeightScale() {
