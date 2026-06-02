@@ -584,9 +584,9 @@ export class Signal3DMap {
             // Inline SVG pushpin (orientation is controlled by CSS rotation, not by
             // platform emoji rendering): tilted = temporary, upright = kept.
             const pinSvg = `<svg class="smi-pin-svg" viewBox="0 0 24 24" aria-hidden="true">` +
-                `<g fill="currentColor"><ellipse cx="12" cy="6" rx="6" ry="2.8"/>` +
-                `<rect x="10.5" y="6" width="3" height="6"/>` +
-                `<path d="M12 22 L10.5 12 L13.5 12 Z"/></g></svg>`;
+                `<rect x="10.5" y="7" width="3" height="6" fill="currentColor"/>` +
+                `<path d="M12 22 L10.5 13 L13.5 13 Z" fill="currentColor"/>` +
+                `<ellipse cx="12" cy="6" rx="7.5" ry="3.6" fill="#e53935"/></svg>`;
             actionsHtml =
                 `<button class="smi-look" title="Turn the map toward this repeater">👁</button>` +
                 `<button class="smi-pin${pinned ? ' pinned' : ''}" title="${pinTitle}">${pinSvg}</button>`;
