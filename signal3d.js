@@ -101,8 +101,7 @@ export class Signal3DMap {
         this._lineSegsDim = null;   // vertical lines for dim (unselected) points
         this._hitPoints = [];
         this._clickedPoint = null;  // the specific point instance last clicked
-        // Shared hit-test geometry & sprite textures (created once)
-        this._hitGeo      = new THREE.SphereGeometry(1, 6, 4);
+        // Shared sprite textures (created once)
         this._sphereTex   = this._makeSphereTex();
         this._starTex     = this._makeStarTex();
         this._outgoingPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
@@ -501,17 +500,42 @@ export class Signal3DMap {
 
         let newCol = null;
         let clickedPt = null;
-        if (this._hitMesh) {
-            const hits = this._raycaster.intersectObject(this._hitMesh);
-            if (hits.length > 0) {
-                const c = this._hitPoints[hits[0].instanceId];
-                if (c) {
-                    // Clicking the exact same bead again deselects. Clicking any
-                    // other bead — even one of the already-selected repeater —
-                    // shows that specific bead's SNR/RSSI in the info panel.
-                    if (this._clickedPoint === c) { newCol = null; clickedPt = null; }
-                    else { newCol = c.col; clickedPt = c; }
-                }
+        // Screen-space pick against the actually-rendered dot positions. The dots
+        // are drawn at ~constant screen size (dampened-perspective shader), so a
+        // 3D ray-vs-world-sphere test mis-selects when dots stack vertically
+        // (same lat/lon, different SNR height) or sit near each other. Projecting
+        // each dot and choosing the one nearest the cursor matches what the user
+        // sees — and clicking the guide line (away from the ball) no longer hits.
+        {
+            const px = e.clientX - rect.left, py = e.clientY - rect.top;
+            const groupSy = this._rxPointsGroup?.scale.y ?? 1;
+            const PICK_RADIUS = 16; // CSS px around a dot centre
+            const TIE = 8;          // dots this close on screen count as overlapping
+            const _v = new THREE.Vector3();
+            const candidates = [];
+            for (const p of this._hitPoints) {
+                const wp = this._latLonToWorld(p.lat, p.lon);
+                if (!wp) continue;
+                _v.set(wp.x, this._signalToHeight(p.snr) * groupSy, wp.z);
+                const camDist = this.camera.position.distanceTo(_v);
+                _v.project(this.camera);
+                if (_v.z > 1) continue; // behind the camera
+                const sx = (_v.x * 0.5 + 0.5) * rect.width;
+                const sy = (-_v.y * 0.5 + 0.5) * rect.height;
+                const d = Math.hypot(sx - px, sy - py);
+                if (d <= PICK_RADIUS) candidates.push({ p, d, camDist });
+            }
+            // Nearest to the cursor wins; for dots overlapping on screen prefer the
+            // front-most (the one visually on top).
+            let best = null;
+            for (const c of candidates) {
+                if (!best) { best = c; continue; }
+                if (Math.abs(c.d - best.d) <= TIE) { if (c.camDist < best.camDist) best = c; }
+                else if (c.d < best.d) best = c;
+            }
+            if (best) {
+                if (this._clickedPoint === best.p) { newCol = null; clickedPt = null; }
+                else { newCol = best.p.col; clickedPt = best.p; }
             }
         }
         this._clickedPoint = clickedPt;
@@ -1293,8 +1317,6 @@ export class Signal3DMap {
         const litPts = sel ? visible.filter(p => p.col === sel) : visible;
         const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
 
-        const _m4 = new THREE.Matrix4(), _v = new THREE.Vector3();
-        const _s  = new THREE.Vector3(), _q = new THREE.Quaternion();
         const _col = new THREE.Color();
 
         const fovFactor  = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
@@ -1368,24 +1390,8 @@ export class Signal3DMap {
         addPoints(litPts, 1.0,  2.0);
         addPoints(dimPts, 0.07, 2.0);
 
-        // Invisible InstancedMesh for raycasting (stays separate from visual rendering)
+        // Points used for screen-space click picking (see _onCanvasClick).
         this._hitPoints = visible;
-        this._hitMesh = new THREE.InstancedMesh(
-            this._hitGeo,
-            new THREE.MeshBasicMaterial({ visible: false }),
-            visible.length
-        );
-        for (let i = 0; i < visible.length; i++) {
-            const p   = visible[i];
-            const pos = this._latLonToWorld(p.lat, p.lon);
-            if (!pos) { _m4.makeScale(0, 0, 0); this._hitMesh.setMatrixAt(i, _m4); continue; }
-            const h  = this._signalToHeight(p.snr);
-            const hr = this._sphereSize + 1.8;
-            _m4.compose(_v.set(pos.x, h, pos.z), _q, _s.set(hr, hr, hr));
-            this._hitMesh.setMatrixAt(i, _m4);
-        }
-        this._hitMesh.instanceMatrix.needsUpdate = true;
-        this._rxPointsGroup.add(this._hitMesh);
 
         // Vertical lines — split into lit (coloured) and dim (flat grey, low opacity)
         const makeLines = (pts, mat) => {
