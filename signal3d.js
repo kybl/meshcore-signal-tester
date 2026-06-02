@@ -1109,30 +1109,61 @@ export class Signal3DMap {
     }
 
     // Turn the camera (orbit around its current target) so it looks toward the
-    // given location — i.e. that direction becomes "into the screen". Rotates
-    // around the target so the zoom/height stay constant.
+    // given location — i.e. that direction becomes "into the screen". Keeps the
+    // zoom (orbit radius) constant. If the target is so far / the view so
+    // top-down that it would fall above the frame, the camera is also tilted
+    // toward the horizon (polar angle) so the repeater becomes visible.
     faceLatLon(lat, lon) {
         const R = this._latLonToWorld(lat, lon);
         if (!R) return false;
-        const T = this.controls.target;
+        const T = this.controls.target.clone();
         const dx = R.x - T.x, dz = R.z - T.z;
-        if (Math.hypot(dx, dz) < 1e-3) return false; // already centred there
+        const d = Math.hypot(dx, dz);
+        if (d < 1e-3) return false; // already centred there
+
+        // Current camera position in spherical coords around the target.
         const cx = this.camera.position.x - T.x;
+        const cy = this.camera.position.y - T.y;
         const cz = this.camera.position.z - T.z;
-        const horiz = Math.hypot(cx, cz);
-        const y     = this.camera.position.y;
-        const tx = T.x, tz = T.z;
-        const fromAz = Math.atan2(cz, cx);
+        const r = Math.hypot(cx, cy, cz) || 1;
+        const phi0   = Math.acos(Math.max(-1, Math.min(1, cy / r))); // polar from +Y
+        const theta0 = Math.atan2(cz, cx);                            // azimuth
         // Camera must sit on the far side of the target from R so the view faces R.
-        const toAz   = Math.atan2(-dz, -dx);
-        let dAz = toAz - fromAz;
-        while (dAz >  Math.PI) dAz -= 2 * Math.PI;
-        while (dAz < -Math.PI) dAz += 2 * Math.PI;
+        const thetaTo = Math.atan2(-dz, -dx);
+        let dTheta = thetaTo - theta0;
+        while (dTheta >  Math.PI) dTheta -= 2 * Math.PI;
+        while (dTheta < -Math.PI) dTheta += 2 * Math.PI;
+
+        // Vertical angle of R above the view centre (target) once R is straight
+        // ahead. R is always above centre (it's farther along the ground), so if
+        // that angle exceeds half the vertical FOV we tilt toward the horizon
+        // (larger polar angle) until it fits comfortably.
+        const maxPhi  = this.controls.maxPolarAngle ?? (Math.PI / 2 - 0.08);
+        const fovRad  = this.camera.fov * Math.PI / 180;
+        const offsetAt = phi => (Math.PI / 2 - phi) - Math.atan2(r * Math.cos(phi), d + r * Math.sin(phi));
+        let phiTo = phi0;
+        if (offsetAt(phi0) > fovRad / 2 * 0.85) {
+            const want = fovRad / 2 * 0.6;       // place R ~60% toward the top edge
+            if (offsetAt(maxPhi) >= want) {
+                phiTo = maxPhi;                  // as horizontal as allowed
+            } else {
+                let lo = phi0, hi = maxPhi;      // offset decreases as phi grows
+                for (let i = 0; i < 24; i++) {
+                    const m = (lo + hi) / 2;
+                    if (offsetAt(m) > want) lo = m; else hi = m;
+                }
+                phiTo = hi;
+            }
+        }
+        const dPhi = phiTo - phi0;
+
         this._animate(e => {
-            const az = fromAz + dAz * e;
-            this.camera.position.x = tx + horiz * Math.cos(az);
-            this.camera.position.z = tz + horiz * Math.sin(az);
-            this.camera.position.y = y;
+            const theta = theta0 + dTheta * e;
+            const phi   = phi0   + dPhi   * e;
+            const sinP  = Math.sin(phi);
+            this.camera.position.x = T.x + r * sinP * Math.cos(theta);
+            this.camera.position.z = T.z + r * sinP * Math.sin(theta);
+            this.camera.position.y = T.y + r * Math.cos(phi);
         });
         return true;
     }
