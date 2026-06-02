@@ -1064,6 +1064,7 @@ class MeshCoreApp {
         this.saveDevice(device);
 
         this.updateStatus('Connected', 'connected');
+        this._updateSoundHighlight();
         this.connectBtn.textContent = 'Disconnect';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.disconnect();
@@ -1240,7 +1241,10 @@ class MeshCoreApp {
     _updateSoundHighlight() {
         const label = this.soundSelect?.closest('.sound-toggle');
         if (!label) return;
-        label.classList.toggle('sound-active', (this.soundSelect.value || 'off') !== 'off');
+        // Only highlight when sound is enabled AND a device is connected — without
+        // a connection nothing produces sound anyway.
+        const active = (this.soundSelect.value || 'off') !== 'off' && !!this.bleRxCharacteristic;
+        label.classList.toggle('sound-active', active);
     }
 
     // Send one DISCOVER_REQ, then wait 2 s to collect responses before re-enabling the button.
@@ -3792,6 +3796,7 @@ class MeshCoreApp {
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
+        this._updateSoundHighlight();
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
