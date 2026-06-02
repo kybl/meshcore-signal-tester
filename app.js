@@ -64,6 +64,7 @@ class MeshCoreApp {
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
         this._selectedCol = null;
+        this._tooltipPinned = false;
         this._snrShowIncoming = true;
         this._snrShowOutgoing = true;
         this._rxTimestamps = [];
@@ -187,6 +188,7 @@ class MeshCoreApp {
         this.repTableBody = document.getElementById('repTableBody');
         this.soundSelect = document.getElementById('soundSelect');
         this.soundSelect.value = Store.get('sound', this.soundSelect.value);
+        this._updateSoundHighlight();
         this.tooltip = document.getElementById('chartTooltip');
 
         document.getElementById('pauseBtn')?.addEventListener('click', () => {
@@ -223,23 +225,17 @@ class MeshCoreApp {
 
         const bindChartTooltip = (svg, type) => {
             if (!svg) return;
-            let lastTouch = 0;
+            // Desktop: hover shows a transient preview. A tap/click (here and on
+            // touch) pins the infobox via _onChartClick — it then stays put (no
+            // auto-hide) until tapped again or dismissed by clicking the infobox.
             svg.addEventListener('mousemove', e => this.showChartTooltip(e, type));
-            svg.addEventListener('mouseleave', () => {
-                if (Date.now() - lastTouch > 400) this.hideChartTooltip();
-            });
+            svg.addEventListener('mouseleave', () => this.hideChartTooltip());
             svg.addEventListener('click', e => this._onChartClick(e, type));
-            svg.addEventListener('touchstart', e => {
-                lastTouch = Date.now();
-                if (e.touches.length === 1) this.showChartTooltip(e.touches[0], type);
-            }, { passive: true });
-            svg.addEventListener('touchend', () => {
-                lastTouch = Date.now();
-                setTimeout(() => this.hideChartTooltip(), 2500);
-            });
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');
         bindChartTooltip(this.snrChartSvg,  'snr');
+        // Click the infobox itself to dismiss it.
+        this.tooltip?.addEventListener('click', () => this.hideChartTooltip(true));
 
         const snrInCb  = document.getElementById('snrShowIncoming');
         const snrOutCb = document.getElementById('snrShowOutgoing');
@@ -336,6 +332,7 @@ class MeshCoreApp {
 
         this.soundSelect?.addEventListener('change', () => {
             Store.set('sound', this.soundSelect.value);
+            this._updateSoundHighlight();
         });
 
         // Keep screen on
@@ -1240,11 +1237,21 @@ class MeshCoreApp {
         if (this.contactsHstat) this.contactsHstat.style.display = this._contacts.size > 0 ? '' : 'none';
     }
 
+    _updateSoundHighlight() {
+        const label = this.soundSelect?.closest('.sound-toggle');
+        if (!label) return;
+        label.classList.toggle('sound-active', (this.soundSelect.value || 'off') !== 'off');
+    }
+
     // Send one DISCOVER_REQ, then wait 2 s to collect responses before re-enabling the button.
     async startDiscoverSequence(filterMask) {
         const btn = document.getElementById('discoverBtn');
         if (!this.bleRxCharacteristic) {
-            if (btn) { btn.textContent = '⚠ Not connected'; setTimeout(() => { btn.textContent = 'Discover nodes'; }, 2500); }
+            if (btn) {
+                btn.textContent = '⚠ Not connected';
+                btn.classList.add('btn-error');
+                setTimeout(() => { btn.textContent = 'Discover nodes'; btn.classList.remove('btn-error'); }, 2500);
+            }
             return;
         }
         if (this._discoverActive) return; // prevent double-click overlap
@@ -2442,9 +2449,13 @@ class MeshCoreApp {
         }
         if (!nearest || minDist > 2500) {
             if (this._selectedCol) this._selectRepeater(null);
+            this.hideChartTooltip(true);
             return;
         }
-        this._selectRepeater(this._selectedCol === nearest.col ? null : nearest.col);
+        const deselect = this._selectedCol === nearest.col;
+        this._selectRepeater(deselect ? null : nearest.col);
+        if (deselect) this.hideChartTooltip(true);
+        else this.showChartTooltip(e, type, true);
     }
 
     _xLabelStepMs(rangeMs, chartWidthPx) {
@@ -2701,8 +2712,11 @@ class MeshCoreApp {
         return result.sort((a, b) => a.time - b.time);
     }
 
-    showChartTooltip(e, type) {
+    showChartTooltip(e, type, pin = false) {
         if (!this.tooltip) return;
+        // While an infobox is pinned (shown via a click/tap), hover/move events
+        // must not override or move it.
+        if (this._tooltipPinned && !pin) return;
         const incomingPts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
         const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
@@ -2745,7 +2759,7 @@ class MeshCoreApp {
             const d = dx * dx + dy * dy;
             if (d < minDist) { minDist = d; nearest = p; }
         }
-        if (!nearest || minDist > 1600) { this.hideChartTooltip(); return; }
+        if (!nearest || minDist > 1600) { if (!this._tooltipPinned) this.hideChartTooltip(); return; }
 
         const isSent = sentPts.includes(nearest);
         const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -2754,23 +2768,35 @@ class MeshCoreApp {
             ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
             : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
-        const nameHtml = cName ? `<span style="color:#7ab;font-size:11px;margin-left:3px">${this._escHtml(cName)}</span>` : '';
+        const nameHtml = cName ? `<span class="ct-colname">${this._escHtml(cName)}</span>` : '';
+        // Signal values and time share one line, with the time pushed to the end
+        // (matching the 3D map infobox layout).
         const valLine = isSent
             ? `Sent SNR ${nearest.snr?.toFixed(1) ?? '—'} dB ↗`
             : `SNR ${nearest.snr?.toFixed(1) ?? '—'} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
         this.tooltip.innerHTML =
-            `${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}<br>` +
-            `${time}<br>${valLine}`;
+            `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}</div>` +
+            `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
 
         const tx = e.clientX + 14;
         const ty = e.clientY - 10;
         this.tooltip.style.left = `${Math.min(tx, window.innerWidth - 160)}px`;
         this.tooltip.style.top  = `${Math.max(ty, 4)}px`;
         this.tooltip.style.display = 'block';
+        if (pin) {
+            this._tooltipPinned = true;
+            this.tooltip.classList.add('pinned');
+        }
     }
 
-    hideChartTooltip() {
-        if (this.tooltip) this.tooltip.style.display = 'none';
+    hideChartTooltip(force = false) {
+        // A pinned infobox only hides when explicitly dismissed (force = true).
+        if (this._tooltipPinned && !force) return;
+        this._tooltipPinned = false;
+        if (this.tooltip) {
+            this.tooltip.style.display = 'none';
+            this.tooltip.classList.remove('pinned');
+        }
     }
 
     // --- Cleanup ---
