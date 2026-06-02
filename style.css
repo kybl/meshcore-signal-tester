@@ -1762,17 +1762,24 @@ html.light-theme .btn-show-all-repeaters:hover {
     opacity: 1;
 }
 
-/* Pushpin: the 📌 glyph is drawn tilted by default (shown only temporarily);
-   rotate it upright once the repeater is kept on the map. */
+/* Inline SVG pushpin: drawn pointing straight down, so upright = kept on the
+   map and a CSS tilt = shown only temporarily. Platform-independent. */
 .smi-pin {
-    display: inline-block;
-    transform: rotate(0deg);
+    display: inline-flex;
+    align-items: center;
+    transform: rotate(32deg);
     transition: transform 0.15s ease;
 }
 
 .smi-pin.pinned {
-    transform: rotate(45deg);
+    transform: rotate(0deg);
     opacity: 1;
+}
+
+.smi-pin-svg {
+    width: 13px;
+    height: 13px;
+    display: block;
 }
 
 .smi-name {
