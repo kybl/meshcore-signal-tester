@@ -63,8 +63,9 @@
                 Incoming packets can't be tied to a specific node: flood traffic shows the
                 <em>originator</em>, not the node actually heard, and direct traffic is usually your own
                 nearby companion. Received packets are grouped only as <code>direct</code> / <code>unknown</code>.
-                For full per-hop SNR/RSSI with the real last hop, flash the repeater with a
-                <code>MESH_PACKET_LOGGING</code> build (it streams RAW packets this app can decode).
+                Use <strong>Discover nodes</strong> to list directly-heard neighbouring repeaters (identified, SNR only).
+                For full per-hop SNR <em>and</em> RSSI with the real last hop, flash the repeater with a
+                <code>MESH_PACKET_LOGGING</code> build (it streams RAW packets this app decodes automatically).
             </div>
 
             <div id="emptyState" class="empty-state">
@@ -332,6 +333,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=195"></script>
+    <script type="module" src="app.js?v=196"></script>
 </body>
 </html>

@@ -54,6 +54,9 @@ class MeshCoreApp {
         this._sawRepeaterRaw = false;      // set if the repeater emits RAW packet dumps (logging build)
         this._repeaterStockNoticed = false;
         this._repeaterRxSeq = 0;
+        this._neighborSeen = new Map();    // neighbour id → last ingested heard-epoch (dedup)
+        this._neighborPollTimer = null;
+        this._pendingRaw = [];             // decoded RAW dumps awaiting their summary line (logging build)
         this.hashData = new Map();
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
@@ -1283,6 +1286,10 @@ class MeshCoreApp {
         await new Promise(r => setTimeout(r, 150));
         await this._serialWriteText('log start\r\n');
 
+        this._neighborSeen = new Map();
+        this._pendingRaw = [];
+        this._startNeighborPolling();
+
         this.saveSerialPort(port);
         this.updateStatus('Connected (repeater)', 'connected');
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
@@ -1370,22 +1377,56 @@ class MeshCoreApp {
     }
 
     _handleRepeaterLine(line) {
-        // RAW packet dumps only appear on MESH_PACKET_LOGGING builds. Note their
-        // presence — a later phase decodes them for full path / last-hop data.
-        if (/\bU RAW:/.test(line)) { this._sawRepeaterRaw = true; return; }
+        // RAW packet dump (MESH_PACKET_LOGGING builds): decode for full path /
+        // last-hop, hold it until the matching summary line brings SNR/RSSI.
+        const raw = line.match(/U RAW:\s*([0-9A-Fa-f]+)/);
+        if (raw) { this._handleRepeaterRaw(raw[1]); return; }
 
         // Packet-log summary line, e.g.:
         //  12:34:56 - 1/6/2026 U: RX, len=22 (type=2, route=D, payload_len=20) SNR=13 RSSI=-5 score=1000 [C7 -> 43]
         const m = line.match(/^(\d{2}):(\d{2}):(\d{2}) - (\d{1,2})\/(\d{1,2})\/(\d{4}) U: (RX|TX|TX FAIL!), len=(\d+) \(type=(\d+), route=([DF]), payload_len=(\d+)\)(?:\s+SNR=(-?\d+)\s+RSSI=(-?\d+)\s+score=(-?\d+))?(?:\s*\[([0-9A-Fa-f]{2}) -> ([0-9A-Fa-f]{2})\])?/);
         if (m) { this._handleRepeaterLogLine(m); return; }
 
-        // neighbors-table rows and command acks are handled in a later phase.
+        // Neighbours-table row: "<8 hex>:<secs_ago>:<snr*4>", optionally with the
+        // leading "-> " that the CLI puts on the first line of a reply.
+        const nb = line.replace(/^->\s*/, '').match(/^([0-9A-Fa-f]{8}):(\d+):(-?\d+)$/);
+        if (nb) { this._handleNeighborLine(nb[1], parseInt(nb[2], 10), parseInt(nb[3], 10)); return; }
+
+        // Other CLI replies (OK - Discover sent, -none-, errors) are ignored.
+    }
+
+    // Decode a RAW packet dump and queue it; the next matching summary line
+    // (which carries SNR/RSSI) pairs with it for full last-hop attribution.
+    _handleRepeaterRaw(hex) {
+        this._sawRepeaterRaw = true;
+        let packet;
+        try { packet = MeshCoreDecoder.decode(hex); } catch (e) { return; }
+        if (!packet || !packet.isValid) return;
+        const payloadLen = packet.payload?.raw ? packet.payload.raw.length / 2 : null;
+        const now = Date.now();
+        this._pendingRaw.push({ packet, rawHex: hex, payloadType: packet.payloadType, payloadLen, t: now });
+        // Keep the queue small and fresh so a dropped summary can't mis-pair later.
+        const cutoff = now - 3000;
+        this._pendingRaw = this._pendingRaw.filter(r => r.t >= cutoff).slice(-8);
+    }
+
+    // A neighbours-table entry: identified repeater + SNR + age. Ingest a fresh
+    // datapoint only when the node was heard more recently than last time.
+    _handleNeighborLine(id, secsAgo, snrX4) {
+        const fullId = id.toUpperCase();
+        const heardEpoch = Date.now() - secsAgo * 1000;
+        const prev = this._neighborSeen.get(fullId) ?? 0;
+        if (heardEpoch <= prev + 2000) return;   // same reading (allow 1 s rounding jitter)
+        this._neighborSeen.set(fullId, heardEpoch);
+        const snr = snrX4 / 4;
+        const hash = 'nbr-' + fullId + '-' + heardEpoch;
+        this._ingestPacket(hash, fullId, 'Repeater Neighbour', null, snr, null,
+            { repeaterNeighbor: true, secsAgo }, null, { timestamp: heardEpoch });
     }
 
     _handleRepeaterLogLine(m) {
         if (m[7] !== 'RX') return;   // outgoing TX carries no SNR/RSSI — ignore entirely
 
-        const [, hh, mm, ss, day, mon, yr] = m;
         const len        = parseInt(m[8], 10);
         const payloadType = parseInt(m[9], 10);
         const route      = m[10];                 // 'D' | 'F'
@@ -1395,18 +1436,33 @@ class MeshCoreApp {
         const src  = m[15] ? m[15].toUpperCase() : null;
         const dest = m[16] ? m[16].toUpperCase() : null;
 
-        // Stock firmware gives no usable hop identity: a flood line names the
-        // origin (not the node we actually heard), and direct traffic is almost
-        // always our own nearby companion. So bucket by route only, never merge.
+        // Reception time = now (when the line reached us). The repeater's own
+        // clock string is unreliable — an unset RTC stamps packets years off,
+        // which would push them outside the chart/map TTL window.
+
+        // Rich path (logging build): a RAW dump for this same packet should be
+        // queued — pairing gives the real last hop from the decoded path.
+        if (this._pendingRaw.length) {
+            let idx = -1;
+            for (let i = this._pendingRaw.length - 1; i >= 0; i--) {
+                const r = this._pendingRaw[i];
+                if (r.payloadType === payloadType && (r.payloadLen == null || r.payloadLen === payloadLen)) { idx = i; break; }
+            }
+            if (idx >= 0) {
+                const r = this._pendingRaw.splice(idx, 1)[0];
+                this._processPacket(r.packet, r.rawHex, snr, rssi);
+                return;
+            }
+        }
+
+        // Stock fallback: no usable hop identity — a flood line names the origin
+        // (not the node we actually heard), and direct traffic is almost always
+        // our own nearby companion. So bucket by route only, and never merge.
         const col  = route === 'D' ? 'direct' : 'unknown';
         const hash = 'rep-' + (++this._repeaterRxSeq);
         const type = (route === 'D' ? 'Direct ' : 'Flood ') + Utils.getPayloadTypeName(payloadType);
-
-        let ts = new Date(+yr, +mon - 1, +day, +hh, +mm, +ss).getTime();
-        if (isNaN(ts)) ts = Date.now();
-
         const meta = { repeaterLog: true, route, payloadType, len, payloadLen, src, dest };
-        this._ingestPacket(hash, col, type, null, snr, rssi, meta, null, { timestamp: ts });
+        this._ingestPacket(hash, col, type, null, snr, rssi, meta, null, {});
 
         // Summary lines with no accompanying RAW dump ⇒ stock firmware ⇒ limited
         // data. Surface the caveat once.
@@ -1418,6 +1474,23 @@ class MeshCoreApp {
 
     _showRepeaterNotice() {
         document.getElementById('repeaterNotice')?.classList.remove('hidden');
+    }
+
+    // Passively poll the repeater's neighbours table (reading it transmits
+    // nothing). Adverts land here on their own; the Discover button adds an
+    // active probe. New entries are detected by their heard-time advancing.
+    _startNeighborPolling() {
+        this._stopNeighborPolling();
+        const poll = () => {
+            if (this.connectionMode !== 'repeater' || !this.serialPort) return;
+            this._serialWriteText('neighbors\r\n').catch(() => {});
+        };
+        poll();   // immediate read seeds the table on connect
+        this._neighborPollTimer = setInterval(poll, 5000);
+    }
+
+    _stopNeighborPolling() {
+        if (this._neighborPollTimer) { clearInterval(this._neighborPollTimer); this._neighborPollTimer = null; }
     }
 
     // Wrap a MeshCore command in a serial frame and write it to the port.
@@ -1634,6 +1707,9 @@ class MeshCoreApp {
         if (this.connectionMode === 'repeater') {
             await this._serialWriteText('discover.neighbors\r\n');
             if (btn) { btn.textContent = 'Discovering…'; setTimeout(() => { btn.textContent = 'Discover nodes'; }, 2000); }
+            // Read the table back once responses have had time to arrive (the
+            // periodic poll would catch them too, just less promptly).
+            setTimeout(() => this._serialWriteText('neighbors\r\n').catch(() => {}), 1500);
             return;
         }
         if (this._discoverActive) return; // prevent double-click overlap
@@ -4192,6 +4268,7 @@ class MeshCoreApp {
 
     onDisconnected() {
         this.releaseWakeLock();
+        this._stopNeighborPolling();
         clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
         this._monitorDelay = null;
@@ -4234,6 +4311,8 @@ class MeshCoreApp {
         this._sawRepeaterRaw = false;
         this._repeaterStockNoticed = false;
         this._repeaterRxSeq = 0;
+        this._neighborSeen = new Map();
+        this._pendingRaw = [];
         document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
