@@ -324,20 +324,17 @@ html.light-theme .status.importing {
 
 /* Sound enabled: prominently highlight the icon, label and dropdown. */
 .sound-toggle.sound-active {
-    background: rgba(74, 108, 247, 0.18);
-    color: #4a6cf7;
+    background: rgba(255, 210, 70, 0.85);
+    color: #3a2e00;
     font-weight: 700;
-    box-shadow: 0 0 0 1.5px rgba(74, 108, 247, 0.55), 0 0 9px rgba(74, 108, 247, 0.45);
+    box-shadow: 0 0 0 1.5px rgba(224, 176, 20, 0.85), 0 0 9px rgba(255, 205, 50, 0.6);
 }
 
 .sound-toggle.sound-active .ttl-header-select {
-    border-color: #4a6cf7;
-    color: #4a6cf7;
+    background: #fff6d6;
+    border-color: #d9a800;
+    color: #3a2e00;
     font-weight: 700;
-}
-
-html.light-theme .sound-toggle.sound-active {
-    background: rgba(74, 108, 247, 0.14);
 }
 
 .size-label {

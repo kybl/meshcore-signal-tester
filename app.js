@@ -2778,11 +2778,23 @@ class MeshCoreApp {
             `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}</div>` +
             `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
 
-        const tx = e.clientX + 14;
-        const ty = e.clientY - 10;
-        this.tooltip.style.left = `${Math.min(tx, window.innerWidth - 160)}px`;
-        this.tooltip.style.top  = `${Math.max(ty, 4)}px`;
+        // Anchor the infobox to the data point itself (not the cursor/tap, which
+        // can land a bit off), centred above it, then clamp to the viewport using
+        // the box's measured size so it never spills past the right/bottom edge.
         this.tooltip.style.display = 'block';
+        const nv = type === 'rssi' ? nearest.rssi : nearest.snr;
+        const px = rect.left + xOf(nearest.time);
+        const py = rect.top  + yOf(nv);
+        const tw = this.tooltip.offsetWidth;
+        const th = this.tooltip.offsetHeight;
+        const margin = 8;
+        let left = px - tw / 2;
+        let top  = py - th - 12;            // above the point
+        if (top < margin) top = py + 16;    // not enough room above → below it
+        left = Math.max(margin, Math.min(left, window.innerWidth  - tw - margin));
+        top  = Math.max(margin, Math.min(top,  window.innerHeight - th - margin));
+        this.tooltip.style.left = `${left}px`;
+        this.tooltip.style.top  = `${top}px`;
         if (pin) {
             this._tooltipPinned = true;
             this.tooltip.classList.add('pinned');
