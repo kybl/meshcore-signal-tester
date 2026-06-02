@@ -1078,6 +1078,7 @@ html.light-theme .status.importing {
    the body `transform: scale()` used by the text-size / desktop zoom feature. */
 #chartTooltip {
     position: absolute;
+    z-index: 150; /* below the corner notice (B, z-index 200) */
 }
 
 /* A pinned infobox (shown on click/tap) can be clicked to dismiss it. No
