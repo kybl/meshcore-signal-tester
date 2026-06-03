@@ -302,10 +302,11 @@
         <div class="help-modal">
             <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
             <div class="help-modal-title">MeshCore Signal Tester</div>
-            <p class="help-modal-intro">Connects via Bluetooth or USB to a MeshCore companion radio and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Discover nodes</b> button sends an active discovery request so nearby nodes announce themselves and report the signal quality they measured for you; everything else is passive listening.</p>
+            <p class="help-modal-intro">Connects to a MeshCore companion radio (Bluetooth or USB) or a MeshCore repeater (USB) and monitors incoming LoRa mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Discover nodes</b> button sends an active discovery request so nearby nodes announce themselves and report the signal quality they measured for you; everything else is passive listening.</p>
 
             <div class="help-section-title">Getting started</div>
-            <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection) and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously used devices (Bluetooth and USB) appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
+            <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection) and select your MeshCore device. Packet data appears automatically as the device picks up LoRa traffic. Previously used devices (Bluetooth and USB) appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
+            <p>Use <b>Import CSV</b> / <b>Export CSV</b> to save the captured packets to a file and reload them later, and <b>Clear data</b> to wipe the current session. If an established connection drops unexpectedly — cable unplugged, device reset, or out of range — a full-screen <b>alarm</b> warns you that data collection has stopped (a deliberate disconnect won't trigger it).</p>
 
             <div class="help-section-title">What you can connect to</div>
             <p>The app auto-detects what it's talking to — you don't choose a device type.</p>
@@ -364,6 +365,14 @@
                 <li>If a more-precise ID later arrives for one of the siblings, its part of the label is updated too (e.g. <code>1234/1289</code> → <code>123456/1289</code>).</li>
             </ul>
 
+            <div class="help-section-title">Display &amp; appearance</div>
+            <ul class="help-list">
+                <li><b>Theme</b> — the ☀️ / 🌙 button toggles light and dark mode; your choice is remembered.</li>
+                <li><b>Text size</b> — scales the whole interface (Small → Larger) for readability on small or high-DPI screens; remembered across sessions.</li>
+                <li><b>2D graphs dot size</b> — scales the points drawn on the SNR and RSSI charts.</li>
+                <li><b>3D map dot size</b> — set separately in the 3D map's ⚙ menu, alongside the map source, guide lines, and location marker.</li>
+            </ul>
+
             <div class="help-section-title">Android app</div>
             <p>A native Android wrapper is available for field use. It packages this web app into an APK so it works fully offline — no browser needed. The Bluetooth and GPS work runs in a native foreground service, so <b>data collection keeps going with the screen off or the app in the background</b> — you can drop the phone in your pocket and keep mapping signal as you move. A plain browser tab would suspend and stop collecting once the screen turns off, which is exactly what this avoids.</p>
             <p>The <b>Keep screen on</b> toggle is a separate convenience for when you do want the display to stay lit — e.g. to watch packets arrive live while walking. It only affects the screen, not collection.</p>
@@ -387,6 +396,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=205"></script>
+    <script type="module" src="app.js?v=206"></script>
 </body>
 </html>

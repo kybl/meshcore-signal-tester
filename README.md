@@ -13,9 +13,10 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 - **Packet decoding** — uses `@michaelhart/meshcore-decoder` to decode MeshCore packets; extracts type, path, repeater IDs, RSSI, SNR, and payload fields; packets are grouped by message so it's visible which repeaters forwarded which message
 - **Seen repeaters table** — per-repeater statistics (RX count, max/last RSSI, max/last SNR, last seen); sortable columns
 - **SNR & RSSI history charts** — scrolling time-series per repeater with noise floor estimate; click a chart dot to highlight one repeater across all views
-- **Signal 3D map** — places each received packet as a dot at your GPS position; height encodes SNR (taller = higher SNR); click a dot to select a repeater, turn the camera toward a repeater whose position is known, keep repeaters pinned on the map, or recenter the view on your own location; map tile sources: Mapy.com (basic/outdoor/aerial/winter) and OpenStreetMap (standard/OpenTopoMap)
+- **Signal 3D map** — places each received packet as a dot at your GPS position; height encodes SNR (taller = higher SNR); click a dot to select a repeater, turn the camera toward a repeater whose position is known, keep repeaters pinned on the map, or follow your own location as you move (**Center on me** toggles follow mode — any manual pan/rotate leaves it); map tile sources: Mapy.com (basic/outdoor/aerial/winter) and OpenStreetMap (standard/OpenTopoMap)
 - **Discover nodes** — sends an active discovery request; nearby nodes (firmware ≥ v1.10) reply with their public key, name, GPS position, and the SNR they measured for your uplink
-- **Received packets table** — one row per unique packet hash, one column pair (RSSI/SNR) per repeater; click a cell to expand full packet detail with ms-precision reception time and raw hex; filterable and CSV-exportable
+- **Received packets table** — one row per unique packet hash, one column pair (RSSI/SNR) per repeater; click a cell to expand full packet detail with ms-precision reception time and raw hex; filterable
+- **CSV import / export** — export the captured packets to a CSV file and re-import them later to review offline; contact metadata is embedded so repeater names and positions survive the round-trip
 - **Repeater ID prefix resolution** — path IDs can arrive as 1–3-byte prefixes of full 4-byte node IDs; the app progressively promotes shorter labels to longer ones, and splits columns into collision labels (e.g. `1234/1289`) when an ID turns out to be ambiguous
 - **Pause / Resume** — suspend data collection without disconnecting; collection pauses automatically on disconnect and resumes on reconnect
 - **Sound** — optional two-tone beep on each new packet (off / short / medium / long); first tone is a fixed 700 Hz click, second tone pitch scales with SNR (0 dB = base, ±10 dB = ±1 octave); when a repeater filter is active, only the filtered repeater(s) trigger sound; setting persisted in localStorage
@@ -23,7 +24,10 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 - **Repeater filter** — comma-separated prefix filter that applies to all sections simultaneously (table, charts, map)
 - **Keep screen on** — optional toggle (default on) that prevents the screen from sleeping while collecting data; persisted in localStorage
 - **Device battery** — displays BLE battery level if the device exposes the standard Battery Service (0x180F)
+- **Disconnect alarm** — a full-screen warning when an established connection drops unexpectedly (cable unplugged, device reset, out of range); a deliberate disconnect doesn't trigger it
 - **Light / dark theme** — toggle in the header; preference is persisted in localStorage
+- **Text size** — UI scale selector (Small → Larger) for small or high-DPI screens; persisted in localStorage
+- **Adjustable dot size** — independent controls for the 2D chart dots (header slider) and the 3D map dots (⚙ menu)
 
 ## Screenshots
 
@@ -47,7 +51,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 ## How to use
 
 1. Serve the directory over HTTPS or open `index.html` via `localhost`
-2. Click **Connect Bluetooth** (wireless) or **Connect USB** (wired serial) and select your MeshCore companion device
+2. Click **Connect Bluetooth** (wireless) or **Connect USB** (wired serial) and select your MeshCore device — a companion radio, or (over USB) a repeater; the type is auto-detected (see [Device detection](#device-detection))
 3. Packet data appears automatically as the device receives LoRa traffic
 
 ## Android app
