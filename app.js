@@ -1289,8 +1289,10 @@ class MeshCoreApp {
             // Phase 3 — neither protocol answered.
             this.updateStatus('Unsupported device', 'disconnected');
             alert('This USB serial device didn\'t respond as a MeshCore companion or repeater.\n\n'
-                + 'Note: companion radios usually support the companion protocol only over Bluetooth, '
-                + 'not USB. Connect a companion via Bluetooth, or use USB for a repeater.');
+                + 'Note: connecting a companion radio over USB usually requires a special USB firmware build. '
+                + 'Some companion devices do have this firmware, so if yours does, it should work here. '
+                + 'Standard companion radios connect via Bluetooth. '
+                + 'USB is also supported for MeshCore repeaters.');
             this.onDisconnected();
         }
     }
@@ -2942,7 +2944,7 @@ class MeshCoreApp {
     // hash can never produce: a black-ringed circle, filled yellow (direct) or
     // white (unknown).
     _isPseudoCol(col) { return col === 'direct' || col === 'unknown'; }
-    _pseudoRing(col)  { return '#111'; }
+    _pseudoRing(col)  { return col === 'direct' ? '#111' : '#c00'; }
     _pseudoFill(col)  { return col === 'direct' ? '#ffd400' : '#fff'; }
 
     // Inline style for a .rl-dot swatch.

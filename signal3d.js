@@ -107,7 +107,7 @@ export class Signal3DMap {
         // Black-ringed discs for the pseudo columns (always face the camera, so
         // they read as a circle from any angle): direct=yellow, unknown=white.
         this._ringTexDirect  = this._makeRingTex('#111111', '#ffd400');
-        this._ringTexUnknown = this._makeRingTex('#111111', '#ffffff');
+        this._ringTexUnknown = this._makeRingTex('#cc0000', '#ffffff');
         this._outgoingPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
@@ -577,7 +577,7 @@ export class Signal3DMap {
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const isPseudo = col === 'direct' || col === 'unknown';
         const dotStyle = isPseudo
-            ? `background:${col === 'direct' ? '#ffd400' : '#fff'};border:2px solid #111;box-sizing:border-box`
+            ? `background:${col === 'direct' ? '#ffd400' : '#fff'};border:2px solid ${col === 'direct' ? '#111' : '#c00'};box-sizing:border-box`
             : `background:${this.colorFor(col)}`;
         const dot      = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${dotStyle};margin-right:5px;flex-shrink:0"></span>`;
         const name     = this.nameForCol ? this.nameForCol(col) : null;
