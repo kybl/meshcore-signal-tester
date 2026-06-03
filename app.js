@@ -2943,16 +2943,15 @@ class MeshCoreApp {
     // names the origin (not the node we heard) and direct traffic has no hop
     // identity at all. Such packets must never be merged with one another — each
     // is its own distinct observation — so we mint a globally-unique sentinel
-    // hash for every one. The 'unk-' prefix marks it as an unknown hash so it
-    // can be re-minted on import (see _isUnknownHash) and never collides across
-    // capture sessions or with imported data.
+    // hash for every one at capture time. That UUID is written to the CSV, so it
+    // also keeps observations distinct across capture sessions and imports, while
+    // re-importing the same file stays idempotent (identical hashes are deduped).
     _makeUnknownHash() {
         const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
             ? crypto.randomUUID()
             : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
         return 'unk-' + rand;
     }
-    _isUnknownHash(hash) { return typeof hash === 'string' && hash.startsWith('unk-'); }
 
     // The two pseudo columns aren't real nodes, so they get a reserved look the
     // hash can never produce: a black-ringed circle, filled yellow (direct) or
@@ -4294,12 +4293,7 @@ class MeshCoreApp {
                 ? ([Utils.getRouteTypeName(packet.routeType), Utils.getPayloadTypeName(packet.payloadType)].filter(Boolean).join(' ') || row.type)
                 : row.type;
 
-            // Unknown-hash rows must never merge — not with each other, not with
-            // live capture, not even when the same file is imported twice. Mint a
-            // fresh unique hash for each so every one stays its own observation.
-            const hash = this._isUnknownHash(row.hash) ? this._makeUnknownHash() : row.hash;
-
-            this._ingestPacket(hash, row.repeater, type, row.rawHex, row.snr, row.rssi, meta, packet, {
+            this._ingestPacket(row.hash, row.repeater, type, row.rawHex, row.snr, row.rssi, meta, packet, {
                 importing:  true,
                 timestamp:  row.time,
                 lat:        row.lat,
