@@ -1963,17 +1963,18 @@ html.light-theme .debug-input-label {
     flex: 0 1 220px;
     font-size: 12px;
     padding: 4px 8px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid var(--border);
     border-radius: 5px;
-    background: rgba(255, 255, 255, 0.9);
-    color: #333;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    outline: none;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    transition: border-color 0.15s, background 0.15s;
 }
 
 .debug-input:focus {
-    outline: none;
-    background: white;
-    border-color: white;
+    border-color: var(--text-secondary);
+    background: var(--bg-input);
 }
 
 .debug-feedback {
