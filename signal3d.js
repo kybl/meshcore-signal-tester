@@ -104,10 +104,10 @@ export class Signal3DMap {
         // Shared sprite textures (created once)
         this._sphereTex   = this._makeSphereTex();
         this._starTex     = this._makeStarTex();
-        // White-filled rings for the pseudo columns (always face the camera, so
-        // they read as a hollow circle from any angle).
-        this._ringTexDirect  = this._makeRingTex('#111111');
-        this._ringTexUnknown = this._makeRingTex('#888888');
+        // Black-ringed discs for the pseudo columns (always face the camera, so
+        // they read as a circle from any angle): direct=yellow, unknown=white.
+        this._ringTexDirect  = this._makeRingTex('#111111', '#ffd400');
+        this._ringTexUnknown = this._makeRingTex('#111111', '#ffffff');
         this._outgoingPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
@@ -170,16 +170,16 @@ export class Signal3DMap {
         return new THREE.CanvasTexture(canvas);
     }
 
-    // White disc with a coloured rim — for 'direct' (black) / 'unknown' (grey)
-    // markers. Rendered with a white vertex colour so the rim colour shows true.
-    _makeRingTex(rim) {
+    // Filled disc with a coloured rim, for the pseudo-column markers. Rendered
+    // with a white vertex colour so the baked fill/rim colours show true.
+    _makeRingTex(rim, fill) {
         const s = 64, c = s / 2, r = s / 2 - 2;
         const canvas = document.createElement('canvas');
         canvas.width = canvas.height = s;
         const ctx = canvas.getContext('2d');
         ctx.beginPath(); ctx.arc(c, c, r, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff'; ctx.fill();
-        ctx.lineWidth = s * 0.16;
+        ctx.fillStyle = fill; ctx.fill();
+        ctx.lineWidth = s * 0.24;
         ctx.strokeStyle = rim;
         ctx.beginPath(); ctx.arc(c, c, r - ctx.lineWidth / 2, 0, Math.PI * 2); ctx.stroke();
         return new THREE.CanvasTexture(canvas);
@@ -577,7 +577,7 @@ export class Signal3DMap {
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const isPseudo = col === 'direct' || col === 'unknown';
         const dotStyle = isPseudo
-            ? `background:#fff;border:1.5px solid ${col === 'direct' ? '#111' : '#888'};box-sizing:border-box`
+            ? `background:${col === 'direct' ? '#ffd400' : '#fff'};border:2px solid #111;box-sizing:border-box`
             : `background:${this.colorFor(col)}`;
         const dot      = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${dotStyle};margin-right:5px;flex-shrink:0"></span>`;
         const name     = this.nameForCol ? this.nameForCol(col) : null;

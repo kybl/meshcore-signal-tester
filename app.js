@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=98';
+import { Signal3DMap } from './signal3d.js?v=99';
 
 // Per-repeater colour: hue, saturation AND lightness are all derived from the id
 // hash, so different repeaters differ in all three — within bounds that keep the
@@ -60,6 +60,7 @@ class MeshCoreApp {
         this._serialTextBuffer = '';
         this._textDecoder = new TextDecoder();
         this._sawCompanionFrame = false;   // set when a companion frame is seen during detection
+        this._sawRepeaterReply = false;    // set when the text CLI answers during detection
         this._sawRepeaterRaw = false;      // set if the repeater emits RAW packet dumps (logging build)
         this._repeaterStockNoticed = false;
         this._repeaterRxSeq = 0;
@@ -1247,27 +1248,50 @@ class MeshCoreApp {
 
         this._startSerialReadLoop(port);
 
-        // --- Device-type detection ---
-        // A MeshCore *companion* answers our binary frames with 0x3e (radio→app)
-        // replies; a *repeater* speaks a plain-text CLI and never sends one (it
-        // just echoes our probe bytes as 0x3c / junk). APP_START alone may not
-        // self-reply, so we also send a contacts request, which a companion
-        // always answers — then classify on whether any 0x3e frame came back.
+        // --- Device-type detection (three-way) ---
+        // 1) Companion: answers our binary frames with 0x3e (radio→app) replies.
+        //    APP_START alone may not self-reply, so we also send a contacts
+        //    request, which a companion always answers.
+        // 2) Repeater: speaks a plain-text CLI — it answers 'ver' with a "  -> "
+        //    reply. (A companion radio usually speaks the companion protocol only
+        //    over Bluetooth, so a companion plugged in by USB answers neither and
+        //    must be reported as an error, not a fake connection.)
         this.updateStatus('Detecting device…', 'disconnected');
+
+        // Phase 1 — companion probe.
         await this.sendAppStart();
         await new Promise(r => setTimeout(r, 200));
         if (this.serialPort === port && !this._sawCompanionFrame) {
             try { await this._sendFrame(new Uint8Array([0x04])); } catch (e) {}  // CMD_GET_CONTACTS
         }
-        for (let i = 0; i < 16 && !this._sawCompanionFrame && this.serialPort === port; i++) {
+        for (let i = 0; i < 14 && !this._sawCompanionFrame && this.serialPort === port; i++) {
             await new Promise(r => setTimeout(r, 100));
         }
         if (this.serialPort !== port) return;   // disconnected mid-detection
+        if (this._sawCompanionFrame) { await this._finishCompanionConnect(port); return; }
 
-        if (this._sawCompanionFrame) {
-            await this._finishCompanionConnect(port);
-        } else {
+        // Phase 2 — repeater probe over the text CLI.
+        this.connectionMode = 'repeater';   // route the read loop to the text parser
+        this._serialReadBuffer = new Uint8Array(0);
+        this._serialTextBuffer = '';
+        this._sawRepeaterReply = false;
+        await this._serialWriteText('\r\n');
+        await new Promise(r => setTimeout(r, 150));
+        await this._serialWriteText('ver\r\n');
+        for (let i = 0; i < 14 && !this._sawRepeaterReply && this.serialPort === port; i++) {
+            await new Promise(r => setTimeout(r, 100));
+        }
+        if (this.serialPort !== port) return;
+
+        if (this._sawRepeaterReply) {
             await this._finishRepeaterConnect(port);
+        } else {
+            // Phase 3 — neither protocol answered.
+            this.updateStatus('Unsupported device', 'disconnected');
+            alert('This USB serial device didn\'t respond as a MeshCore companion or repeater.\n\n'
+                + 'Note: companion radios usually support the companion protocol only over Bluetooth, '
+                + 'not USB. Connect a companion via Bluetooth, or use USB for a repeater.');
+            this.onDisconnected();
         }
     }
 
@@ -1403,22 +1427,24 @@ class MeshCoreApp {
         // RAW packet dump (MESH_PACKET_LOGGING builds): decode for full path /
         // last-hop, hold it until the matching summary line brings SNR/RSSI.
         const raw = line.match(/U RAW:\s*([0-9A-Fa-f]+)/);
-        if (raw) { this._handleRepeaterRaw(raw[1]); return; }
+        if (raw) { this._sawRepeaterReply = true; this._handleRepeaterRaw(raw[1]); return; }
 
         // Packet-log summary line, e.g.:
         //  12:34:56 - 1/6/2026 U: RX, len=22 (type=2, route=D, payload_len=20) SNR=13 RSSI=-5 score=1000 [C7 -> 43]
         const m = line.match(/^(\d{2}):(\d{2}):(\d{2}) - (\d{1,2})\/(\d{1,2})\/(\d{4}) U: (RX|TX|TX FAIL!), len=(\d+) \(type=(\d+), route=([DF]), payload_len=(\d+)\)(?:\s+SNR=(-?\d+)\s+RSSI=(-?\d+)\s+score=(-?\d+))?(?:\s*\[([0-9A-Fa-f]{2}) -> ([0-9A-Fa-f]{2})\])?/);
-        if (m) { this._handleRepeaterLogLine(m); return; }
+        if (m) { this._sawRepeaterReply = true; this._handleRepeaterLogLine(m); return; }
 
         // CLI reply text — strip the "  -> " prefix the repeater puts on line 1.
         const body = line.replace(/^->\s*/, '');
+        // A "  -> ..." prefixed line is a CLI reply → this really is a repeater.
+        if (body !== line) this._sawRepeaterReply = true;
 
         // End of a 'log' dump → erase the file so the next dump is only-new.
         if (body === 'EOF') { this._serialWriteText('log erase\r\n').catch(() => {}); return; }
 
         // Neighbours-table row: "<8 hex>:<secs_ago>:<snr*4>".
         const nb = body.match(/^([0-9A-Fa-f]{8}):(\d+):(-?\d+)$/);
-        if (nb) { this._handleNeighborLine(nb[1], parseInt(nb[2], 10), parseInt(nb[3], 10)); return; }
+        if (nb) { this._sawRepeaterReply = true; this._handleNeighborLine(nb[1], parseInt(nb[2], 10), parseInt(nb[3], 10)); return; }
 
         // Other replies (logging on/off, -none-, errors, command echoes) ignored.
     }
@@ -2912,15 +2938,17 @@ class MeshCoreApp {
         return `hsl(${hue}, ${sat}%, ${l}%)`;
     }
 
-    // The two pseudo columns aren't real nodes, so they get a reserved look: a
-    // white-filled circle ringed in black (direct) or grey (unknown).
+    // The two pseudo columns aren't real nodes, so they get a reserved look the
+    // hash can never produce: a black-ringed circle, filled yellow (direct) or
+    // white (unknown).
     _isPseudoCol(col) { return col === 'direct' || col === 'unknown'; }
-    _pseudoRing(col)  { return col === 'direct' ? '#111' : '#888'; }
+    _pseudoRing(col)  { return '#111'; }
+    _pseudoFill(col)  { return col === 'direct' ? '#ffd400' : '#fff'; }
 
     // Inline style for a .rl-dot swatch.
     _repDotStyle(col) {
         if (this._isPseudoCol(col))
-            return `background:#fff;border:1.4px solid ${this._pseudoRing(col)};box-sizing:border-box`;
+            return `background:${this._pseudoFill(col)};border:2px solid ${this._pseudoRing(col)};box-sizing:border-box`;
         return `background:${this._dotColor(col)}`;
     }
 
@@ -2928,8 +2956,8 @@ class MeshCoreApp {
     _applyDotStyle(el, col) {
         if (!el) return;
         if (this._isPseudoCol(col)) {
-            el.style.background = '#fff';
-            el.style.border = `1.4px solid ${this._pseudoRing(col)}`;
+            el.style.background = this._pseudoFill(col);
+            el.style.border = `2px solid ${this._pseudoRing(col)}`;
             el.style.boxSizing = 'border-box';
         } else {
             el.style.background = this._dotColor(col);
@@ -2938,9 +2966,9 @@ class MeshCoreApp {
     }
 
     // SVG marker paint for chart dots.
-    _markerFill(col)         { return this._isPseudoCol(col) ? '#fff' : this._dotColor(col); }
+    _markerFill(col)         { return this._isPseudoCol(col) ? this._pseudoFill(col) : this._dotColor(col); }
     _markerStroke(col, base) { return this._isPseudoCol(col) ? this._pseudoRing(col) : base; }
-    _markerStrokeW(col, base){ return this._isPseudoCol(col) ? Math.max(base, 1.3) : base; }
+    _markerStrokeW(col, base){ return this._isPseudoCol(col) ? Math.max(base, 2) : base; }
 
     // Format an SNR for display: whole numbers (e.g. the repeater log, which
     // truncates SNR to integer dB) show without a decimal; finer values keep one.
@@ -4398,6 +4426,7 @@ class MeshCoreApp {
         this.transportKind = null;
         this.connectionMode = null;
         this._sawCompanionFrame = false;
+        this._sawRepeaterReply = false;
         this._sawRepeaterRaw = false;
         this._repeaterStockNoticed = false;
         this._repeaterRxSeq = 0;
