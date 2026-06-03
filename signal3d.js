@@ -104,6 +104,10 @@ export class Signal3DMap {
         // Shared sprite textures (created once)
         this._sphereTex   = this._makeSphereTex();
         this._starTex     = this._makeStarTex();
+        // White-filled rings for the pseudo columns (always face the camera, so
+        // they read as a hollow circle from any angle).
+        this._ringTexDirect  = this._makeRingTex('#111111');
+        this._ringTexUnknown = this._makeRingTex('#888888');
         this._outgoingPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
@@ -163,6 +167,21 @@ export class Signal3DMap {
         grad.addColorStop(1,   'rgba(60,60,60,1)');
         ctx.fillStyle = grad;
         ctx.fill();
+        return new THREE.CanvasTexture(canvas);
+    }
+
+    // White disc with a coloured rim — for 'direct' (black) / 'unknown' (grey)
+    // markers. Rendered with a white vertex colour so the rim colour shows true.
+    _makeRingTex(rim) {
+        const s = 64, c = s / 2, r = s / 2 - 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = s;
+        const ctx = canvas.getContext('2d');
+        ctx.beginPath(); ctx.arc(c, c, r, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.lineWidth = s * 0.16;
+        ctx.strokeStyle = rim;
+        ctx.beginPath(); ctx.arc(c, c, r - ctx.lineWidth / 2, 0, Math.PI * 2); ctx.stroke();
         return new THREE.CanvasTexture(canvas);
     }
 
@@ -556,8 +575,11 @@ export class Signal3DMap {
         if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
         const pts = this._rxPoints.filter(p => p.col === col);
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
-        const color    = this.colorFor(col);
-        const dot      = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;flex-shrink:0"></span>`;
+        const isPseudo = col === 'direct' || col === 'unknown';
+        const dotStyle = isPseudo
+            ? `background:#fff;border:1.5px solid ${col === 'direct' ? '#111' : '#888'};box-sizing:border-box`
+            : `background:${this.colorFor(col)}`;
+        const dot      = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${dotStyle};margin-right:5px;flex-shrink:0"></span>`;
         const name     = this.nameForCol ? this.nameForCol(col) : null;
         const nameHtml = name ? ` <span class="smi-colname">${this._escHtml(name)}</span>` : '';
         // Use the exact clicked point; fall back to latest point for the column
@@ -1383,8 +1405,12 @@ export class Signal3DMap {
                 pos[i*3]   = wp ? wp.x : 0;
                 pos[i*3+1] = wp ? this._signalToHeight(p.snr) : 0;
                 pos[i*3+2] = wp ? wp.z : 0;
-                _col.set(this.colorFor(p.col));
-                col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
+                if (p.col === 'direct' || p.col === 'unknown') {
+                    col[i*3] = 1; col[i*3+1] = 1; col[i*3+2] = 1;   // white — ring texture carries the rim colour
+                } else {
+                    _col.set(this.colorFor(p.col));
+                    col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
+                }
             }
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -1438,8 +1464,21 @@ export class Signal3DMap {
             this._rxPointsGroup.add(m);
         };
 
-        addPoints(litPts, 1.0,  2.0);
-        addPoints(dimPts, 0.07, 2.0);
+        // Split each set by sprite texture: real repeaters use the shaded
+        // sphere, the two pseudo columns use white-filled rings.
+        const addGroup = (pts, opacity) => {
+            const normal = [], direct = [], unknown = [];
+            for (const p of pts) {
+                if (p.col === 'direct') direct.push(p);
+                else if (p.col === 'unknown') unknown.push(p);
+                else normal.push(p);
+            }
+            addPoints(normal,  opacity, 2.0, this._sphereTex);
+            addPoints(direct,  opacity, 2.0, this._ringTexDirect);
+            addPoints(unknown, opacity, 2.0, this._ringTexUnknown);
+        };
+        addGroup(litPts, 1.0);
+        addGroup(dimPts, 0.07);
 
         // Points used for screen-space click picking (see _onCanvasClick).
         this._hitPoints = visible;

@@ -1,6 +1,14 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=97';
+import { Signal3DMap } from './signal3d.js?v=98';
+
+// Per-repeater colour: continuous hue from a hash, fixed saturation/lightness so
+// the hue carries the identity. Dark theme lifts lightness (except the 3D map,
+// whose background is always light). The two pseudo columns 'direct'/'unknown'
+// are drawn as white-filled rings instead (see _repDotStyle).
+const REP_SAT = 70;        // saturation — high enough that hue stays meaningful
+const REP_LIGHT = 50;      // base lightness (light theme and 3D map)
+const REP_DARK_BUMP = 18;  // dark theme adds this to lightness
 
 
 
@@ -2625,7 +2633,7 @@ class MeshCoreApp {
             const repHeaders = visibleCols.map(r => {
                 const cName = this._contactNameForCol(r);
                 const nameTag = cName ? `<br><span class="col-contact-name">${this._escHtml(cName)}</span>` : '';
-                return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="background:${this._dotColor(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
+                return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
             }).join('');
             const subHeaders = visibleCols.map(() =>
                 `<th class="msg-sub-snr">SNR</th><th class="msg-sub-rssi">RSSI</th>`
@@ -2805,11 +2813,10 @@ class MeshCoreApp {
             const uplinkPart = rs != null
                 ? ` &nbsp; Uplink SNR <span style="color:${this._signalColor(rs, 13, -10, 0)};font-weight:700">${rs.toFixed(1)} dB</span>`
                 : '';
-            const dotColor = this._dotColor(col);
             const colContact = this._contactByPrefix(col);
             const colName = colContact?.name ?? null;
             header = `<div class="detail-sig">` +
-                `<span class="rl-dot" style="background:${dotColor}"></span>` +
+                `<span class="rl-dot" style="${this._repDotStyle(col)}"></span>` +
                 `<b>${this._escHtml(this.displayId(col))}</b>` +
                 (colName ? ` <span class="detail-col-name">${this._escHtml(colName)}</span>` : '') +
                 (timeStr ? ` &nbsp; <span class="detail-time">${timeStr}</span>` : '') +
@@ -2860,7 +2867,8 @@ class MeshCoreApp {
 
     // --- Chart ---
 
-    getRepeaterColor(col) {
+    // Stable per-repeater hue from a fast FNV-1a hash of the display id.
+    _repeaterHue(col) {
         if (!this.chartColors.has(col)) {
             const id = this.displayId(col);
             let h = 0x811c9dc5;
@@ -2868,18 +2876,52 @@ class MeshCoreApp {
                 h ^= id.charCodeAt(i);
                 h = Math.imul(h, 0x01000193);
             }
-            const hue = (h >>> 0) % 360;
-            this.chartColors.set(col, hue);
+            this.chartColors.set(col, (h >>> 0) % 360);
         }
-        const hue = this.chartColors.get(col);
-        return `hsl(${hue}, 72%, 44%)`;
+        return this.chartColors.get(col);
     }
 
-    _dotColor(col) {
-        const hue = this.chartColors.has(col) ? this.chartColors.get(col) : (() => { this.getRepeaterColor(col); return this.chartColors.get(col); })();
-        const isDark = !document.documentElement.classList.contains('light-theme');
-        return isDark ? `hsl(${hue}, 85%, 68%)` : `hsl(${hue}, 72%, 44%)`;
+    // Light colour — used by the 3D map, whose background is always light.
+    getRepeaterColor(col) {
+        return `hsl(${this._repeaterHue(col)}, ${REP_SAT}%, ${REP_LIGHT}%)`;
     }
+
+    // Theme-aware colour for the 2D UI: dark theme lifts the lightness.
+    _dotColor(col) {
+        const isDark = !document.documentElement.classList.contains('light-theme');
+        const l = isDark ? REP_LIGHT + REP_DARK_BUMP : REP_LIGHT;
+        return `hsl(${this._repeaterHue(col)}, ${REP_SAT}%, ${l}%)`;
+    }
+
+    // The two pseudo columns aren't real nodes, so they get a reserved look: a
+    // white-filled circle ringed in black (direct) or grey (unknown).
+    _isPseudoCol(col) { return col === 'direct' || col === 'unknown'; }
+    _pseudoRing(col)  { return col === 'direct' ? '#111' : '#888'; }
+
+    // Inline style for a .rl-dot swatch.
+    _repDotStyle(col) {
+        if (this._isPseudoCol(col))
+            return `background:#fff;border:1.4px solid ${this._pseudoRing(col)};box-sizing:border-box`;
+        return `background:${this._dotColor(col)}`;
+    }
+
+    // Same, applied to an existing element (JS-updated dots).
+    _applyDotStyle(el, col) {
+        if (!el) return;
+        if (this._isPseudoCol(col)) {
+            el.style.background = '#fff';
+            el.style.border = `1.4px solid ${this._pseudoRing(col)}`;
+            el.style.boxSizing = 'border-box';
+        } else {
+            el.style.background = this._dotColor(col);
+            el.style.border = '';
+        }
+    }
+
+    // SVG marker paint for chart dots.
+    _markerFill(col)         { return this._isPseudoCol(col) ? '#fff' : this._dotColor(col); }
+    _markerStroke(col, base) { return this._isPseudoCol(col) ? this._pseudoRing(col) : base; }
+    _markerStrokeW(col, base){ return this._isPseudoCol(col) ? Math.max(base, 1.3) : base; }
 
     _renderCharts() {
         if (this._selectedCol
@@ -3124,7 +3166,7 @@ class MeshCoreApp {
         for (const [col, dPts] of decimGroups) {
             const validPts = dPts.filter(p => valOf(p) != null);
             if (validPts.length < 2) continue;
-            const color = this._dotColor(col);
+            const color = this._isPseudoCol(col) ? this._pseudoRing(col) : this._dotColor(col);
             const isHighlighted = !selected || selected === col;
             const strokeW = (selected && selected === col) ? 2.5 : 1;
             const strokeOp = isHighlighted ? 0.65 : 0.15;
@@ -3138,7 +3180,7 @@ class MeshCoreApp {
             if (selected && selected === col) continue;
             for (const p of dPts) {
                 if (valOf(p) == null) continue;
-                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${ds}" fill="${this._dotColor(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" stroke="${dotStroke}" stroke-width="0.8"/>`);
+                parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${ds}" fill="${this._markerFill(p.col)}" fill-opacity="${selected ? 0.10 : 0.90}" stroke="${this._markerStroke(p.col, dotStroke)}" stroke-width="${this._markerStrokeW(p.col, 0.8)}"/>`);
             }
         }
         if (selected) {
@@ -3146,7 +3188,7 @@ class MeshCoreApp {
             if (selPts) {
                 for (const p of selPts) {
                     if (valOf(p) == null) continue;
-                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${ds * 1.43}" fill="${this._dotColor(p.col)}" fill-opacity="0.95" stroke="${dotStroke}" stroke-width="1"/>`);
+                    parts.push(`<circle cx="${xOf(p.time)}" cy="${yOf(valOf(p))}" r="${ds * 1.43}" fill="${this._markerFill(p.col)}" fill-opacity="0.95" stroke="${this._markerStroke(p.col, dotStroke)}" stroke-width="${this._markerStrokeW(p.col, 1)}"/>`);
                 }
             }
         }
@@ -3279,7 +3321,7 @@ class MeshCoreApp {
         const color = this._dotColor(nearest.col);
         const dotShape = isSent
             ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
-            : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
+            : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${this._repDotStyle(nearest.col)};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
         const nameHtml = cName ? `<span class="ct-colname">${this._escHtml(cName)}</span>` : '';
         // Signal values and time share one line, with the time pushed to the end
@@ -3558,7 +3600,7 @@ class MeshCoreApp {
             const cName = this._contactNameForCol(repeater);
             const nameTag = cName ? `<span class="rl-name">${this._escHtml(cName)}</span>` : '';
             return `<tr data-col="${this._escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
-                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="background:${this._dotColor(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
+                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="${this._repDotStyle(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${msc}">${d.maxSnr?.toFixed(1) ?? '—'}</td>
                 <td class="rl-num" style="color:${lsc}">${d.lastSnr?.toFixed(1) ?? '—'}</td>
@@ -3671,8 +3713,9 @@ class MeshCoreApp {
                 const exactCol = matchingCols.length === 1 && !matchingCols[0].includes('/') ? matchingCols[0] : null;
                 const dot = document.getElementById('filterNoticeDot');
                 if (dot) {
-                    dot.style.background = exactCol ? this._dotColor(exactCol) : '';
-                    dot.style.display    = exactCol ? '' : 'none';
+                    if (exactCol) this._applyDotStyle(dot, exactCol);
+                    else { dot.style.background = ''; dot.style.border = ''; }
+                    dot.style.display = exactCol ? '' : 'none';
                 }
                 const nameEl = document.getElementById('filterNoticeName');
                 if (nameEl) {
@@ -3695,7 +3738,7 @@ class MeshCoreApp {
             if (hasSel && !hasFilter) {
                 document.getElementById('selNoticeRep').textContent = this.displayId(this._selectedCol);
                 const dot = document.getElementById('selNoticeDot');
-                if (dot) dot.style.background = this._dotColor(this._selectedCol);
+                this._applyDotStyle(dot, this._selectedCol);
                 const nameEl = document.getElementById('selNoticeName');
                 if (nameEl) {
                     const cName = this._contactNameForCol(this._selectedCol);
