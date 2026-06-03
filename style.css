@@ -192,11 +192,24 @@ header {
     color: var(--text-primary);
 }
 
+/* The status frame is a flex container holding the whole connection control
+   cluster: the status word, Connect/Disconnect/Stop buttons, the connected
+   device name and the saved-device shortcuts. Its border/background colour
+   reflects the connection state (red = disconnected, green = connected,
+   yellow = connecting or paused). Individual children are shown or hidden
+   per state by the rules further down. */
 .status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
     padding: 4px 10px;
     border-radius: 12px;
     font-weight: 600;
     font-size: 12px;
+}
+
+.status-text {
     white-space: nowrap;
 }
 
@@ -212,6 +225,9 @@ header {
     border: 1px solid rgba(40, 180, 80, 0.35);
 }
 
+/* Yellow: a connection attempt is in progress, or collection is paused. */
+.status.connecting,
+.status.paused,
 .status.importing {
     background: rgba(180, 130, 0, 0.18);
     color: #c89820;
@@ -230,10 +246,54 @@ html.light-theme .status.connected {
     border-color: #b0e8b0;
 }
 
+html.light-theme .status.connecting,
+html.light-theme .status.paused,
 html.light-theme .status.importing {
     background: #fff8e1;
     color: #9a6800;
     border-color: #f0d890;
+}
+
+/* --- Per-state visibility of the controls inside the status frame --- */
+
+/* Connect buttons + saved shortcuts make sense only before a connection
+   exists (disconnected) or while one is being established (connecting). */
+.status.connected #connectBtn,
+.status.connected #connectUsbBtn,
+.status.paused #connectBtn,
+.status.paused #connectUsbBtn {
+    display: none;
+}
+
+/* Saved shortcuts: only when fully disconnected. */
+.status:not(.disconnected) #savedDevices {
+    display: none;
+}
+
+/* Stop/Resume, Disconnect and the device name make sense only once a
+   device is actually connected (green) or paused (yellow). */
+.status:not(.connected):not(.paused) #pauseBtn,
+.status:not(.connected):not(.paused) #disconnectBtn,
+.status:not(.connected):not(.paused) #connectedDeviceName {
+    display: none;
+}
+
+.connected-device-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.btn-disconnect,
+.btn-disconnect:hover:not(:disabled) {
+    color: #c0392b;
+    border-color: #c0392b;
+}
+
+.btn-disconnect:hover:not(:disabled) {
+    background: #c0392b;
+    color: #fff;
 }
 
 .btn-primary {
@@ -770,8 +830,6 @@ html.light-theme .status.importing {
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    flex: 1;
-    min-width: 150px;
 }
 
 .saved-devices.hidden {
