@@ -301,6 +301,34 @@
             <div class="help-section-title">Getting started</div>
             <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection) and select your MeshCore companion device. Packet data appears automatically as the device picks up LoRa traffic. Previously used devices (Bluetooth and USB) appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
 
+            <div class="help-section-title">What you can connect to</div>
+            <p>The app auto-detects what it's talking to — you don't choose a device type.</p>
+            <div class="help-dl">
+                <div class="help-dt">Companion radio</div>
+                <div class="help-dd">A MeshCore <b>companion</b> speaks the binary frame protocol and pushes every received LoRa packet to the app with full decoding (path, last-hop repeater, SNR, RSSI). This is the richest source. Over <b>Bluetooth</b> a companion is assumed directly. Over <b>USB</b> it only works if the device runs a companion firmware with USB support — most companion builds speak the protocol over Bluetooth only, so a plain companion plugged in by USB won't be recognised (you'll get a clear error rather than a fake connection).</div>
+
+                <div class="help-dt">Repeater (USB)</div>
+                <div class="help-dd">A MeshCore <b>repeater</b> has no binary protocol — it exposes a plain-text command-line over USB serial. The app drives that CLI to pull packet and neighbour data. There's no Bluetooth path to a repeater. How much detail you get depends on the firmware (see below).</div>
+            </div>
+
+            <div class="help-section-title">How device detection works</div>
+            <p>Bluetooth is always a companion. On <b>USB</b> the app probes in three steps right after opening the port at 115200 baud:</p>
+            <ul class="help-list">
+                <li><b>Companion probe</b> — sends the binary <code>APP_START</code> and a contacts request. A real companion answers with a <code>0x3e</code> (radio→app) frame → connected as a companion.</li>
+                <li><b>Repeater probe</b> — if no frame came back, the app switches to text mode and sends <code>ver</code>. A repeater answers with a CLI reply → connected as a repeater.</li>
+                <li><b>Neither</b> — if nothing answers, the app reports an unsupported device (the usual cause: a companion plugged in by USB whose firmware only speaks the protocol over Bluetooth).</li>
+            </ul>
+
+            <div class="help-section-title">Repeater firmware: stock vs. logging build</div>
+            <p>A repeater is data-pulled over the CLI, and how much it can tell you depends on how its firmware was built:</p>
+            <div class="help-dl">
+                <div class="help-dt">Stock firmware</div>
+                <div class="help-dd">The app polls the packet-log file (<code>log start</code>, then <code>log</code> every 2.5 s, clearing it on <code>EOF</code>) and the neighbour table (<code>neighbors</code> every 5 s). Log lines give SNR, RSSI and the route, but <b>not the last hop's identity</b> — a flood line names the origin, not the node you actually heard. Such packets are therefore bucketed into two pseudo-columns instead of a real repeater ID: <b>direct</b> (yellow dot — heard at the first hop) and <b>unknown</b> (red dot — forwarded, last hop not identifiable). The neighbour table is the only source of per-node signal on stock firmware, and only gives <b>SNR</b> (no RSSI), only for direct neighbours, refreshed slowly. <b>Discover nodes</b> sends <code>discover.neighbors</code> to refresh that table on demand.</div>
+
+                <div class="help-dt">Logging build (<code>MESH_PACKET_LOGGING</code>)</div>
+                <div class="help-dd">Built with this flag, the repeater streams every received packet live as a raw hex dump plus a summary line. The app decodes the dump for the full path — giving the <b>real last-hop repeater ID</b> — and pairs it with the summary for SNR/RSSI, exactly like a companion. The first raw dump it sees flips the app into this mode, after which it stops polling the redundant log file. This is the recommended firmware for a repeater you want to use as a measurement node.</div>
+            </div>
+
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
                 <div class="help-dt">Repeater</div>

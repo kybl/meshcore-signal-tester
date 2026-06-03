@@ -1,6 +1,6 @@
 # MeshCore Signal Tester
 
-Web application for real-time monitoring of LoRa mesh traffic from a MeshCore companion radio via Bluetooth or USB.
+Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **companion radio** (Bluetooth or USB) or a MeshCore **repeater** (USB serial CLI). The connected device type is auto-detected.
 
 ### Live app: [meshcore.kyblsoft.cz/signal-tester](https://meshcore.kyblsoft.cz/signal-tester)
 #### Android app available in [repo releases](https://github.com/kybl/meshcore-signal-tester/releases).</sub>
@@ -9,6 +9,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore co
 
 - **Bluetooth connection** — connects to a MeshCore companion device via Web Bluetooth; previously paired devices appear as one-click reconnect buttons
 - **USB connection** — connects to a MeshCore companion device over USB serial via the Web Serial API (Chrome/Edge/Opera desktop); previously used ports appear as one-click reconnect buttons alongside Bluetooth devices (labelled by USB vendor/product id, since serial ports expose no name)
+- **Repeater support (USB)** — also connects to a MeshCore repeater, which exposes a plain-text CLI instead of the binary protocol; the device type (companion vs repeater) is auto-detected on connect. On stock firmware the app polls the packet log and neighbour table; on a `MESH_PACKET_LOGGING` build it decodes the live raw packet stream for full per-packet detail. See [Device detection](#device-detection)
 - **Packet decoding** — uses `@michaelhart/meshcore-decoder` to decode MeshCore packets; extracts type, path, repeater IDs, RSSI, SNR, and payload fields; packets are grouped by message so it's visible which repeaters forwarded which message
 - **Seen repeaters table** — per-repeater statistics (RX count, max/last RSSI, max/last SNR, last seen); sortable columns
 - **SNR & RSSI history charts** — scrolling time-series per repeater with noise floor estimate; click a chart dot to highlight one repeater across all views
@@ -100,6 +101,36 @@ The app accumulates incoming bytes and extracts complete frames as they arrive, 
 ### Common command flow
 
 On connect the app sends `CMD_APP_START` (opcode `0x01`) to enable push notifications. The device then sends LoRa RX events (opcodes `0x84`, `0x88`, `0x8e`) carrying SNR, RSSI, and a raw LoRa payload, plus battery voltage events (opcode `0x0c`).
+
+## Device detection
+
+The app supports two kinds of MeshCore device and figures out which one is attached without the user choosing.
+
+### Companion vs. repeater
+
+| | Companion radio | Repeater |
+|---|---|---|
+| Protocol | Binary companion frames | Plain-text CLI |
+| Bluetooth | ✅ (always assumed) | ❌ |
+| USB serial | ✅ *if* the firmware has USB support (many companion builds are Bluetooth-only) | ✅ |
+| Data model | Device pushes every RX packet, fully decoded (path, last hop, SNR, RSSI) | App pulls data over the CLI; detail depends on firmware (see below) |
+
+Over **Bluetooth** the device is always treated as a companion. Over **USB** the app probes the freshly opened port (115200 baud) in three phases:
+
+1. **Companion probe** — sends `CMD_APP_START` (`0x01`) and a contacts request (`CMD_GET_CONTACTS`, `0x04`). A companion answers with a `0x3e` (radio→app) frame → connect as companion.
+2. **Repeater probe** — if no frame arrives, switch the read loop to text mode and send `ver`. A repeater replies over its CLI → connect as repeater.
+3. **Neither** — report an unsupported device. The common cause is a companion plugged in by USB whose firmware speaks the protocol over Bluetooth only.
+
+### Repeater firmware: stock vs. logging build
+
+A repeater is polled over its CLI, and how much it can report depends on how the firmware was compiled:
+
+- **Stock firmware** — the app polls the packet-log file (`log start`, then `log` every 2.5 s, `log erase` on the `EOF` marker) and the neighbour table (`neighbors` every 5 s). Log summary lines carry SNR, RSSI and the route (direct/flood) but **not the last hop's identity** — a flood line names the packet origin, not the node actually heard. Those packets are bucketed into two pseudo-columns rather than a real repeater ID:
+  - **direct** — heard at the first hop (no intermediate repeater)
+  - **unknown** — forwarded, but the last hop can't be identified
+
+  The neighbour table is the only source of per-node signal here, and only yields SNR (no RSSI), only for direct neighbours, at a slow cadence. **Discover nodes** sends `discover.neighbors` to refresh it on demand.
+- **Logging build (`MESH_PACKET_LOGGING`)** — the repeater streams every received packet live as a raw hex dump (`U RAW: …`) plus a summary line. The app decodes the raw dump for the full path — recovering the **real last-hop repeater ID** — and pairs it with the summary line for SNR/RSSI, giving companion-grade detail. The first raw dump switches the app into this mode, after which it stops polling the now-redundant log file (which would otherwise duplicate every packet). This is the recommended firmware for a repeater used as a measurement node.
 
 ## References
 
