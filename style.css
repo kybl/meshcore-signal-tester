@@ -322,6 +322,10 @@ html.light-theme .status.importing {
     cursor: not-allowed;
 }
 
+.btn-primary.hidden {
+    display: none;
+}
+
 .btn-pause {
     -webkit-appearance: none;
     appearance: none;

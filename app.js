@@ -1104,10 +1104,12 @@ class MeshCoreApp {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
+        this.connectBtn.classList.remove('hidden');
         if (this.connectUsbBtn) {
             this.connectUsbBtn.textContent = 'Connect USB';
             this.connectUsbBtn.disabled = false;
             this.connectUsbBtn.onclick = () => this.connectUsb();
+            this.connectUsbBtn.classList.remove('hidden');
         }
     }
 
@@ -1117,8 +1119,11 @@ class MeshCoreApp {
     _setActiveTransportBtn(kind, label, onClick) {
         const active = kind === 'serial' ? this.connectUsbBtn : this.connectBtn;
         const other  = kind === 'serial' ? this.connectBtn : this.connectUsbBtn;
-        if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; }
-        if (other)  { other.disabled = true; }
+        // Only the active transport's button stays — relabelled to Cancel /
+        // Disconnect. The other one is hidden so a stale "Connect …" control
+        // doesn't linger beside it during a connection attempt.
+        if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; active.classList.remove('hidden'); }
+        if (other)  { other.disabled = true; other.classList.add('hidden'); }
     }
 
     async connectToDevice(device) {
