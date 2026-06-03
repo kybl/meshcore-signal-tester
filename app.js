@@ -56,6 +56,7 @@ class MeshCoreApp {
         this._repeaterRxSeq = 0;
         this._neighborSeen = new Map();    // neighbour id → last ingested heard-epoch (dedup)
         this._neighborPollTimer = null;
+        this._logPollTimer = null;
         this._pendingRaw = [];             // decoded RAW dumps awaiting their summary line (logging build)
         this.hashData = new Map();
         this.allRepeaters = new Map();
@@ -1284,11 +1285,12 @@ class MeshCoreApp {
         // the following 'log start' parses cleanly.
         await this._serialWriteText('\r\n');
         await new Promise(r => setTimeout(r, 150));
-        await this._serialWriteText('log start\r\n');
+        await this._serialWriteText('log start\r\n');   // enable packet logging to file
+        await this._serialWriteText('log erase\r\n');   // drop stale backlog; we timestamp at reception
 
         this._neighborSeen = new Map();
         this._pendingRaw = [];
-        this._startNeighborPolling();
+        this._startRepeaterPolling();
 
         this.saveSerialPort(port);
         this.updateStatus('Connected (repeater)', 'connected');
@@ -1387,27 +1389,40 @@ class MeshCoreApp {
         const m = line.match(/^(\d{2}):(\d{2}):(\d{2}) - (\d{1,2})\/(\d{1,2})\/(\d{4}) U: (RX|TX|TX FAIL!), len=(\d+) \(type=(\d+), route=([DF]), payload_len=(\d+)\)(?:\s+SNR=(-?\d+)\s+RSSI=(-?\d+)\s+score=(-?\d+))?(?:\s*\[([0-9A-Fa-f]{2}) -> ([0-9A-Fa-f]{2})\])?/);
         if (m) { this._handleRepeaterLogLine(m); return; }
 
-        // Neighbours-table row: "<8 hex>:<secs_ago>:<snr*4>", optionally with the
-        // leading "-> " that the CLI puts on the first line of a reply.
-        const nb = line.replace(/^->\s*/, '').match(/^([0-9A-Fa-f]{8}):(\d+):(-?\d+)$/);
+        // CLI reply text — strip the "  -> " prefix the repeater puts on line 1.
+        const body = line.replace(/^->\s*/, '');
+
+        // End of a 'log' dump → erase the file so the next dump is only-new.
+        if (body === 'EOF') { this._serialWriteText('log erase\r\n').catch(() => {}); return; }
+
+        // Neighbours-table row: "<8 hex>:<secs_ago>:<snr*4>".
+        const nb = body.match(/^([0-9A-Fa-f]{8}):(\d+):(-?\d+)$/);
         if (nb) { this._handleNeighborLine(nb[1], parseInt(nb[2], 10), parseInt(nb[3], 10)); return; }
 
-        // Other CLI replies (OK - Discover sent, -none-, errors) are ignored.
+        // Other replies (logging on/off, -none-, errors, command echoes) ignored.
     }
 
-    // Decode a RAW packet dump and queue it; the next matching summary line
-    // (which carries SNR/RSSI) pairs with it for full last-hop attribution.
+    // Decode a RAW packet dump and queue it for pairing with the summary line
+    // that carries SNR/RSSI, giving full last-hop attribution.
+    //
+    // NOTE: unverified against a real MESH_PACKET_LOGGING build. On the firmware
+    // I've seen, RAW dumps stream to serial in real time (logRxRaw) while summary
+    // lines live in the log file we poll — so the two arrive on different timing.
+    // Hence a generous window and type+length matching rather than strict
+    // adjacency. May need tuning once tested on a logging-enabled repeater.
     _handleRepeaterRaw(hex) {
         this._sawRepeaterRaw = true;
         let packet;
         try { packet = MeshCoreDecoder.decode(hex); } catch (e) { return; }
         if (!packet || !packet.isValid) return;
+        // Adverts carry node name/pubkey/location — feed contacts right away so
+        // repeater names resolve even if no summary line pairs with this dump.
+        this._ingestContactFromPacket(packet);
         const payloadLen = packet.payload?.raw ? packet.payload.raw.length / 2 : null;
         const now = Date.now();
         this._pendingRaw.push({ packet, rawHex: hex, payloadType: packet.payloadType, payloadLen, t: now });
-        // Keep the queue small and fresh so a dropped summary can't mis-pair later.
-        const cutoff = now - 3000;
-        this._pendingRaw = this._pendingRaw.filter(r => r.t >= cutoff).slice(-8);
+        const cutoff = now - 6000;
+        this._pendingRaw = this._pendingRaw.filter(r => r.t >= cutoff).slice(-16);
     }
 
     // A neighbours-table entry: identified repeater + SNR + age. Ingest a fresh
@@ -1476,21 +1491,27 @@ class MeshCoreApp {
         document.getElementById('repeaterNotice')?.classList.remove('hidden');
     }
 
-    // Passively poll the repeater's neighbours table (reading it transmits
-    // nothing). Adverts land here on their own; the Discover button adds an
-    // active probe. New entries are detected by their heard-time advancing.
-    _startNeighborPolling() {
-        this._stopNeighborPolling();
-        const poll = () => {
-            if (this.connectionMode !== 'repeater' || !this.serialPort) return;
-            this._serialWriteText('neighbors\r\n').catch(() => {});
-        };
-        poll();   // immediate read seeds the table on connect
-        this._neighborPollTimer = setInterval(poll, 5000);
+    // Repeater data is pulled, not pushed. Both the neighbours table and the
+    // packet log are polled over the CLI (reading them transmits nothing). The
+    // log is a stored file with no streaming, so each cycle we dump it ('log')
+    // and clear it ('log erase' on the EOF marker) to get only-new entries.
+    _startRepeaterPolling() {
+        this._stopRepeaterPolling();
+        const alive = () => this.connectionMode === 'repeater' && this.serialPort;
+        this._neighborPollTimer = setInterval(() => {
+            if (alive()) this._serialWriteText('neighbors\r\n').catch(() => {});
+        }, 5000);
+        this._logPollTimer = setInterval(() => {
+            if (alive()) this._serialWriteText('log\r\n').catch(() => {});
+        }, 2500);
+        // Seed immediately on connect.
+        this._serialWriteText('neighbors\r\n').catch(() => {});
+        this._serialWriteText('log\r\n').catch(() => {});
     }
 
-    _stopNeighborPolling() {
+    _stopRepeaterPolling() {
         if (this._neighborPollTimer) { clearInterval(this._neighborPollTimer); this._neighborPollTimer = null; }
+        if (this._logPollTimer) { clearInterval(this._logPollTimer); this._logPollTimer = null; }
     }
 
     // Wrap a MeshCore command in a serial frame and write it to the port.
@@ -4268,7 +4289,7 @@ class MeshCoreApp {
 
     onDisconnected() {
         this.releaseWakeLock();
-        this._stopNeighborPolling();
+        this._stopRepeaterPolling();
         clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
         this._monitorDelay = null;

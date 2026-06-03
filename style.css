@@ -2201,6 +2201,7 @@ html.light-theme .theme-toggle-btn:hover {
 }
 
 /* Repeater stock-firmware caveat banner */
+.repeater-notice.hidden { display: none; }
 .repeater-notice {
     position: relative;
     margin: 0 0 14px;
