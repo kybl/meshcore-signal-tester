@@ -63,7 +63,6 @@ class MeshCoreApp {
         this._sawRepeaterReply = false;    // set when the text CLI answers during detection
         this._sawRepeaterRaw = false;      // set if the repeater emits RAW packet dumps (logging build)
         this._repeaterStockNoticed = false;
-        this._repeaterRxSeq = 0;
         this._neighborSeen = new Map();    // neighbour id → last ingested heard-epoch (dedup)
         this._neighborPollTimer = null;
         this._logPollTimer = null;
@@ -1525,7 +1524,7 @@ class MeshCoreApp {
         // (not the node we actually heard), and direct traffic is almost always
         // our own nearby companion. So bucket by route only, and never merge.
         const col  = route === 'D' ? 'direct' : 'unknown';
-        const hash = 'rep-' + (++this._repeaterRxSeq);
+        const hash = this._makeUnknownHash();
         const type = (route === 'D' ? 'Direct ' : 'Flood ') + Utils.getPayloadTypeName(payloadType);
         const meta = { repeaterLog: true, route, payloadType, len, payloadLen, src, dest };
         this._ingestPacket(hash, col, type, null, snr, rssi, meta, null, {});
@@ -2940,6 +2939,21 @@ class MeshCoreApp {
         return `hsl(${hue}, ${sat}%, ${l}%)`;
     }
 
+    // Stock-firmware repeater RX lines carry no packet hash: a flood summary
+    // names the origin (not the node we heard) and direct traffic has no hop
+    // identity at all. Such packets must never be merged with one another — each
+    // is its own distinct observation — so we mint a globally-unique sentinel
+    // hash for every one. The 'unk-' prefix marks it as an unknown hash so it
+    // can be re-minted on import (see _isUnknownHash) and never collides across
+    // capture sessions or with imported data.
+    _makeUnknownHash() {
+        const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+        return 'unk-' + rand;
+    }
+    _isUnknownHash(hash) { return typeof hash === 'string' && hash.startsWith('unk-'); }
+
     // The two pseudo columns aren't real nodes, so they get a reserved look the
     // hash can never produce: a black-ringed circle, filled yellow (direct) or
     // white (unknown).
@@ -4280,7 +4294,12 @@ class MeshCoreApp {
                 ? ([Utils.getRouteTypeName(packet.routeType), Utils.getPayloadTypeName(packet.payloadType)].filter(Boolean).join(' ') || row.type)
                 : row.type;
 
-            this._ingestPacket(row.hash, row.repeater, type, row.rawHex, row.snr, row.rssi, meta, packet, {
+            // Unknown-hash rows must never merge — not with each other, not with
+            // live capture, not even when the same file is imported twice. Mint a
+            // fresh unique hash for each so every one stays its own observation.
+            const hash = this._isUnknownHash(row.hash) ? this._makeUnknownHash() : row.hash;
+
+            this._ingestPacket(hash, row.repeater, type, row.rawHex, row.snr, row.rssi, meta, packet, {
                 importing:  true,
                 timestamp:  row.time,
                 lat:        row.lat,
@@ -4431,7 +4450,6 @@ class MeshCoreApp {
         this._sawRepeaterReply = false;
         this._sawRepeaterRaw = false;
         this._repeaterStockNoticed = false;
-        this._repeaterRxSeq = 0;
         this._neighborSeen = new Map();
         this._pendingRaw = [];
         document.getElementById('repeaterNotice')?.classList.add('hidden');
