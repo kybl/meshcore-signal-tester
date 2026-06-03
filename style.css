@@ -192,11 +192,24 @@ header {
     color: var(--text-primary);
 }
 
+/* The status frame is a flex container holding the whole connection control
+   cluster: the status word, Connect/Disconnect/Stop buttons, the connected
+   device name and the saved-device shortcuts. Its border/background colour
+   reflects the connection state (red = disconnected, green = connected,
+   yellow = connecting or paused). Individual children are shown or hidden
+   per state by the rules further down. */
 .status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
     padding: 4px 10px;
     border-radius: 12px;
     font-weight: 600;
     font-size: 12px;
+}
+
+.status-text {
     white-space: nowrap;
 }
 
@@ -212,6 +225,9 @@ header {
     border: 1px solid rgba(40, 180, 80, 0.35);
 }
 
+/* Yellow: a connection attempt is in progress, or collection is paused. */
+.status.connecting,
+.status.paused,
 .status.importing {
     background: rgba(180, 130, 0, 0.18);
     color: #c89820;
@@ -230,10 +246,54 @@ html.light-theme .status.connected {
     border-color: #b0e8b0;
 }
 
+html.light-theme .status.connecting,
+html.light-theme .status.paused,
 html.light-theme .status.importing {
     background: #fff8e1;
     color: #9a6800;
     border-color: #f0d890;
+}
+
+/* --- Per-state visibility of the controls inside the status frame --- */
+
+/* Connect buttons + saved shortcuts make sense only before a connection
+   exists (disconnected) or while one is being established (connecting). */
+.status.connected #connectBtn,
+.status.connected #connectUsbBtn,
+.status.paused #connectBtn,
+.status.paused #connectUsbBtn {
+    display: none;
+}
+
+/* Saved shortcuts: only when fully disconnected. */
+.status:not(.disconnected) #savedDevices {
+    display: none;
+}
+
+/* Stop/Resume, Disconnect and the device name make sense only once a
+   device is actually connected (green) or paused (yellow). */
+.status:not(.connected):not(.paused) #pauseBtn,
+.status:not(.connected):not(.paused) #disconnectBtn,
+.status:not(.connected):not(.paused) #connectedDeviceName {
+    display: none;
+}
+
+.connected-device-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.btn-disconnect,
+.btn-disconnect:hover:not(:disabled) {
+    color: #c0392b;
+    border-color: #c0392b;
+}
+
+.btn-disconnect:hover:not(:disabled) {
+    background: #c0392b;
+    color: #fff;
 }
 
 .btn-primary {
@@ -260,6 +320,10 @@ html.light-theme .status.importing {
     background: var(--bg-table-head);
     color: var(--text-muted);
     cursor: not-allowed;
+}
+
+.btn-primary.hidden {
+    display: none;
 }
 
 .btn-pause {
@@ -770,8 +834,6 @@ html.light-theme .status.importing {
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    flex: 1;
-    min-width: 150px;
 }
 
 .saved-devices.hidden {
@@ -1544,6 +1606,18 @@ html.light-theme .btn-show-all-repeaters {
 html.light-theme .btn-show-all-repeaters:hover {
     background: rgba(0,0,0,0.22);
 }
+/* Pressed / active state (e.g. "Center on me" while follow mode is on).
+   Scoped under html.light-theme as well so it beats the light-theme base
+   rule's specificity. Text colour is left to the theme default (dark text in
+   light theme, white in dark) — only the blue border/ring marks it pressed. */
+.btn-show-all-repeaters.active,
+.btn-show-all-repeaters.active:hover,
+html.light-theme .btn-show-all-repeaters.active,
+html.light-theme .btn-show-all-repeaters.active:hover {
+    background: rgba(79, 140, 255, 0.22);
+    border-color: #4f8cff;
+    box-shadow: 0 0 0 1px #4f8cff, 0 0 8px rgba(79, 140, 255, 0.55);
+}
 
 .map-hint {
     font-size: 11px;
@@ -1702,11 +1776,14 @@ html.light-theme .btn-show-all-repeaters:hover {
 .map-offline .map-empty {
     position: static;
     padding: 2px 0 8px;
-    color: #bbb;
+    color: #aab;
     font-size: 12px;
     text-align: left;
     justify-content: flex-start;
     pointer-events: auto;
+}
+html.light-theme .map-offline .map-empty {
+    color: #444;
 }
 
 .map-info {
@@ -1845,18 +1922,25 @@ html.light-theme .btn-show-all-repeaters:hover {
 }
 
 .debug-hint {
-    color: rgba(255, 255, 255, 0.7);
+    color: #aab;
     font-size: 11px;
     margin: 0 0 8px;
     line-height: 1.5;
 }
+html.light-theme .debug-hint {
+    color: #444;
+}
 
 .debug-hint code {
     background: rgba(255, 255, 255, 0.16);
-    color: white;
+    color: #fff;
     padding: 1px 5px;
     border-radius: 3px;
     font-size: 10px;
+}
+html.light-theme .debug-hint code {
+    background: rgba(0, 0, 0, 0.1);
+    color: #222;
 }
 
 .debug-row {
@@ -1868,25 +1952,29 @@ html.light-theme .btn-show-all-repeaters:hover {
 
 .debug-input-label {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.7);
+    color: #aab;
     white-space: nowrap;
+}
+html.light-theme .debug-input-label {
+    color: #444;
 }
 
 .debug-input {
     flex: 0 1 220px;
     font-size: 12px;
     padding: 4px 8px;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    border: 1px solid var(--border);
     border-radius: 5px;
-    background: rgba(255, 255, 255, 0.9);
-    color: #333;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    outline: none;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    transition: border-color 0.15s, background 0.15s;
 }
 
 .debug-input:focus {
-    outline: none;
-    background: white;
-    border-color: white;
+    border-color: var(--text-secondary);
+    background: var(--bg-input);
 }
 
 .debug-feedback {
@@ -2240,3 +2328,37 @@ html.light-theme .theme-toggle-btn:hover {
     font-size: 14px;
 }
 .repeater-notice-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* --- Unexpected-disconnect alarm: subdued red wash + centered modal --- */
+.disconnect-alarm {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(180, 30, 30, 0.22);
+}
+.disconnect-alarm.hidden { display: none; }
+.disconnect-alarm-box {
+    background: var(--bg-box);
+    border: 2px solid #c0392b;
+    border-radius: 12px;
+    padding: 24px 28px;
+    max-width: 420px;
+    text-align: center;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+}
+.disconnect-alarm-icon { font-size: 42px; line-height: 1; }
+.disconnect-alarm-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #c0392b;
+    margin: 10px 0 6px;
+}
+.disconnect-alarm-msg {
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 18px;
+}

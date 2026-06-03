@@ -129,6 +129,14 @@ class MeshCoreApp {
             btn.classList.remove('collecting');
             if (!this._chartFrozenAt) this._chartFrozenAt = Date.now();
         }
+        // While connected, the frame is green when collecting and yellow when
+        // paused (Stopped). When disconnected, leave the frame colour alone —
+        // updateStatus() owns it then.
+        if (connected) {
+            this.statusEl.classList.remove('disconnected', 'connecting');
+            this.statusEl.classList.toggle('connected', this._collecting);
+            this.statusEl.classList.toggle('paused', !this._collecting);
+        }
         this._syncWakeLock();
     }
 
@@ -140,6 +148,8 @@ class MeshCoreApp {
     initUI() {
         this.connectBtn = document.getElementById('connectBtn');
         this.statusEl = document.getElementById('status');
+        this.statusTextEl = document.getElementById('statusText');
+        this.connectedNameEl = document.getElementById('connectedDeviceName');
         this.batteryEl = document.getElementById('batteryStatus');
         this.rssiChartWrap = document.getElementById('rssiChartWrap');
         this.rssiChartSvg  = document.getElementById('rssiChart');
@@ -235,6 +245,11 @@ class MeshCoreApp {
         // available, the click handler explains that — the control never
         // silently disappears (matching how the Bluetooth button behaves).
         if (this.connectUsbBtn) this.connectUsbBtn.onclick = () => this.connectUsb();
+
+        // Dedicated Disconnect control — only visible (via CSS) while connected.
+        document.getElementById('disconnectBtn')?.addEventListener('click', () => this.disconnect());
+
+        document.getElementById('disconnectAlarmClose')?.addEventListener('click', () => this._hideDisconnectAlarm());
 
         // Pair-hover: hovering RSSI or SNR highlights both cells for that repeater
         if (this.msgTableBody) {
@@ -682,6 +697,12 @@ class MeshCoreApp {
                 infoEl:        document.getElementById('mapInfo'),
                 colorFor:      col => this.getRepeaterColor(col),
                 displayId:     col => this.displayId(col),
+                onFollowChange: on => {
+                    const b = document.getElementById('centerOnMeBtn');
+                    if (!b) return;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+                },
                 nameForCol:    col => this._contactNameForCol(col),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
@@ -780,7 +801,7 @@ class MeshCoreApp {
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
-        document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.flyToUser());
+        document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.toggleFollowUser());
     }
 
     _activeCols() {
@@ -964,7 +985,7 @@ class MeshCoreApp {
         try {
             this.connectBtn.disabled = true;
             if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
-            this.updateStatus('Scanning...', 'disconnected');
+            this.updateStatus('Scanning…', 'connecting');
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
                     { namePrefix: 'Meshtastic' },
@@ -1019,7 +1040,7 @@ class MeshCoreApp {
         try {
             this.connectBtn.disabled = true;
             if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
-            this.updateStatus('Scanning...', 'disconnected');
+            this.updateStatus('Scanning…', 'connecting');
             const filters = (name && name !== 'Unknown')
                 ? [{ name }]
                 : [{ namePrefix: 'Meshtastic' }, { namePrefix: 'MeshCore' }];
@@ -1048,7 +1069,7 @@ class MeshCoreApp {
         try {
             this.connectBtn.disabled = true;
             if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
-            this.updateStatus('Scanning...', 'disconnected');
+            this.updateStatus('Scanning…', 'connecting');
 
             // Look for an already-authorised port matching the saved vid/pid so
             // we can skip the picker entirely. Only match when we have a real
@@ -1090,10 +1111,12 @@ class MeshCoreApp {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
+        this.connectBtn.classList.remove('hidden');
         if (this.connectUsbBtn) {
             this.connectUsbBtn.textContent = 'Connect USB';
             this.connectUsbBtn.disabled = false;
             this.connectUsbBtn.onclick = () => this.connectUsb();
+            this.connectUsbBtn.classList.remove('hidden');
         }
     }
 
@@ -1103,13 +1126,16 @@ class MeshCoreApp {
     _setActiveTransportBtn(kind, label, onClick) {
         const active = kind === 'serial' ? this.connectUsbBtn : this.connectBtn;
         const other  = kind === 'serial' ? this.connectBtn : this.connectUsbBtn;
-        if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; }
-        if (other)  { other.disabled = true; }
+        // Only the active transport's button stays — relabelled to Cancel /
+        // Disconnect. The other one is hidden so a stale "Connect …" control
+        // doesn't linger beside it during a connection attempt.
+        if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; active.classList.remove('hidden'); }
+        if (other)  { other.disabled = true; other.classList.add('hidden'); }
     }
 
     async connectToDevice(device) {
         this._setActiveTransportBtn('ble', 'Cancel', () => this.disconnect());
-        this.updateStatus('Connecting...', 'disconnected');
+        this.updateStatus('Connecting…', 'connecting');
         this.transportKind = 'ble';
         this.connectionMode = 'companion';   // BLE is always the companion protocol
         this.device = device;
@@ -1168,12 +1194,16 @@ class MeshCoreApp {
         // Battery is read from MeshCore opcode 0x0c (voltage in mV) — more
         // accurate than the BLE Battery Service which some devices report as 100%.
 
-        this.saveDevice(device);
+        this._setConnectedDeviceName(this.saveDevice(device));
 
-        this.updateStatus('Connected', 'connected');
+        this.updateStatus('Connected (companion)', 'connected');
         this._setActiveTransportBtn('ble', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
+        // A fully-established connection: from here a drop we didn't initiate is
+        // a surprise disconnect and should raise the alarm.
+        this._wasConnected = true;
+        this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1209,7 +1239,7 @@ class MeshCoreApp {
         try {
             this.connectBtn.disabled = true;
             this.connectUsbBtn.disabled = true;
-            this.updateStatus('Scanning...', 'disconnected');
+            this.updateStatus('Scanning…', 'connecting');
             // No filters — MeshCore companions appear behind many USB-serial
             // bridges (CP210x, CH340, native USB CDC), so we let the user pick.
             const port = await navigator.serial.requestPort({ filters: [] });
@@ -1225,7 +1255,7 @@ class MeshCoreApp {
 
     async connectToSerialPort(port) {
         this._setActiveTransportBtn('serial', 'Cancel', () => this.disconnect());
-        this.updateStatus('Connecting...', 'disconnected');
+        this.updateStatus('Connecting…', 'connecting');
 
         await port.open({ baudRate: 115200 });
 
@@ -1255,7 +1285,7 @@ class MeshCoreApp {
         //    reply. (A companion radio usually speaks the companion protocol only
         //    over Bluetooth, so a companion plugged in by USB answers neither and
         //    must be reported as an error, not a fake connection.)
-        this.updateStatus('Detecting device…', 'disconnected');
+        this.updateStatus('Detecting device…', 'connecting');
 
         // Phase 1 — companion probe.
         await this.sendAppStart();
@@ -1300,11 +1330,15 @@ class MeshCoreApp {
     async _finishCompanionConnect(port) {
         this.connectionMode = 'companion';
         await this.sendGetContacts();
-        this.saveSerialPort(port);
-        this.updateStatus('Connected', 'connected');
+        this._setConnectedDeviceName(this.saveSerialPort(port));
+        this.updateStatus('Connected (companion)', 'connected');
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
+        // A fully-established connection: from here a drop we didn't initiate is
+        // a surprise disconnect and should raise the alarm.
+        this._wasConnected = true;
+        this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1332,11 +1366,15 @@ class MeshCoreApp {
         this._pendingRaw = [];
         this._startRepeaterPolling();
 
-        this.saveSerialPort(port);
+        this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (repeater)', 'connected');
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
+        // A fully-established connection: from here a drop we didn't initiate is
+        // a surprise disconnect and should raise the alarm.
+        this._wasConnected = true;
+        this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1850,14 +1888,16 @@ class MeshCoreApp {
     saveDevice(device) {
         const devices = this.getSavedDevices();
         const existing = devices.find(d => d.id === device.id);
+        const name = device.name || existing?.name || 'Unknown';
         if (existing) {
-            existing.name = device.name || existing.name;
+            existing.name = name;
             existing.transport = 'ble';
         } else {
-            devices.push({ id: device.id, name: device.name || 'Unknown', transport: 'ble' });
+            devices.push({ id: device.id, name, transport: 'ble' });
         }
         Store.set('devices', JSON.stringify(devices));
         this._renderSavedDevices();
+        return name;
     }
 
     // Serial ports expose no stable id or name — only the USB vendor/product id
@@ -1884,6 +1924,7 @@ class MeshCoreApp {
         }
         Store.set('devices', JSON.stringify(devices));
         this._renderSavedDevices();
+        return name;
     }
 
     forgetDevice(deviceId) {
@@ -3939,6 +3980,45 @@ class MeshCoreApp {
         beep(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
     }
 
+    // An interrupted two-tone alarm (880-440-880-440-880-440 Hz) for the
+    // unexpected-disconnect alert. Only plays when sound alerts are enabled.
+    _playDisconnectAlarm() {
+        const mode = this.soundSelect?.value ?? 'off';
+        if (mode === 'off') return;
+        try {
+            if (!this.audioCtx) this.audioCtx = new AudioContext();
+            const ctx = this.audioCtx;
+            if (ctx.state === 'suspended') ctx.resume();
+            const now = ctx.currentTime;
+            const freqs = [880, 440, 880, 440, 880, 440];
+            const dur = 0.16, gap = 0.08;   // gap between tones → "interrupted"
+            freqs.forEach((f, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.value = f;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                const start = now + i * (dur + gap);
+                gain.gain.setValueAtTime(0.0001, start);
+                gain.gain.exponentialRampToValueAtTime(0.13, start + 0.01);
+                gain.gain.setValueAtTime(0.13, start + dur - 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+                osc.start(start);
+                osc.stop(start + dur + 0.01);
+            });
+        } catch (e) { console.warn('Alarm sound failed:', e); }
+    }
+
+    _showDisconnectAlarm() {
+        document.getElementById('disconnectAlarm')?.classList.remove('hidden');
+        this._playDisconnectAlarm();
+    }
+
+    _hideDisconnectAlarm() {
+        document.getElementById('disconnectAlarm')?.classList.add('hidden');
+    }
+
     // --- BLE Device Battery ---
 
     _updateBleBattery(pct) {
@@ -4254,9 +4334,11 @@ class MeshCoreApp {
         const importBtn = document.getElementById('importCsvBtn');
         const prevBtnText = importBtn?.textContent;
         if (importBtn) { importBtn.textContent = 'Importing…'; importBtn.disabled = true; }
-        const prevStatus = this.statusEl?.textContent;
-        const prevClass  = this.statusEl?.className;
-        this.updateStatus('Importing CSV…', 'importing');
+        const prevStatus = this.statusTextEl?.textContent;
+        if (this.statusTextEl) this.statusTextEl.textContent = 'Importing CSV…';
+        // Overlay the yellow "importing" tint without dropping the current
+        // connection-state class (which governs child visibility).
+        this.statusEl?.classList.add('importing');
 
         await new Promise(r => setTimeout(r, 0)); // yield to let the browser repaint
 
@@ -4350,12 +4432,19 @@ class MeshCoreApp {
         requestAnimationFrame(() => this._checkTableOverflow(true));
 
         if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
-        if (this.statusEl && prevStatus != null) { this.statusEl.textContent = prevStatus; this.statusEl.className = prevClass; }
+        this.statusEl?.classList.remove('importing');
+        if (this.statusTextEl && prevStatus != null) this.statusTextEl.textContent = prevStatus;
     }
 
     updateStatus(text, className) {
-        this.statusEl.textContent = text;
+        if (this.statusTextEl) this.statusTextEl.textContent = text;
         this.statusEl.className = `status ${className}`;
+    }
+
+    // Show the name/id of the currently connected device (same label as the
+    // matching "Saved:" entry). Hidden by CSS while not connected.
+    _setConnectedDeviceName(name) {
+        if (this.connectedNameEl) this.connectedNameEl.textContent = name || '';
     }
 
     // --- Utilities ---
@@ -4374,6 +4463,9 @@ class MeshCoreApp {
     }
 
     async disconnect() {
+        // The user explicitly asked to disconnect — suppress the surprise-
+        // disconnect alarm that onDisconnected() would otherwise raise.
+        this._intentionalDisconnect = true;
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.transportKind === 'serial') {
             this._serialClosing = true;
@@ -4473,6 +4565,7 @@ class MeshCoreApp {
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
+        this._setConnectedDeviceName('');
         this._setConnectIdle();
         this._updateSoundHighlight();
         this._collecting = false;
@@ -4481,6 +4574,12 @@ class MeshCoreApp {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connect to a MeshCore companion device via Bluetooth or USB to start monitoring RX logs.';
         }
+        // A drop on an established connection that we didn't initiate ourselves
+        // is a surprise disconnect — flash the screen red and sound the alarm.
+        const surprise = this._wasConnected && !this._intentionalDisconnect;
+        this._wasConnected = false;
+        this._intentionalDisconnect = false;
+        if (surprise) this._showDisconnectAlarm();
     }
 }
 

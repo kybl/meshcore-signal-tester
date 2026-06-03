@@ -74,6 +74,8 @@ export class Signal3DMap {
         this._pinGroups = [];
         this._userLoc      = null;
         this._watchId      = null;
+        this._followUser   = false;  // when true, camera tracks the user's GPS position
+        this.onFollowChange = opts.onFollowChange || null;
         this._tileBounds   = null;   // { x0, y0, nx, ny, zoom }
         this._planeDim     = null;   // { w, h } in world units
         this._mapMesh      = null;
@@ -221,8 +223,9 @@ export class Signal3DMap {
             clearTimeout(this._viewUpdateTimer);
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
         });
-        // User interaction cancels any running camera fly/turn animation.
-        this.controls.addEventListener('start', () => { this._camAnim = null; });
+        // User interaction cancels any running camera fly/turn animation and
+        // leaves "follow me" mode — the user has taken manual control.
+        this.controls.addEventListener('start', () => { this._camAnim = null; this.setFollowUser(false); });
 
         // Two-finger twist: rotate camera azimuth by the angular change between the
         // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
@@ -397,6 +400,9 @@ export class Signal3DMap {
                 }
                 this._scheduleMapUpdate();
                 this._updateUserMarker();
+                // In follow mode, keep the user centred as they move (shorter,
+                // smoother glide than the initial fly-to).
+                if (this._followUser) this.flyToUser(450);
             },
             err => {
                 resolved = true;
@@ -1111,7 +1117,7 @@ export class Signal3DMap {
 
     // Recenter the view on the user's current GPS location (keeps angle/zoom).
     // Returns false (and shows a status message) when the location is unknown.
-    flyToUser() {
+    flyToUser(duration = 700) {
         if (!this._userLoc) {
             this._setStatus('Location not known yet — tap “Enable location” first.');
             return false;
@@ -1126,8 +1132,23 @@ export class Signal3DMap {
         this._animate(e => {
             this.controls.target.lerpVectors(fromT, toT, e);
             this.camera.position.lerpVectors(fromE, toE, e);
-        });
+        }, duration);
         return true;
+    }
+
+    // "Center on me" is a toggle: pressing it once centres on the user and
+    // enters follow mode (camera tracks GPS); pressing it again — or any manual
+    // map movement — leaves follow mode.
+    toggleFollowUser() {
+        if (this._followUser) { this.setFollowUser(false); return; }
+        if (this.flyToUser()) this.setFollowUser(true);
+    }
+
+    setFollowUser(on) {
+        on = !!on;
+        if (this._followUser === on) return;
+        this._followUser = on;
+        this.onFollowChange?.(on);
     }
 
     // Turn the camera (orbit around its current target) so it looks toward the
