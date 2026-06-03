@@ -2215,6 +2215,9 @@ html.light-theme .theme-toggle-btn:hover {
     line-height: 1.5;
 }
 .repeater-notice strong { color: var(--text-primary); }
+.repeater-notice p { margin: 7px 0 0; }
+.repeater-notice ul { margin: 4px 0 0; padding-left: 20px; }
+.repeater-notice li { margin: 2px 0; }
 .repeater-notice code {
     background: var(--bg-input);
     padding: 1px 5px;

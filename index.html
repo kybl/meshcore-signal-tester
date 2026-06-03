@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=126">
+    <link rel="stylesheet" href="style.css?v=127">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -59,13 +59,24 @@
         <main>
             <div id="repeaterNotice" class="repeater-notice hidden">
                 <button id="repeaterNoticeClose" class="repeater-notice-close" aria-label="Dismiss">✕</button>
-                <strong>Repeater with stock firmware — limited signal data.</strong>
-                Incoming packets can't be tied to a specific node: flood traffic shows the
-                <em>originator</em>, not the node actually heard, and direct traffic is usually your own
-                nearby companion. Received packets are grouped only as <code>direct</code> / <code>unknown</code>.
-                Use <strong>Discover nodes</strong> to list directly-heard neighbouring repeaters (identified, SNR only).
-                For full per-hop SNR <em>and</em> RSSI with the real last hop, flash the repeater with a
-                <code>MESH_PACKET_LOGGING</code> build (it streams RAW packets this app decodes automatically).
+                <strong>Stock repeater firmware — per-node signal can't be measured. Sorry.</strong>
+                <p>The packet log does report SNR/RSSI, but with <strong>no usable identity</strong> for it:</p>
+                <ul>
+                    <li><em>Flood</em> packets are logged with their original <strong>sender</strong>, not the neighbour your
+                        repeater actually heard — so the signal can't be attributed to anyone.</li>
+                    <li><em>Direct</em> packets are almost always your own companion sitting right next to the repeater
+                        (always strong) — useless for range.</li>
+                    <li>There is no packet path and no per-sender RSSI, so incoming traffic can only be grouped
+                        as <code>direct</code> / <code>unknown</code>.</li>
+                </ul>
+                <p><strong>What you can do:</strong></p>
+                <ul>
+                    <li>Use <strong>Discover nodes</strong> — it lists the repeaters yours hears <em>directly</em>, identified,
+                        but SNR only (no RSSI).</li>
+                    <li>Flash the repeater with a <code>MESH_PACKET_LOGGING</code> firmware build. It emits RAW packets this
+                        app decodes to recover the real last hop together with SNR <em>and</em> RSSI — the only way to get
+                        full per-node signal data from a repeater.</li>
+                </ul>
             </div>
 
             <div id="emptyState" class="empty-state">
