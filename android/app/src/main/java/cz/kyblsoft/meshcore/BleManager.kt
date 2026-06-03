@@ -206,7 +206,17 @@ class BleManager(private val context: Context, private val js: JsApi) {
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     connected = true
-                    main.post { try { g.discoverServices() } catch (_: Exception) {} }
+                    // Negotiate a larger MTU first, so multi-hundred-byte frames
+                    // (e.g. contact records) arrive in one notification instead of
+                    // being capped at the 23-byte default. Discovery starts in
+                    // onMtuChanged; if the request can't even be issued, start now.
+                    main.post {
+                        try {
+                            if (!g.requestMtu(517)) g.discoverServices()
+                        } catch (_: Exception) {
+                            try { g.discoverServices() } catch (_: Exception) {}
+                        }
+                    }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     connected = false
@@ -220,6 +230,11 @@ class BleManager(private val context: Context, private val js: JsApi) {
                     clearQueue()
                 }
             }
+        }
+
+        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            // Whether or not the larger MTU was granted, proceed to discovery.
+            main.post { try { g.discoverServices() } catch (_: Exception) {} }
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {

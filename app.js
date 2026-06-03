@@ -1365,8 +1365,14 @@ class MeshCoreApp {
             if (buf.length - offset < HDR + len) break; // wait for the rest of the frame
             const frame = buf.slice(offset + HDR, offset + HDR + len);
             offset += HDR + len;
-            try { this.handlePayload(frame); }
-            catch (e) { console.error('Frame handling error:', e); }
+            // Only 0x3e (radio→app) frames come from a companion. 0x3c (app→radio)
+            // seen on the read side is a repeater echoing our probe back — ignore
+            // it, and use a genuine 0x3e frame as proof this is a companion.
+            if (type === 0x3e) {
+                this._sawCompanionFrame = true;
+                try { this.handlePayload(frame); }
+                catch (e) { console.error('Frame handling error:', e); }
+            }
         }
         this._serialReadBuffer = offset > 0 ? buf.slice(offset) : buf;
     }
@@ -1854,14 +1860,6 @@ class MeshCoreApp {
 
     handlePayload(payload) {
         const pushCode = payload[0];
-        // A recognised companion push code proves the serial peer is a companion
-        // (consumed by device-type detection on connect).
-        if (!this._sawCompanionFrame &&
-            (pushCode === 0x0c || pushCode === 0x02 || pushCode === 0x03 || pushCode === 0x04 ||
-             pushCode === 0x8a || pushCode === 0x88 || pushCode === 0x84 || pushCode === 0x8e ||
-             pushCode === 0x80 || pushCode === 0x89)) {
-            this._sawCompanionFrame = true;
-        }
         // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
