@@ -250,6 +250,8 @@ class MeshCoreApp {
         // Dedicated Disconnect control — only visible (via CSS) while connected.
         document.getElementById('disconnectBtn')?.addEventListener('click', () => this.disconnect());
 
+        document.getElementById('disconnectAlarmClose')?.addEventListener('click', () => this._hideDisconnectAlarm());
+
         // Pair-hover: hovering RSSI or SNR highlights both cells for that repeater
         if (this.msgTableBody) {
             this.msgTableBody.addEventListener('mouseover', e => {
@@ -696,6 +698,12 @@ class MeshCoreApp {
                 infoEl:        document.getElementById('mapInfo'),
                 colorFor:      col => this.getRepeaterColor(col),
                 displayId:     col => this.displayId(col),
+                onFollowChange: on => {
+                    const b = document.getElementById('centerOnMeBtn');
+                    if (!b) return;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+                },
                 nameForCol:    col => this._contactNameForCol(col),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
@@ -794,7 +802,7 @@ class MeshCoreApp {
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
-        document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.flyToUser());
+        document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.toggleFollowUser());
     }
 
     _activeCols() {
@@ -1193,6 +1201,10 @@ class MeshCoreApp {
         this._setActiveTransportBtn('ble', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
+        // A fully-established connection: from here a drop we didn't initiate is
+        // a surprise disconnect and should raise the alarm.
+        this._wasConnected = true;
+        this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1324,6 +1336,10 @@ class MeshCoreApp {
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
+        // A fully-established connection: from here a drop we didn't initiate is
+        // a surprise disconnect and should raise the alarm.
+        this._wasConnected = true;
+        this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1356,6 +1372,10 @@ class MeshCoreApp {
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
+        // A fully-established connection: from here a drop we didn't initiate is
+        // a surprise disconnect and should raise the alarm.
+        this._wasConnected = true;
+        this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -3924,6 +3944,48 @@ class MeshCoreApp {
         beep(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
     }
 
+    // A loud, wavering two-tone siren for the unexpected-disconnect alarm.
+    // Only plays when the sound alert is enabled (not "off").
+    _playDisconnectAlarm() {
+        const mode = this.soundSelect?.value ?? 'off';
+        if (mode === 'off') return;
+        try {
+            if (!this.audioCtx) this.audioCtx = new AudioContext();
+            const ctx = this.audioCtx;
+            if (ctx.state === 'suspended') ctx.resume();
+            const now = ctx.currentTime;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            // Waver the pitch between a low and high tone several times.
+            const lo = 440, hi = 880, step = 0.18;
+            let t = now;
+            osc.frequency.setValueAtTime(lo, t);
+            for (let i = 0; i < 8; i++) {
+                t += step;
+                osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? hi : lo, t);
+            }
+            const end = t;
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(0.18, now + 0.05);
+            gain.gain.setValueAtTime(0.18, end - 0.1);
+            gain.gain.exponentialRampToValueAtTime(0.0001, end);
+            osc.start(now);
+            osc.stop(end + 0.02);
+        } catch (e) { console.warn('Alarm sound failed:', e); }
+    }
+
+    _showDisconnectAlarm() {
+        document.getElementById('disconnectAlarm')?.classList.remove('hidden');
+        this._playDisconnectAlarm();
+    }
+
+    _hideDisconnectAlarm() {
+        document.getElementById('disconnectAlarm')?.classList.add('hidden');
+    }
+
     // --- BLE Device Battery ---
 
     _updateBleBattery(pct) {
@@ -4368,6 +4430,9 @@ class MeshCoreApp {
     }
 
     async disconnect() {
+        // The user explicitly asked to disconnect — suppress the surprise-
+        // disconnect alarm that onDisconnected() would otherwise raise.
+        this._intentionalDisconnect = true;
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.transportKind === 'serial') {
             this._serialClosing = true;
@@ -4477,6 +4542,12 @@ class MeshCoreApp {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connect to a MeshCore companion device via Bluetooth or USB to start monitoring RX logs.';
         }
+        // A drop on an established connection that we didn't initiate ourselves
+        // is a surprise disconnect — flash the screen red and sound the alarm.
+        const surprise = this._wasConnected && !this._intentionalDisconnect;
+        this._wasConnected = false;
+        this._intentionalDisconnect = false;
+        if (surprise) this._showDisconnectAlarm();
     }
 }
 

@@ -1606,6 +1606,14 @@ html.light-theme .btn-show-all-repeaters {
 html.light-theme .btn-show-all-repeaters:hover {
     background: rgba(0,0,0,0.22);
 }
+/* Pressed / active state (e.g. "Center on me" while follow mode is on). */
+.btn-show-all-repeaters.active,
+.btn-show-all-repeaters.active:hover {
+    background: #4f8cff;
+    border-color: #4f8cff;
+    color: #fff;
+    box-shadow: 0 0 0 1px #4f8cff, 0 0 8px rgba(79, 140, 255, 0.6);
+}
 
 .map-hint {
     font-size: 11px;
@@ -1764,11 +1772,14 @@ html.light-theme .btn-show-all-repeaters:hover {
 .map-offline .map-empty {
     position: static;
     padding: 2px 0 8px;
-    color: #bbb;
+    color: #aab;
     font-size: 12px;
     text-align: left;
     justify-content: flex-start;
     pointer-events: auto;
+}
+html.light-theme .map-offline .map-empty {
+    color: #444;
 }
 
 .map-info {
@@ -1907,18 +1918,25 @@ html.light-theme .btn-show-all-repeaters:hover {
 }
 
 .debug-hint {
-    color: rgba(255, 255, 255, 0.7);
+    color: #aab;
     font-size: 11px;
     margin: 0 0 8px;
     line-height: 1.5;
 }
+html.light-theme .debug-hint {
+    color: #444;
+}
 
 .debug-hint code {
     background: rgba(255, 255, 255, 0.16);
-    color: white;
+    color: #fff;
     padding: 1px 5px;
     border-radius: 3px;
     font-size: 10px;
+}
+html.light-theme .debug-hint code {
+    background: rgba(0, 0, 0, 0.1);
+    color: #222;
 }
 
 .debug-row {
@@ -1930,8 +1948,11 @@ html.light-theme .btn-show-all-repeaters:hover {
 
 .debug-input-label {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.7);
+    color: #aab;
     white-space: nowrap;
+}
+html.light-theme .debug-input-label {
+    color: #444;
 }
 
 .debug-input {
@@ -2302,3 +2323,41 @@ html.light-theme .theme-toggle-btn:hover {
     font-size: 14px;
 }
 .repeater-notice-close:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* --- Unexpected-disconnect alarm: full-screen red wash + centered modal --- */
+.disconnect-alarm {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: disconnect-alarm-flash 1s ease-in-out infinite;
+}
+.disconnect-alarm.hidden { display: none; }
+@keyframes disconnect-alarm-flash {
+    0%, 100% { background: rgba(200, 20, 20, 0.35); }
+    50%      { background: rgba(200, 20, 20, 0.62); }
+}
+.disconnect-alarm-box {
+    background: var(--bg-box);
+    border: 2px solid #c0392b;
+    border-radius: 12px;
+    padding: 24px 28px;
+    max-width: 420px;
+    text-align: center;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+}
+.disconnect-alarm-icon { font-size: 42px; line-height: 1; }
+.disconnect-alarm-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #c0392b;
+    margin: 10px 0 6px;
+}
+.disconnect-alarm-msg {
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 18px;
+}

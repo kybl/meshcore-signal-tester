@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=129">
+    <link rel="stylesheet" href="style.css?v=130">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -350,6 +350,15 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=202"></script>
+    <div id="disconnectAlarm" class="disconnect-alarm hidden">
+        <div class="disconnect-alarm-box">
+            <div class="disconnect-alarm-icon">⚠️</div>
+            <div class="disconnect-alarm-title">Device disconnected</div>
+            <div class="disconnect-alarm-msg">The connection to your MeshCore device was lost unexpectedly. Data collection has stopped.</div>
+            <button id="disconnectAlarmClose" class="btn-primary">Dismiss</button>
+        </div>
+    </div>
+
+    <script type="module" src="app.js?v=203"></script>
 </body>
 </html>
