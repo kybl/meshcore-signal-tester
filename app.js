@@ -1248,14 +1248,20 @@ class MeshCoreApp {
         this._startSerialReadLoop(port);
 
         // --- Device-type detection ---
-        // A MeshCore *companion* replies to CMD_APP_START with a self-info frame
-        // (push 0x02). A *repeater* speaks a plain-text CLI and ignores the
-        // binary frame (it just lands as junk in its line buffer). So probe with
-        // APP_START; if nothing companion-shaped comes back, drive the device as
-        // a repeater over the text CLI instead.
+        // A MeshCore *companion* answers our binary frames with 0x3e (radio→app)
+        // replies; a *repeater* speaks a plain-text CLI and never sends one (it
+        // just echoes our probe bytes as 0x3c / junk). APP_START alone may not
+        // self-reply, so we also send a contacts request, which a companion
+        // always answers — then classify on whether any 0x3e frame came back.
         this.updateStatus('Detecting device…', 'disconnected');
         await this.sendAppStart();
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, 200));
+        if (this.serialPort === port && !this._sawCompanionFrame) {
+            try { await this._sendFrame(new Uint8Array([0x04])); } catch (e) {}  // CMD_GET_CONTACTS
+        }
+        for (let i = 0; i < 16 && !this._sawCompanionFrame && this.serialPort === port; i++) {
+            await new Promise(r => setTimeout(r, 100));
+        }
         if (this.serialPort !== port) return;   // disconnected mid-detection
 
         if (this._sawCompanionFrame) {
@@ -1440,8 +1446,10 @@ class MeshCoreApp {
         this._pendingRaw = this._pendingRaw.filter(r => r.t >= cutoff).slice(-16);
     }
 
-    // A neighbours-table entry: identified repeater + SNR + age. Ingest a fresh
-    // datapoint only when the node was heard more recently than last time.
+    // A neighbours-table entry: identified repeater + SNR + age. Dedup on the
+    // real heard-time (so we only add a point when the node is heard afresh), but
+    // stamp the point at reception time — the table can report a long-ago advert,
+    // and an old timestamp would drop it straight out of the display window.
     _handleNeighborLine(id, secsAgo, snrX4) {
         const fullId = id.toUpperCase();
         const heardEpoch = Date.now() - secsAgo * 1000;
@@ -1451,7 +1459,7 @@ class MeshCoreApp {
         const snr = snrX4 / 4;
         const hash = 'nbr-' + fullId + '-' + heardEpoch;
         this._ingestPacket(hash, fullId, 'Repeater Neighbour', null, snr, null,
-            { repeaterNeighbor: true, secsAgo }, null, { timestamp: heardEpoch });
+            { repeaterNeighbor: true, secsAgo }, null, {});
     }
 
     _handleRepeaterLogLine(m) {
@@ -2810,7 +2818,7 @@ class MeshCoreApp {
                 : '';
             const rs = repEntry.remoteSnr ?? data.meta?.remoteSnr;
             const uplinkPart = rs != null
-                ? ` &nbsp; Uplink SNR <span style="color:${this._signalColor(rs, 13, -10, 0)};font-weight:700">${rs.toFixed(1)} dB</span>`
+                ? ` &nbsp; Uplink SNR <span style="color:${this._signalColor(rs, 13, -10, 0)};font-weight:700">${this._fmtSnr(rs)} dB</span>`
                 : '';
             const colContact = this._contactByPrefix(col);
             const colName = colContact?.name ?? null;
@@ -2820,7 +2828,7 @@ class MeshCoreApp {
                 (colName ? ` <span class="detail-col-name">${this._escHtml(colName)}</span>` : '') +
                 (timeStr ? ` &nbsp; <span class="detail-time">${timeStr}</span>` : '') +
                 ` &nbsp; RSSI <span style="color:${rc};font-weight:700">${repEntry.rssi ?? '—'}</span>` +
-                ` &nbsp; SNR <span style="color:${sc};font-weight:700">${repEntry.snr?.toFixed(1) ?? '—'}</span>` +
+                ` &nbsp; SNR <span style="color:${sc};font-weight:700">${this._fmtSnr(repEntry.snr)}</span>` +
                 uplinkPart +
                 hexPart +
                 `</div>`;
@@ -2850,7 +2858,7 @@ class MeshCoreApp {
         const rc = this._signalColor(rssi, -70, -130);
         const sc = this._signalColor(snr,  13, -10, 0);
         const rssiStr = rssi != null ? rssi : '—';
-        const snrStr  = snr  != null ? snr.toFixed(1) : '—';
+        const snrStr  = this._fmtSnr(snr);
         return `<td class="sig-snr"  data-hash="${hash}" data-col="${col}" style="color:${sc}">${snrStr}</td>` +
                `<td class="sig-rssi" data-hash="${hash}" data-col="${col}" style="color:${rc}">${rssiStr}</td>`;
     }
@@ -2933,6 +2941,13 @@ class MeshCoreApp {
     _markerFill(col)         { return this._isPseudoCol(col) ? '#fff' : this._dotColor(col); }
     _markerStroke(col, base) { return this._isPseudoCol(col) ? this._pseudoRing(col) : base; }
     _markerStrokeW(col, base){ return this._isPseudoCol(col) ? Math.max(base, 1.3) : base; }
+
+    // Format an SNR for display: whole numbers (e.g. the repeater log, which
+    // truncates SNR to integer dB) show without a decimal; finer values keep one.
+    _fmtSnr(v) {
+        if (v == null || !isFinite(v)) return '—';
+        return Number.isInteger(v) ? String(v) : v.toFixed(1);
+    }
 
     _renderCharts() {
         if (this._selectedCol
@@ -3338,8 +3353,8 @@ class MeshCoreApp {
         // Signal values and time share one line, with the time pushed to the end
         // (matching the 3D map infobox layout).
         const valLine = isSent
-            ? `Sent SNR ${nearest.snr?.toFixed(1) ?? '—'} dB ↗`
-            : `SNR ${nearest.snr?.toFixed(1) ?? '—'} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
+            ? `Sent SNR ${this._fmtSnr(nearest.snr)} dB ↗`
+            : `SNR ${this._fmtSnr(nearest.snr)} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
         this.tooltip.innerHTML =
             `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}</div>` +
             `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
@@ -3613,8 +3628,8 @@ class MeshCoreApp {
             return `<tr data-col="${this._escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
                 <td class="rl-id rl-id-clickable"><span class="rl-dot" style="${this._repDotStyle(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
                 <td class="rl-num">${d.count}</td>
-                <td class="rl-num" style="color:${msc}">${d.maxSnr?.toFixed(1) ?? '—'}</td>
-                <td class="rl-num" style="color:${lsc}">${d.lastSnr?.toFixed(1) ?? '—'}</td>
+                <td class="rl-num" style="color:${msc}">${this._fmtSnr(d.maxSnr)}</td>
+                <td class="rl-num" style="color:${lsc}">${this._fmtSnr(d.lastSnr)}</td>
                 <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
                 <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
                 <td class="rl-time">${this._formatTime(d.lastSeen)}</td>
@@ -3653,7 +3668,7 @@ class MeshCoreApp {
         const hasFilter = this._repFilterTerms.length > 0;
         const hasSel    = !!this._selectedCol;
 
-        const fSnr = v => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}` : '—';
+        const fSnr = v => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${Number.isInteger(v) ? v : Number(v).toFixed(1)}` : '—';
 
         const buildExtra = (col, showMore, noticePrefix) => {
             const stats = col ? this._colStats(col) : null;
