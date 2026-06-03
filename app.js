@@ -2950,7 +2950,7 @@ class MeshCoreApp {
         const rand = (typeof crypto !== 'undefined' && crypto.randomUUID)
             ? crypto.randomUUID()
             : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
-        return 'unk-' + rand;
+        return 'unknown-' + rand;
     }
 
     // The two pseudo columns aren't real nodes, so they get a reserved look the
