@@ -3944,8 +3944,8 @@ class MeshCoreApp {
         beep(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
     }
 
-    // A loud, wavering two-tone siren for the unexpected-disconnect alarm.
-    // Only plays when the sound alert is enabled (not "off").
+    // An interrupted two-tone alarm (880-440-880-440-880-440 Hz) for the
+    // unexpected-disconnect alert. Only plays when sound alerts are enabled.
     _playDisconnectAlarm() {
         const mode = this.soundSelect?.value ?? 'off';
         if (mode === 'off') return;
@@ -3954,26 +3954,23 @@ class MeshCoreApp {
             const ctx = this.audioCtx;
             if (ctx.state === 'suspended') ctx.resume();
             const now = ctx.currentTime;
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'sawtooth';
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            // Waver the pitch between a low and high tone several times.
-            const lo = 440, hi = 880, step = 0.18;
-            let t = now;
-            osc.frequency.setValueAtTime(lo, t);
-            for (let i = 0; i < 8; i++) {
-                t += step;
-                osc.frequency.linearRampToValueAtTime(i % 2 === 0 ? hi : lo, t);
-            }
-            const end = t;
-            gain.gain.setValueAtTime(0.0001, now);
-            gain.gain.exponentialRampToValueAtTime(0.18, now + 0.05);
-            gain.gain.setValueAtTime(0.18, end - 0.1);
-            gain.gain.exponentialRampToValueAtTime(0.0001, end);
-            osc.start(now);
-            osc.stop(end + 0.02);
+            const freqs = [880, 440, 880, 440, 880, 440];
+            const dur = 0.16, gap = 0.08;   // gap between tones → "interrupted"
+            freqs.forEach((f, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.value = f;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                const start = now + i * (dur + gap);
+                gain.gain.setValueAtTime(0.0001, start);
+                gain.gain.exponentialRampToValueAtTime(0.13, start + 0.01);
+                gain.gain.setValueAtTime(0.13, start + dur - 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+                osc.start(start);
+                osc.stop(start + dur + 0.01);
+            });
         } catch (e) { console.warn('Alarm sound failed:', e); }
     }
 

@@ -1606,13 +1606,17 @@ html.light-theme .btn-show-all-repeaters {
 html.light-theme .btn-show-all-repeaters:hover {
     background: rgba(0,0,0,0.22);
 }
-/* Pressed / active state (e.g. "Center on me" while follow mode is on). */
+/* Pressed / active state (e.g. "Center on me" while follow mode is on).
+   Scoped under html.light-theme as well so it beats the light-theme base
+   rule's specificity. Text colour is left to the theme default (dark text in
+   light theme, white in dark) — only the blue border/ring marks it pressed. */
 .btn-show-all-repeaters.active,
-.btn-show-all-repeaters.active:hover {
-    background: #4f8cff;
+.btn-show-all-repeaters.active:hover,
+html.light-theme .btn-show-all-repeaters.active,
+html.light-theme .btn-show-all-repeaters.active:hover {
+    background: rgba(79, 140, 255, 0.22);
     border-color: #4f8cff;
-    color: #fff;
-    box-shadow: 0 0 0 1px #4f8cff, 0 0 8px rgba(79, 140, 255, 0.6);
+    box-shadow: 0 0 0 1px #4f8cff, 0 0 8px rgba(79, 140, 255, 0.55);
 }
 
 .map-hint {
@@ -2324,7 +2328,7 @@ html.light-theme .theme-toggle-btn:hover {
 }
 .repeater-notice-close:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-/* --- Unexpected-disconnect alarm: full-screen red wash + centered modal --- */
+/* --- Unexpected-disconnect alarm: subdued red wash + centered modal --- */
 .disconnect-alarm {
     position: fixed;
     inset: 0;
@@ -2333,13 +2337,9 @@ html.light-theme .theme-toggle-btn:hover {
     align-items: center;
     justify-content: center;
     padding: 20px;
-    animation: disconnect-alarm-flash 1s ease-in-out infinite;
+    background: rgba(180, 30, 30, 0.22);
 }
 .disconnect-alarm.hidden { display: none; }
-@keyframes disconnect-alarm-flash {
-    0%, 100% { background: rgba(200, 20, 20, 0.35); }
-    50%      { background: rgba(200, 20, 20, 0.62); }
-}
 .disconnect-alarm-box {
     background: var(--bg-box);
     border: 2px solid #c0392b;
@@ -2347,7 +2347,7 @@ html.light-theme .theme-toggle-btn:hover {
     padding: 24px 28px;
     max-width: 420px;
     text-align: center;
-    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
 }
 .disconnect-alarm-icon { font-size: 42px; line-height: 1; }
 .disconnect-alarm-title {
