@@ -1459,7 +1459,16 @@ class MeshCoreApp {
     // Hence a generous window and type+length matching rather than strict
     // adjacency. May need tuning once tested on a logging-enabled repeater.
     _handleRepeaterRaw(hex) {
-        this._sawRepeaterRaw = true;
+        if (!this._sawRepeaterRaw) {
+            this._sawRepeaterRaw = true;
+            // Logging build detected: every received packet now streams live as a
+            // RAW dump + summary line, with the full path for true last-hop
+            // attribution. The polled 'log' file is the same packets a second time,
+            // so stop reading it — its summary lines arrive with no RAW to pair
+            // with and would otherwise land as phantom 'unknown' duplicates next to
+            // the real identified entry.
+            this._stopLogPolling();
+        }
         let packet;
         try { packet = MeshCoreDecoder.decode(hex); } catch (e) { return; }
         if (!packet || !packet.isValid) return;
@@ -1523,6 +1532,14 @@ class MeshCoreApp {
         // Stock fallback: no usable hop identity — a flood line names the origin
         // (not the node we actually heard), and direct traffic is almost always
         // our own nearby companion. So bucket by route only, and never merge.
+        //
+        // On a logging build, though, every real packet is captured by the live
+        // RAW+summary pairing above. An unpaired summary here is then a redundant
+        // copy from the polled 'log' file (one may still be in flight when the
+        // first RAW flips us to logging mode) — not a new packet — so suppress it
+        // rather than spawn a phantom 'unknown' alongside the identified entry.
+        if (this._sawRepeaterRaw) return;
+
         const col  = route === 'D' ? 'direct' : 'unknown';
         const hash = this._makeUnknownHash();
         const type = (route === 'D' ? 'Direct ' : 'Flood ') + Utils.getPayloadTypeName(payloadType);
@@ -1561,6 +1578,12 @@ class MeshCoreApp {
 
     _stopRepeaterPolling() {
         if (this._neighborPollTimer) { clearInterval(this._neighborPollTimer); this._neighborPollTimer = null; }
+        this._stopLogPolling();
+    }
+
+    // Stop dumping the packet-log file. Used both on disconnect and the moment a
+    // logging build is detected (its live stream supersedes the polled file).
+    _stopLogPolling() {
         if (this._logPollTimer) { clearInterval(this._logPollTimer); this._logPollTimer = null; }
     }
 
