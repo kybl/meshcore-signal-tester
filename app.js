@@ -2,13 +2,14 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=98';
 
-// Per-repeater colour: continuous hue from a hash, fixed saturation/lightness so
-// the hue carries the identity. Dark theme lifts lightness (except the 3D map,
-// whose background is always light). The two pseudo columns 'direct'/'unknown'
-// are drawn as white-filled rings instead (see _repDotStyle).
-const REP_SAT = 70;        // saturation — high enough that hue stays meaningful
-const REP_LIGHT = 50;      // base lightness (light theme and 3D map)
-const REP_DARK_BUMP = 18;  // dark theme adds this to lightness
+// Per-repeater colour: hue, saturation AND lightness are all derived from the id
+// hash, so different repeaters differ in all three — within bounds that keep the
+// colour usable (never grey, never too dark/light). Dark theme lifts the
+// lightness (except the 3D map, whose background is always light). The two
+// pseudo columns 'direct'/'unknown' are drawn as white-filled rings instead.
+const REP_S_MIN = 55, REP_S_MAX = 92;   // saturation range (%) — stays vivid
+const REP_L_MIN = 42, REP_L_MAX = 60;   // lightness range (%) — readable band
+const REP_DARK_BUMP = 18;               // dark theme adds this to lightness
 
 
 
@@ -2867,8 +2868,8 @@ class MeshCoreApp {
 
     // --- Chart ---
 
-    // Stable per-repeater hue from a fast FNV-1a hash of the display id.
-    _repeaterHue(col) {
+    // Stable 32-bit FNV-1a hash of the display id (cached).
+    _repeaterHash(col) {
         if (!this.chartColors.has(col)) {
             const id = this.displayId(col);
             let h = 0x811c9dc5;
@@ -2876,21 +2877,33 @@ class MeshCoreApp {
                 h ^= id.charCodeAt(i);
                 h = Math.imul(h, 0x01000193);
             }
-            this.chartColors.set(col, (h >>> 0) % 360);
+            this.chartColors.set(col, h >>> 0);
         }
         return this.chartColors.get(col);
     }
 
+    // Hue, saturation and lightness — each from a different slice of the hash, so
+    // repeaters vary in all three. Returns the light-theme lightness.
+    _repeaterHSL(col) {
+        const h = this._repeaterHash(col);
+        const hue = h % 360;
+        const sat = Math.round(REP_S_MIN + ((h >>> 10) & 0xFF) / 255 * (REP_S_MAX - REP_S_MIN));
+        const lit = Math.round(REP_L_MIN + ((h >>> 18) & 0xFF) / 255 * (REP_L_MAX - REP_L_MIN));
+        return { hue, sat, lit };
+    }
+
     // Light colour — used by the 3D map, whose background is always light.
     getRepeaterColor(col) {
-        return `hsl(${this._repeaterHue(col)}, ${REP_SAT}%, ${REP_LIGHT}%)`;
+        const { hue, sat, lit } = this._repeaterHSL(col);
+        return `hsl(${hue}, ${sat}%, ${lit}%)`;
     }
 
     // Theme-aware colour for the 2D UI: dark theme lifts the lightness.
     _dotColor(col) {
+        const { hue, sat, lit } = this._repeaterHSL(col);
         const isDark = !document.documentElement.classList.contains('light-theme');
-        const l = isDark ? REP_LIGHT + REP_DARK_BUMP : REP_LIGHT;
-        return `hsl(${this._repeaterHue(col)}, ${REP_SAT}%, ${l}%)`;
+        const l = isDark ? Math.min(90, lit + REP_DARK_BUMP) : lit;
+        return `hsl(${hue}, ${sat}%, ${l}%)`;
     }
 
     // The two pseudo columns aren't real nodes, so they get a reserved look: a
