@@ -71,7 +71,6 @@ class MeshCoreApp {
         this._deviceLocPolicy = null;      // companion adv_loc_policy: 0 none, 1 share (live GPS), 2 prefs
         this._showDeviceMarker = false;    // is the 3D-map device marker enabled
         this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown
-        this._deviceRefreshMs = 3000;      // how often to re-poll the device position (user-configurable)
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         this.hashData = new Map();
@@ -785,7 +784,6 @@ class MeshCoreApp {
         const showDeviceChk     = document.getElementById('showDeviceChk');
         const clusterSel        = document.getElementById('clusterRadiusSelect');
         const perspSizeChk      = document.getElementById('perspSizeChk');
-        const deviceRefreshSel  = document.getElementById('deviceRefreshSelect');
         showLinesChk?.addEventListener('change', () => {
             this.signalMap?.setShowLines(showLinesChk.checked);
             Store.set('showLines', showLinesChk.checked);
@@ -799,11 +797,6 @@ class MeshCoreApp {
             this.signalMap?.setShowDeviceMarker(showDeviceChk.checked);
             Store.set('showDevice', showDeviceChk.checked);
             this._updateDeviceLocationRefresh();   // start/stop position polling
-        });
-        deviceRefreshSel?.addEventListener('change', () => {
-            this._deviceRefreshMs = parseInt(deviceRefreshSel.value, 10) || 3000;
-            Store.set('deviceRefreshMs', deviceRefreshSel.value);
-            this._restartDeviceLocationRefresh();   // apply the new cadence now
         });
         clusterSel?.addEventListener('change', () => {
             this.signalMap?.setClusterRadius(parseFloat(clusterSel.value));
@@ -824,8 +817,6 @@ class MeshCoreApp {
         if (showDeviceChk) { showDeviceChk.checked = showDevice; this.signalMap?.setShowDeviceMarker(showDevice); }
         if (clusterSel)   clusterSel.value   = String(Store.num('clusterRadius', 0));
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
-        this._deviceRefreshMs = Store.num('deviceRefreshMs', 3000);
-        if (deviceRefreshSel) deviceRefreshSel.value = String(this._deviceRefreshMs);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
         document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.toggleFollowUser());
@@ -2159,8 +2150,10 @@ class MeshCoreApp {
     // _handleSelfInfo (every poll reply), so it must be idempotent: if the timer
     // is already running we leave it alone. Otherwise the immediate poll() below
     // would re-fire on every SELF_INFO reply, turning the interval into a tight
-    // reply-driven loop that hammers the device. Cadence changes go through
-    // _restartDeviceLocationRefresh().
+    // reply-driven loop that hammers the device. We refresh once per second; the
+    // device's GPS updates at ~1 Hz and the round-trip is tiny (~90 bytes), so
+    // this is negligible BT load. Gated purely on the (default-off) device marker
+    // — turning it on is the user opting in.
     _updateDeviceLocationRefresh() {
         const wants = this.connectionMode === 'companion' && this._showDeviceMarker;
         if (!wants) {
@@ -2175,17 +2168,7 @@ class MeshCoreApp {
             }
         };
         poll();                                        // refresh now so toggling the marker updates immediately
-        this._deviceRefreshTimer = setInterval(poll, this._deviceRefreshMs);
-    }
-
-    // Force the poll timer to restart with the current cadence (after the user
-    // changes the refresh interval). Clears the running timer so the next
-    // _updateDeviceLocationRefresh re-arms it at the new rate, with an immediate
-    // poll for instant feedback.
-    _restartDeviceLocationRefresh() {
-        clearInterval(this._deviceRefreshTimer);
-        this._deviceRefreshTimer = null;
-        this._updateDeviceLocationRefresh();
+        this._deviceRefreshTimer = setInterval(poll, 1000);
     }
 
     // Record the connected device's own configured position and place it on the
