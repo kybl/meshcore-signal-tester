@@ -2110,11 +2110,18 @@ class MeshCoreApp {
     // Crucially, a GPS companion (e.g. T1000-e) keeps its GPS module powered
     // DOWN to save battery, so SELF_INFO keeps reporting the last fix — often
     // very stale — no matter how often we re-issue APP_START. The device only
-    // refreshes its position while its GPS is awake. So we wake it with
+    // refreshes its position while its GPS is awake, and the saved "GPS enabled"
+    // preference is NOT necessarily re-applied at boot, so the module can sit
+    // idle even when the user has GPS set to "enabled". We re-assert it once with
     // CMD_SET_CUSTOM_VAR "gps:1" (which calls start_gps() on the firmware at
-    // runtime) while the marker is shown, and release it with "gps:0" when it is
-    // hidden. This mirrors what the official app does. We toggle only on
-    // transitions so we don't re-send the command on every 10s refresh.
+    // runtime), the same nudge the official app gives. We send it only on the
+    // hidden→shown transition, never on every 10s refresh.
+    //
+    // We deliberately NEVER send "gps:0": the firmware calls savePrefs() on every
+    // "gps:" command, so disabling at runtime would also overwrite the user's
+    // persisted "GPS enabled" choice (flipping their device's setting to
+    // disabled). Gating on policy 'share' already means the user opted into live
+    // GPS sharing, so re-asserting "gps:1" only matches what they configured.
     _updateDeviceLocationRefresh() {
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
@@ -2124,10 +2131,9 @@ class MeshCoreApp {
             && this._showDeviceMarker;
         if (wants && !this._deviceGpsWoken) {
             this._deviceGpsWoken = true;
-            this._setDeviceGps(true);              // start_gps() on the device
-        } else if (!wants && this._deviceGpsWoken) {
-            this._deviceGpsWoken = false;
-            this._setDeviceGps(false);             // power the GPS back down
+            this._wakeDeviceGps();                 // start_gps() on the device
+        } else if (!wants) {
+            this._deviceGpsWoken = false;          // re-show will wake it again
         }
         if (!wants) return;
         this._deviceRefreshTimer = setInterval(() => {
@@ -2137,15 +2143,14 @@ class MeshCoreApp {
         }, 10000);   // snappier refresh, closer to the official app
     }
 
-    // Wake (on=true) or release (on=false) the connected companion's GPS module
-    // via CMD_SET_CUSTOM_VAR (0x29) with an ASCII "gps:1" / "gps:0" payload. On
-    // GPS-equipped companions the firmware routes this to start_gps()/stop_gps()
-    // at runtime, so a fresh fix starts flowing into SELF_INFO. No-op when we
-    // can't currently send. Non-GPS devices simply reply with an error, which we
-    // ignore.
-    async _setDeviceGps(on) {
+    // Wake the connected companion's GPS module via CMD_SET_CUSTOM_VAR (0x29)
+    // with an ASCII "gps:1" payload. On GPS-equipped companions the firmware
+    // routes this to start_gps() at runtime, so a fresh fix starts flowing into
+    // SELF_INFO. No-op when we can't currently send. Non-GPS devices simply reply
+    // with an error, which we ignore.
+    async _wakeDeviceGps() {
         if (this.connectionMode !== 'companion' || !this._canSend()) return;
-        const body = new TextEncoder().encode(on ? 'gps:1' : 'gps:0');
+        const body = new TextEncoder().encode('gps:1');
         const frame = new Uint8Array(1 + body.length);
         frame[0] = 0x29;          // CMD_SET_CUSTOM_VAR
         frame.set(body, 1);
@@ -4715,8 +4720,7 @@ class MeshCoreApp {
         this._pendingRaw = [];
         this._pendingPosFields = [];
         clearTimeout(this._posQueryTimer);
-        if (this._deviceGpsWoken) this._setDeviceGps(false);   // best-effort: power the GPS back down
-        this._deviceGpsWoken = false;
+        this._deviceGpsWoken = false;   // never send gps:0 — it would overwrite the user's saved GPS pref
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
         this._deviceLocPolicy = null;
