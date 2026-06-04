@@ -1574,10 +1574,11 @@ class MeshCoreApp {
         }
         // Every other type: the header path accumulates forwarder hashes as the
         // packet floods, so its last element is the last repeater. NOTE: Path
-        // payloads (type 8) also expose payload.decoded.pathHashes, but that is
-        // the advertised/return path carried *inside* the payload — NOT the
-        // forwarders of this transmission — so it must not be used here. The
-        // header path stays valid even when the Path payload fails to decode.
+        // payloads (type 8) also expose payload.decoded.pathHashes, but it is
+        // meaningless — the real PATH body is "dest/src hashes, MAC, encrypted
+        // (path, extra)", and the decoder misreads that ciphertext as a
+        // plaintext path (often erroring on a reserved hash-size bit pattern).
+        // The header path is plaintext and stays valid regardless, so use it.
         if (packet.path && packet.path.length > 0) {
             return packet.path[packet.path.length - 1] || 'unknown';
         }
