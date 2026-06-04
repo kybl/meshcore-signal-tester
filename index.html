@@ -198,6 +198,14 @@
                                     <label class="map-setting-toggle"><input type="checkbox" id="showLinesChk" checked> Guide lines</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showMarkerChk" checked> My location</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showDeviceChk"> Device location</label>
+                                    <label class="map-setting-toggle">Device refresh
+                                        <select id="deviceRefreshSelect" class="ttl-header-select">
+                                            <option value="1000">1 s</option>
+                                            <option value="3000" selected>3 s</option>
+                                            <option value="10000">10 s</option>
+                                            <option value="60000">1 min</option>
+                                        </select>
+                                    </label>
                                     <label class="map-setting-toggle">Cluster radius
                                         <select id="clusterRadiusSelect" class="ttl-header-select">
                                             <option value="0" selected>Off</option>
@@ -398,6 +406,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=211"></script>
+    <script type="module" src="app.js?v=212"></script>
 </body>
 </html>

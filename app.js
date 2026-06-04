@@ -71,6 +71,7 @@ class MeshCoreApp {
         this._deviceLocPolicy = null;      // companion adv_loc_policy: 0 none, 1 share (live GPS), 2 prefs
         this._showDeviceMarker = false;    // is the 3D-map device marker enabled
         this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown
+        this._deviceRefreshMs = 3000;      // how often to re-poll the device position (user-configurable)
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         this.hashData = new Map();
@@ -783,6 +784,7 @@ class MeshCoreApp {
         const showDeviceChk     = document.getElementById('showDeviceChk');
         const clusterSel        = document.getElementById('clusterRadiusSelect');
         const perspSizeChk      = document.getElementById('perspSizeChk');
+        const deviceRefreshSel  = document.getElementById('deviceRefreshSelect');
         showLinesChk?.addEventListener('change', () => {
             this.signalMap?.setShowLines(showLinesChk.checked);
             Store.set('showLines', showLinesChk.checked);
@@ -795,7 +797,12 @@ class MeshCoreApp {
             this._showDeviceMarker = showDeviceChk.checked;
             this.signalMap?.setShowDeviceMarker(showDeviceChk.checked);
             Store.set('showDevice', showDeviceChk.checked);
-            this._updateDeviceLocationRefresh();   // start/stop live-GPS polling
+            this._updateDeviceLocationRefresh();   // start/stop position polling
+        });
+        deviceRefreshSel?.addEventListener('change', () => {
+            this._deviceRefreshMs = parseInt(deviceRefreshSel.value, 10) || 3000;
+            Store.set('deviceRefreshMs', deviceRefreshSel.value);
+            this._restartDeviceLocationRefresh();   // apply the new cadence now
         });
         clusterSel?.addEventListener('change', () => {
             this.signalMap?.setClusterRadius(parseFloat(clusterSel.value));
@@ -816,6 +823,8 @@ class MeshCoreApp {
         if (showDeviceChk) { showDeviceChk.checked = showDevice; this.signalMap?.setShowDeviceMarker(showDevice); }
         if (clusterSel)   clusterSel.value   = String(Store.num('clusterRadius', 0));
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
+        this._deviceRefreshMs = Store.num('deviceRefreshMs', 3000);
+        if (deviceRefreshSel) deviceRefreshSel.value = String(this._deviceRefreshMs);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
         document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.toggleFollowUser());
@@ -2138,24 +2147,44 @@ class MeshCoreApp {
     // what goes into adverts, NOT whether GPS is running. Re-issuing APP_START
     // pulls the fresh position; its SELF_INFO reply updates the marker.
     //
-    // We deliberately do NOT gate on advert_loc_policy === 'share' anymore: that
-    // wrongly excluded GPS devices that simply don't advertise their location, so
-    // we'd read the position once at connect and never again — which is why only
+    // We deliberately do NOT gate on advert_loc_policy === 'share': that wrongly
+    // excluded GPS devices that simply don't advertise their location, so we'd
+    // read the position once at connect and never again — which is why only
     // reconnecting refreshed it. The poll is cheap, so we run it for any
     // connected companion with the marker shown. A device with no GPS just keeps
     // reporting the same coordinates, which is harmless.
+    //
+    // This method is called both on marker/connection changes AND from
+    // _handleSelfInfo (every poll reply), so it must be idempotent: if the timer
+    // is already running we leave it alone. Otherwise the immediate poll() below
+    // would re-fire on every SELF_INFO reply, turning the interval into a tight
+    // reply-driven loop that hammers the device. Cadence changes go through
+    // _restartDeviceLocationRefresh().
     _updateDeviceLocationRefresh() {
-        clearInterval(this._deviceRefreshTimer);
-        this._deviceRefreshTimer = null;
         const wants = this.connectionMode === 'companion' && this._showDeviceMarker;
-        if (!wants) return;
+        if (!wants) {
+            clearInterval(this._deviceRefreshTimer);
+            this._deviceRefreshTimer = null;
+            return;
+        }
+        if (this._deviceRefreshTimer) return;   // already polling — don't restart or double-poll
         const poll = () => {
             if (this.connectionMode === 'companion' && this._canSend()) {
                 this.sendAppStart().catch(() => {});   // its SELF_INFO reply refreshes the position
             }
         };
         poll();                                        // refresh now so toggling the marker updates immediately
-        this._deviceRefreshTimer = setInterval(poll, 10000);
+        this._deviceRefreshTimer = setInterval(poll, this._deviceRefreshMs);
+    }
+
+    // Force the poll timer to restart with the current cadence (after the user
+    // changes the refresh interval). Clears the running timer so the next
+    // _updateDeviceLocationRefresh re-arms it at the new rate, with an immediate
+    // poll for instant feedback.
+    _restartDeviceLocationRefresh() {
+        clearInterval(this._deviceRefreshTimer);
+        this._deviceRefreshTimer = null;
+        this._updateDeviceLocationRefresh();
     }
 
     // Record the connected device's own configured position and place it on the
