@@ -2118,7 +2118,7 @@ class MeshCoreApp {
             if (this.connectionMode === 'companion' && this._canSend()) {
                 this.sendAppStart().catch(() => {});   // its SELF_INFO reply refreshes the position
             }
-        }, 30000);
+        }, 10000);   // snappier refresh, closer to the official app
     }
 
     // Record the connected device's own configured position and place it on the
