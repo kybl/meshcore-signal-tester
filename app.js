@@ -1561,19 +1561,23 @@ class MeshCoreApp {
     }
 
     _extractRepeater(packet) {
-        // Trace (payloadType 9) and Path (payloadType 8) packets carry the
-        // real traversed node hashes in payload.decoded.pathHashes. For these,
-        // the header `path` field means something else entirely — for Trace it
-        // holds per-hop SNR bytes (signed byte / 4 = dB), NOT node IDs — so the
-        // header path must never be used as the repeater. Prefer pathHashes
-        // whenever the decoder provides it; an empty array means a direct hop
-        // (no repeater), so we don't fall back to the header SNR bytes.
-        const pathHashes = packet.payload?.decoded?.pathHashes;
-        if (Array.isArray(pathHashes)) {
-            return pathHashes.length > 0
-                ? (pathHashes[pathHashes.length - 1] || 'unknown')
+        // Trace packets (payloadType 9) are the one case where the header `path`
+        // field does NOT hold node IDs: it holds one per-hop SNR byte
+        // (signed / 4 = dB). The real traversed node hashes live in
+        // payload.decoded.pathHashes, so for traces that is the only correct
+        // source of the last repeater (empty = a 0-hop/direct trace).
+        if (packet.payloadType === 9) {
+            const hops = packet.payload?.decoded?.pathHashes;
+            return Array.isArray(hops) && hops.length > 0
+                ? (hops[hops.length - 1] || 'unknown')
                 : 'direct';
         }
+        // Every other type: the header path accumulates forwarder hashes as the
+        // packet floods, so its last element is the last repeater. NOTE: Path
+        // payloads (type 8) also expose payload.decoded.pathHashes, but that is
+        // the advertised/return path carried *inside* the payload — NOT the
+        // forwarders of this transmission — so it must not be used here. The
+        // header path stays valid even when the Path payload fails to decode.
         if (packet.path && packet.path.length > 0) {
             return packet.path[packet.path.length - 1] || 'unknown';
         }
