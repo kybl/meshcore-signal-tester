@@ -88,14 +88,18 @@ class MainActivity : AppCompatActivity() {
 
     // File picker for CSV export — shows "Save as" dialog via SAF
     private var pendingCsvContent: String? = null
+    private var pendingCsvName: String? = null
     private val saveCsvLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv")
     ) { uri: Uri? ->
         val content = pendingCsvContent ?: return@registerForActivityResult
+        val suggested = pendingCsvName
         pendingCsvContent = null
-        if (uri == null) return@registerForActivityResult
+        pendingCsvName = null
+        if (uri == null) return@registerForActivityResult   // user cancelled the dialog
         try {
             contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+            Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved.", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -103,8 +107,17 @@ class MainActivity : AppCompatActivity() {
 
     fun launchCsvSavePicker(filename: String, content: String) {
         pendingCsvContent = content
+        pendingCsvName = filename
         saveCsvLauncher.launch(filename)
     }
+
+    // Best-effort human-readable name for a SAF document Uri (the user may have
+    // renamed the file in the dialog), falling back to the last path segment.
+    private fun displayNameOf(uri: Uri): String? = try {
+        contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            ?: uri.lastPathSegment
+    } catch (e: Exception) { uri.lastPathSegment }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -190,7 +203,14 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
+                // Let the web app close an open overlay (help / settings) first;
+                // only leave the app when nothing was open to dismiss.
+                webView.evaluateJavascript(
+                    "(typeof window.__mcHandleBack==='function' && window.__mcHandleBack())===true"
+                ) { result ->
+                    if (result == "true") return@evaluateJavascript
+                    if (webView.canGoBack()) webView.goBack() else moveTaskToBack(true)
+                }
             }
         })
 

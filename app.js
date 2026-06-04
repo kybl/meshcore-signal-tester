@@ -991,6 +991,20 @@ class MeshCoreApp {
                 closeHelp();
             }
         });
+
+        // Android hardware Back button (called from the native host). Close the
+        // topmost open overlay instead of leaving the app; return true when we
+        // handled it so the native side knows not to background the app.
+        window.__mcHandleBack = () => {
+            if (tipEl && tipEl.style.display === 'block') { hideTip(); return true; }
+            if (helpModal && !helpModal.classList.contains('hidden')) { closeHelp(); return true; }
+            const settings = document.getElementById('mapSettingsPanel');
+            if (settings && !settings.classList.contains('hidden')) {
+                settings.classList.add('hidden');
+                return true;
+            }
+            return false;
+        };
     }
 
     // --- Bluetooth connection ---
@@ -4610,6 +4624,9 @@ class MeshCoreApp {
     updateStatus(text, className) {
         if (this.statusTextEl) this.statusTextEl.textContent = text;
         this.statusEl.className = `status ${className}`;
+        // Mirror the connection status into the native foreground-service
+        // notification so it reflects reality (including self-disconnects).
+        try { window.AndroidScreen?.setStatus?.(text); } catch (e) {}
     }
 
     // Show the name/id of the currently connected device (same label as the

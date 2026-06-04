@@ -18,6 +18,30 @@
     if (typeof window.AndroidBle === 'undefined') return;
     window.__MESHCORE_NATIVE__ = true;
 
+    // ---- external links -> system browser --------------------------------
+    // Inside the WebView a normal link navigation would unload the single-page
+    // app (tripping the "leave page?" capture guard) or silently fail for
+    // target="_blank". Intercept clicks on external links / mailto / tel and
+    // hand them to the native host, which opens the system browser/handler.
+    if (window.AndroidScreen && window.AndroidScreen.openUrl) {
+        document.addEventListener('click', function (e) {
+            var a = e.target && e.target.closest && e.target.closest('a[href]');
+            if (!a) return;
+            var href = a.getAttribute('href') || '';
+            if (!href || href.charAt(0) === '#' || /^javascript:/i.test(href)) return;
+            var external = a.target === '_blank' || /^(mailto:|tel:)/i.test(href);
+            if (!external && /^https?:\/\//i.test(href)) {
+                external = true;
+                try { if (new URL(href, location.href).host === location.host) external = false; } catch (_) {}
+            }
+            if (!external) return;
+            e.preventDefault();
+            var abs = href;
+            try { abs = new URL(href, location.href).href; } catch (_) {}
+            try { window.AndroidScreen.openUrl(abs); } catch (_) {}
+        }, true);
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     function norm(u) {
