@@ -71,6 +71,7 @@ class MeshCoreApp {
         this._deviceLocPolicy = null;      // companion adv_loc_policy: 0 none, 1 share (live GPS), 2 prefs
         this._showDeviceMarker = false;    // is the 3D-map device marker enabled
         this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request (only for 'share' + marker on)
+        this._deviceGpsWoken = false;      // did we send gps:1 to wake the companion's GPS module
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         this.hashData = new Map();
@@ -2104,8 +2105,16 @@ class MeshCoreApp {
     // Periodically re-read the device's position — but only when it can actually
     // change and the user is looking at it: a companion sharing live GPS
     // (policy 'share') with the 3D-map device marker switched on. A repeater, or
-    // a 'prefs'/'none' companion, has a static position, so we read it once. The
-    // only way to get a fresh SELF_INFO is to re-issue APP_START.
+    // a 'prefs'/'none' companion, has a static position, so we read it once.
+    //
+    // Crucially, a GPS companion (e.g. T1000-e) keeps its GPS module powered
+    // DOWN to save battery, so SELF_INFO keeps reporting the last fix — often
+    // very stale — no matter how often we re-issue APP_START. The device only
+    // refreshes its position while its GPS is awake. So we wake it with
+    // CMD_SET_CUSTOM_VAR "gps:1" (which calls start_gps() on the firmware at
+    // runtime) while the marker is shown, and release it with "gps:0" when it is
+    // hidden. This mirrors what the official app does. We toggle only on
+    // transitions so we don't re-send the command on every 10s refresh.
     _updateDeviceLocationRefresh() {
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
@@ -2113,12 +2122,34 @@ class MeshCoreApp {
         const wants = this.connectionMode === 'companion'
             && this._deviceLocPolicy === SHARE
             && this._showDeviceMarker;
+        if (wants && !this._deviceGpsWoken) {
+            this._deviceGpsWoken = true;
+            this._setDeviceGps(true);              // start_gps() on the device
+        } else if (!wants && this._deviceGpsWoken) {
+            this._deviceGpsWoken = false;
+            this._setDeviceGps(false);             // power the GPS back down
+        }
         if (!wants) return;
         this._deviceRefreshTimer = setInterval(() => {
             if (this.connectionMode === 'companion' && this._canSend()) {
                 this.sendAppStart().catch(() => {});   // its SELF_INFO reply refreshes the position
             }
         }, 10000);   // snappier refresh, closer to the official app
+    }
+
+    // Wake (on=true) or release (on=false) the connected companion's GPS module
+    // via CMD_SET_CUSTOM_VAR (0x29) with an ASCII "gps:1" / "gps:0" payload. On
+    // GPS-equipped companions the firmware routes this to start_gps()/stop_gps()
+    // at runtime, so a fresh fix starts flowing into SELF_INFO. No-op when we
+    // can't currently send. Non-GPS devices simply reply with an error, which we
+    // ignore.
+    async _setDeviceGps(on) {
+        if (this.connectionMode !== 'companion' || !this._canSend()) return;
+        const body = new TextEncoder().encode(on ? 'gps:1' : 'gps:0');
+        const frame = new Uint8Array(1 + body.length);
+        frame[0] = 0x29;          // CMD_SET_CUSTOM_VAR
+        frame.set(body, 1);
+        try { await this._sendFrame(frame); } catch (e) {}
     }
 
     // Record the connected device's own configured position and place it on the
@@ -4684,6 +4715,8 @@ class MeshCoreApp {
         this._pendingRaw = [];
         this._pendingPosFields = [];
         clearTimeout(this._posQueryTimer);
+        if (this._deviceGpsWoken) this._setDeviceGps(false);   // best-effort: power the GPS back down
+        this._deviceGpsWoken = false;
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
         this._deviceLocPolicy = null;
