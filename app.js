@@ -68,6 +68,9 @@ class MeshCoreApp {
         this._logPollTimer = null;
         this._pendingRaw = [];             // decoded RAW dumps awaiting their summary line (logging build)
         this._deviceLocation = null;       // connected device's own position { lat, lon }, or null
+        this._deviceLocPolicy = null;      // companion adv_loc_policy: 0 none, 1 share (live GPS), 2 prefs
+        this._showDeviceMarker = false;    // is the 3D-map device marker enabled
+        this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request (only for 'share' + marker on)
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         this.hashData = new Map();
@@ -789,8 +792,10 @@ class MeshCoreApp {
             Store.set('showMarker', showMarkerChk.checked);
         });
         showDeviceChk?.addEventListener('change', () => {
+            this._showDeviceMarker = showDeviceChk.checked;
             this.signalMap?.setShowDeviceMarker(showDeviceChk.checked);
             Store.set('showDevice', showDeviceChk.checked);
+            this._updateDeviceLocationRefresh();   // start/stop live-GPS polling
         });
         clusterSel?.addEventListener('change', () => {
             this.signalMap?.setClusterRadius(parseFloat(clusterSel.value));
@@ -807,6 +812,7 @@ class MeshCoreApp {
         const showMarker = Store.bool('showMarker', true);
         if (showMarkerChk) { showMarkerChk.checked = showMarker; this.signalMap?.setShowMarker(showMarker); }
         const showDevice = Store.bool('showDevice', false);
+        this._showDeviceMarker = showDevice;
         if (showDeviceChk) { showDeviceChk.checked = showDevice; this.signalMap?.setShowDeviceMarker(showDevice); }
         if (clusterSel)   clusterSel.value   = String(Store.num('clusterRadius', 0));
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
@@ -2088,7 +2094,31 @@ class MeshCoreApp {
         if (payload.length < 44) return;
         const lat = ((payload[36] | (payload[37] << 8) | (payload[38] << 16) | (payload[39] << 24)) | 0) / 1e6;
         const lon = ((payload[40] | (payload[41] << 8) | (payload[42] << 16) | (payload[43] << 24)) | 0) / 1e6;
+        // adv_loc_policy: 0 = none (not shared), 1 = share (live GPS from the
+        // device's sensor), 2 = prefs (static stored lat/lon).
+        this._deviceLocPolicy = payload.length >= 46 ? payload[45] : null;
         this._setDeviceLocation(lat, lon);
+        this._updateDeviceLocationRefresh();
+    }
+
+    // Periodically re-read the device's position — but only when it can actually
+    // change and the user is looking at it: a companion sharing live GPS
+    // (policy 'share') with the 3D-map device marker switched on. A repeater, or
+    // a 'prefs'/'none' companion, has a static position, so we read it once. The
+    // only way to get a fresh SELF_INFO is to re-issue APP_START.
+    _updateDeviceLocationRefresh() {
+        clearInterval(this._deviceRefreshTimer);
+        this._deviceRefreshTimer = null;
+        const SHARE = 1;
+        const wants = this.connectionMode === 'companion'
+            && this._deviceLocPolicy === SHARE
+            && this._showDeviceMarker;
+        if (!wants) return;
+        this._deviceRefreshTimer = setInterval(() => {
+            if (this.connectionMode === 'companion' && this._canSend()) {
+                this.sendAppStart().catch(() => {});   // its SELF_INFO reply refreshes the position
+            }
+        }, 30000);
     }
 
     // Record the connected device's own configured position and place it on the
@@ -4636,6 +4666,9 @@ class MeshCoreApp {
         this._pendingRaw = [];
         this._pendingPosFields = [];
         clearTimeout(this._posQueryTimer);
+        clearInterval(this._deviceRefreshTimer);
+        this._deviceRefreshTimer = null;
+        this._deviceLocPolicy = null;
         this._setDeviceLocation(null, null);
         document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
