@@ -70,8 +70,7 @@ class MeshCoreApp {
         this._deviceLocation = null;       // connected device's own position { lat, lon }, or null
         this._deviceLocPolicy = null;      // companion adv_loc_policy: 0 none, 1 share (live GPS), 2 prefs
         this._showDeviceMarker = false;    // is the 3D-map device marker enabled
-        this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request (only for 'share' + marker on)
-        this._deviceGpsWoken = false;      // did we send gps:1 to wake the companion's GPS module
+        this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         this.hashData = new Map();
@@ -2132,59 +2131,31 @@ class MeshCoreApp {
         this._updateDeviceLocationRefresh();
     }
 
-    // Periodically re-read the device's position — but only when it can actually
-    // change and the user is looking at it: a companion sharing live GPS
-    // (policy 'share') with the 3D-map device marker switched on. A repeater, or
-    // a 'prefs'/'none' companion, has a static position, so we read it once.
+    // Periodically re-read the device's own position while the user is watching
+    // its 3D-map marker. SELF_INFO always reports the device's LIVE sensor
+    // position (sensors.node_lat), so for a companion with onboard GPS this keeps
+    // moving even when its advert_loc_policy is 'none' — that policy only governs
+    // what goes into adverts, NOT whether GPS is running. Re-issuing APP_START
+    // pulls the fresh position; its SELF_INFO reply updates the marker.
     //
-    // Crucially, a GPS companion (e.g. T1000-e) keeps its GPS module powered
-    // DOWN to save battery, so SELF_INFO keeps reporting the last fix — often
-    // very stale — no matter how often we re-issue APP_START. The device only
-    // refreshes its position while its GPS is awake, and the saved "GPS enabled"
-    // preference is NOT necessarily re-applied at boot, so the module can sit
-    // idle even when the user has GPS set to "enabled". We re-assert it once with
-    // CMD_SET_CUSTOM_VAR "gps:1" (which calls start_gps() on the firmware at
-    // runtime), the same nudge the official app gives. We send it only on the
-    // hidden→shown transition, never on every 10s refresh.
-    //
-    // We deliberately NEVER send "gps:0": the firmware calls savePrefs() on every
-    // "gps:" command, so disabling at runtime would also overwrite the user's
-    // persisted "GPS enabled" choice (flipping their device's setting to
-    // disabled). Gating on policy 'share' already means the user opted into live
-    // GPS sharing, so re-asserting "gps:1" only matches what they configured.
+    // We deliberately do NOT gate on advert_loc_policy === 'share' anymore: that
+    // wrongly excluded GPS devices that simply don't advertise their location, so
+    // we'd read the position once at connect and never again — which is why only
+    // reconnecting refreshed it. The poll is cheap, so we run it for any
+    // connected companion with the marker shown. A device with no GPS just keeps
+    // reporting the same coordinates, which is harmless.
     _updateDeviceLocationRefresh() {
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
-        const SHARE = 1;
-        const wants = this.connectionMode === 'companion'
-            && this._deviceLocPolicy === SHARE
-            && this._showDeviceMarker;
-        if (wants && !this._deviceGpsWoken) {
-            this._deviceGpsWoken = true;
-            this._wakeDeviceGps();                 // start_gps() on the device
-        } else if (!wants) {
-            this._deviceGpsWoken = false;          // re-show will wake it again
-        }
+        const wants = this.connectionMode === 'companion' && this._showDeviceMarker;
         if (!wants) return;
-        this._deviceRefreshTimer = setInterval(() => {
+        const poll = () => {
             if (this.connectionMode === 'companion' && this._canSend()) {
                 this.sendAppStart().catch(() => {});   // its SELF_INFO reply refreshes the position
             }
-        }, 10000);   // snappier refresh, closer to the official app
-    }
-
-    // Wake the connected companion's GPS module via CMD_SET_CUSTOM_VAR (0x29)
-    // with an ASCII "gps:1" payload. On GPS-equipped companions the firmware
-    // routes this to start_gps() at runtime, so a fresh fix starts flowing into
-    // SELF_INFO. No-op when we can't currently send. Non-GPS devices simply reply
-    // with an error, which we ignore.
-    async _wakeDeviceGps() {
-        if (this.connectionMode !== 'companion' || !this._canSend()) return;
-        const body = new TextEncoder().encode('gps:1');
-        const frame = new Uint8Array(1 + body.length);
-        frame[0] = 0x29;          // CMD_SET_CUSTOM_VAR
-        frame.set(body, 1);
-        try { await this._sendFrame(frame); } catch (e) {}
+        };
+        poll();                                        // refresh now so toggling the marker updates immediately
+        this._deviceRefreshTimer = setInterval(poll, 10000);
     }
 
     // Record the connected device's own configured position and place it on the
@@ -4750,7 +4721,6 @@ class MeshCoreApp {
         this._pendingRaw = [];
         this._pendingPosFields = [];
         clearTimeout(this._posQueryTimer);
-        this._deviceGpsWoken = false;   // never send gps:0 — it would overwrite the user's saved GPS pref
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
         this._deviceLocPolicy = null;
