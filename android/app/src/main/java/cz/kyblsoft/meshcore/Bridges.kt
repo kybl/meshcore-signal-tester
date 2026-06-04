@@ -100,6 +100,37 @@ class SerialBridge(private val activity: MainActivity) {
 }
 
 /**
+ * JavaScript interface exposed as `window.AndroidWifi`. Opens a raw TCP socket
+ * to a MeshCore WiFi companion (same binary frame protocol as USB serial).
+ * Methods run on a WebView binder thread, so they dispatch onto the activity /
+ * TcpManager and return promptly.
+ */
+class WifiBridge(private val activity: MainActivity) {
+
+    @JavascriptInterface
+    fun open(reqId: String, host: String, port: Int) {
+        activity.checkBatteryOptimization()
+        activity.main.post {
+            // TCP needs no Bluetooth permission; location is still requested (as
+            // for USB) so the GPS map works and the foreground service can start.
+            activity.ensureConnectPermissions(includeBluetooth = false) {
+                activity.wifi.open(reqId, host, port)
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun write(reqId: String, base64: String) {
+        activity.wifi.write(reqId, base64)
+    }
+
+    @JavascriptInterface
+    fun close() {
+        activity.wifi.close()
+    }
+}
+
+/**
  * JavaScript interface exposed as `window.AndroidGeo`.
  */
 class GeoBridge(private val activity: MainActivity) {

@@ -13,7 +13,7 @@
         else if(_s==="large")document.documentElement.classList.add("ui-large");
         else if(_s==="larger")document.documentElement.classList.add("ui-larger");
     }catch(e){}</script>
-    <script src="native-bridge.js?v=5"></script>
+    <script src="native-bridge.js?v=6"></script>
     <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js?v=1" } }
     </script>
@@ -28,6 +28,7 @@
                 <span id="statusText" class="status-text">Disconnected</span>
                 <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
                 <button id="connectUsbBtn" class="btn-primary">Connect USB</button>
+                <button id="connectWifiBtn" class="btn-primary">Connect WiFi</button>
                 <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <button id="disconnectBtn" class="btn-pause btn-disconnect">Disconnect</button>
                 <span id="connectedDeviceName" class="connected-device-name"></span>
@@ -398,6 +399,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=215"></script>
+    <script type="module" src="app.js?v=216"></script>
 </body>
 </html>

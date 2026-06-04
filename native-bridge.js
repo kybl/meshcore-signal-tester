@@ -417,6 +417,92 @@
         }
     }
 
+    // ---- WiFi (TCP) companion transport ---------------------------------
+    // The MeshCore WiFi companion firmware exposes the SAME length-prefixed
+    // binary frame protocol as USB serial (0x3c/0x3e + 16-bit LE length), just
+    // over a raw TCP socket. Browsers can't open raw TCP, so the native host
+    // does; here we wrap that socket in a Web-Serial-like port object so app.js
+    // reuses its serial connect/read/write/frame code unchanged.
+
+    if (typeof window.AndroidWifi !== 'undefined') {
+        var _wifiPort = null;
+
+        window.__mcMakeWifiPort = function (host, tcpPort) {
+            var readQueue = [], readWaiters = [], closed = false, opened = false;
+            var listeners = {};
+
+            function deliverData(bytes) {
+                if (readWaiters.length) readWaiters.shift()({ value: bytes, done: false });
+                else readQueue.push(bytes);
+            }
+            function deliverDone() {
+                closed = true;
+                while (readWaiters.length) readWaiters.shift()({ value: undefined, done: true });
+            }
+
+            var reader = {
+                read: function () {
+                    if (readQueue.length) return Promise.resolve({ value: readQueue.shift(), done: false });
+                    if (closed) return Promise.resolve({ value: undefined, done: true });
+                    return new Promise(function (resolve) { readWaiters.push(resolve); });
+                },
+                cancel: function () { deliverDone(); return Promise.resolve(); },
+                releaseLock: function () { deliverDone(); }
+            };
+            var writer = {
+                write: function (data) {
+                    return call(function (id) {
+                        window.AndroidWifi.write(id, bytesToB64(toBytes(data)));
+                    });
+                },
+                releaseLock: function () {},
+                close: function () { return Promise.resolve(); }
+            };
+            var port = {
+                getInfo: function () { return { wifi: true, host: host, port: tcpPort }; },
+                get readable() { return { getReader: function () { return reader; } }; },
+                get writable() { return { getWriter: function () { return writer; } }; },
+                open: function () {
+                    if (opened) return Promise.resolve();
+                    closed = false; readQueue.length = 0; readWaiters.length = 0;
+                    return call(function (id) {
+                        window.AndroidWifi.open(id, host, tcpPort);
+                    }).then(function () { opened = true; });
+                },
+                close: function () {
+                    deliverDone();
+                    try { window.AndroidWifi.close(); } catch (e) {}
+                    return Promise.resolve();
+                },
+                addEventListener: function (type, cb) {
+                    (listeners[type] = listeners[type] || []).push(cb);
+                },
+                removeEventListener: function (type, cb) {
+                    var a = listeners[type] || [], i = a.indexOf(cb);
+                    if (i >= 0) a.splice(i, 1);
+                },
+                _dispatch: function (type, ev) {
+                    (listeners[type] || []).slice().forEach(function (cb) {
+                        try { cb.call(port, ev); } catch (e) { console.error(e); }
+                    });
+                },
+                _onData: deliverData,
+                _onClosed: deliverDone
+            };
+            _wifiPort = port;
+            return port;
+        };
+
+        window.__mcWifiData = function (b64) {
+            if (_wifiPort) _wifiPort._onData(b64ToBytes(b64));
+        };
+        window.__mcWifiClosed = function () {
+            if (!_wifiPort) return;
+            _wifiPort._onClosed();
+            _wifiPort._dispatch('disconnect', { target: _wifiPort });
+        };
+    }
+
     // ---- navigator.geolocation polyfill ---------------------------------
 
     if (typeof window.AndroidGeo !== 'undefined') {

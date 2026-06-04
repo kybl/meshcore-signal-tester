@@ -41,6 +41,8 @@ class MainActivity : AppCompatActivity() {
         private set
     lateinit var serial: SerialManager
         private set
+    lateinit var wifi: TcpManager
+        private set
     lateinit var location: LocationHelper
         private set
 
@@ -129,6 +131,7 @@ class MainActivity : AppCompatActivity() {
         jsApi = JsApi(webView)
         ble = BleManager(applicationContext, jsApi)
         serial = SerialManager(applicationContext, jsApi)
+        wifi = TcpManager(jsApi)
         location = LocationHelper(applicationContext, jsApi)
 
         with(webView.settings) {
@@ -141,6 +144,7 @@ class MainActivity : AppCompatActivity() {
 
         webView.addJavascriptInterface(BleBridge(this), "AndroidBle")
         webView.addJavascriptInterface(SerialBridge(this), "AndroidSerial")
+        webView.addJavascriptInterface(WifiBridge(this), "AndroidWifi")
         webView.addJavascriptInterface(GeoBridge(this), "AndroidGeo")
         webView.addJavascriptInterface(FilesBridge(this), "AndroidFiles")
         webView.addJavascriptInterface(ScreenBridge(this), "AndroidScreen")
@@ -184,6 +188,30 @@ class MainActivity : AppCompatActivity() {
                 callback: GeolocationPermissions.Callback
             ) {
                 callback.invoke(origin, true, false)
+            }
+
+            // window.prompt() (used for the WiFi IP:port input) needs an explicit
+            // handler in a WebView, otherwise it silently returns null on many
+            // devices. Show a simple input dialog.
+            override fun onJsPrompt(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                defaultValue: String?,
+                result: android.webkit.JsPromptResult
+            ): Boolean {
+                val input = android.widget.EditText(this@MainActivity).apply {
+                    setText(defaultValue ?: "")
+                    setSingleLine(true)
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setView(input)
+                    .setPositiveButton("OK") { _, _ -> result.confirm(input.text.toString()) }
+                    .setNegativeButton("Cancel") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }
+                    .show()
+                return true
             }
 
             override fun onShowFileChooser(

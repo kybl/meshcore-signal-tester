@@ -48,6 +48,7 @@ class MeshCoreApp {
         // Transport abstraction: 'ble' (Nordic UART, one frame per notification)
         // or 'serial' (Web Serial, length-prefixed frames). null = disconnected.
         this.transportKind = null;
+        this._serialBtnKind = 'serial';    // which connect button acts as Cancel/Disconnect: 'serial' (USB) or 'wifi'
         this.serialPort = null;
         this.serialReader = null;
         this._serialReadBuffer = new Uint8Array(0);
@@ -251,6 +252,11 @@ class MeshCoreApp {
         // available, the click handler explains that — the control never
         // silently disappears (matching how the Bluetooth button behaves).
         if (this.connectUsbBtn) this.connectUsbBtn.onclick = () => this.connectUsb();
+
+        this.connectWifiBtn = document.getElementById('connectWifiBtn');
+        // Shown everywhere, but WiFi (raw TCP) only works in the native Android
+        // host; in a plain browser the handler explains why and what to use.
+        if (this.connectWifiBtn) this.connectWifiBtn.onclick = () => this.connectWifi();
 
         // Dedicated Disconnect control — only visible (via CSS) while connected.
         document.getElementById('disconnectBtn')?.addEventListener('click', () => this.disconnect());
@@ -1138,7 +1144,7 @@ class MeshCoreApp {
         this._setConnectIdle();
     }
 
-    // Idle state: both buttons offer to start a connection.
+    // Idle state: every transport button offers to start a connection.
     _setConnectIdle() {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
@@ -1150,19 +1156,25 @@ class MeshCoreApp {
             this.connectUsbBtn.onclick = () => this.connectUsb();
             this.connectUsbBtn.classList.remove('hidden');
         }
+        if (this.connectWifiBtn) {
+            this.connectWifiBtn.textContent = 'Connect WiFi';
+            this.connectWifiBtn.disabled = false;
+            this.connectWifiBtn.onclick = () => this.connectWifi();
+            this.connectWifiBtn.classList.remove('hidden');
+        }
     }
 
-    // Make one transport's button the active Cancel/Disconnect control and
-    // disable the other so a second connection can't be started. Neither button
-    // is ever hidden — that's less confusing than a control that comes and goes.
+    // Make one transport's button the active Cancel/Disconnect control and hide
+    // the others so a second connection can't be started during one attempt.
     _setActiveTransportBtn(kind, label, onClick) {
-        const active = kind === 'serial' ? this.connectUsbBtn : this.connectBtn;
-        const other  = kind === 'serial' ? this.connectBtn : this.connectUsbBtn;
-        // Only the active transport's button stays — relabelled to Cancel /
-        // Disconnect. The other one is hidden so a stale "Connect …" control
-        // doesn't linger beside it during a connection attempt.
+        const btns = { ble: this.connectBtn, serial: this.connectUsbBtn, wifi: this.connectWifiBtn };
+        const active = btns[kind];
         if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; active.classList.remove('hidden'); }
-        if (other)  { other.disabled = true; other.classList.add('hidden'); }
+        for (const k of Object.keys(btns)) {
+            if (k === kind) continue;
+            const b = btns[k];
+            if (b) { b.disabled = true; b.classList.add('hidden'); }
+        }
     }
 
     async connectToDevice(device) {
@@ -1285,8 +1297,49 @@ class MeshCoreApp {
         }
     }
 
+    async connectWifi() {
+        // Raw TCP can't be opened from a browser; only the native Android host
+        // can. Off-app, explain why and where it works (the user asked for the
+        // button to be visible everywhere).
+        if (!window.__MESHCORE_NATIVE__ || typeof window.__mcMakeWifiPort !== 'function') {
+            alert('WiFi connection isn’t available in the browser.\n\n'
+                + 'MeshCore’s WiFi companion firmware speaks raw TCP, and browsers can’t open raw TCP '
+                + 'sockets — so connecting over WiFi only works in the Android app, which opens the socket '
+                + 'natively.\n\n'
+                + 'Here in the browser, use Bluetooth or USB instead.\n\n'
+                + 'Note: repeaters have no WiFi (and no Bluetooth) — they connect over USB only.');
+            return;
+        }
+        const last = Store.get('wifiAddr', '192.168.1.50:5000');
+        const input = window.prompt('Connect to a MeshCore WiFi companion.\nEnter its address as IP:port', last);
+        if (!input) return;
+        const m = input.trim().match(/^([0-9a-zA-Z.\-]+):(\d{1,5})$/);
+        if (!m) { alert('Please enter the address as IP:port — for example 192.168.1.50:5000'); return; }
+        const host = m[1], tcpPort = parseInt(m[2], 10);
+        Store.set('wifiAddr', `${host}:${tcpPort}`);
+        try {
+            this.connectBtn.disabled = true;
+            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
+            if (this.connectWifiBtn) this.connectWifiBtn.disabled = true;
+            this.updateStatus('Connecting…', 'connecting');
+            const port = window.__mcMakeWifiPort(host, tcpPort);
+            await this.connectToSerialPort(port);
+        } catch (error) {
+            alert('WiFi connection failed: ' + (error.message || error));
+            if (this.serialPort || this.device) this.onDisconnected();
+            else this._resetConnectBtn();
+        }
+    }
+
     async connectToSerialPort(port) {
-        this._setActiveTransportBtn('serial', 'Cancel', () => this.disconnect());
+        // A WiFi/TCP companion is a serial-like port (same frame protocol) but
+        // surfaced through the native host; track which so the right button acts
+        // as Cancel/Disconnect and so we can tailor messaging.
+        let isWifi = false;
+        try { isWifi = !!port.getInfo?.().wifi; } catch (e) {}
+        this._serialBtnKind = isWifi ? 'wifi' : 'serial';
+
+        this._setActiveTransportBtn(this._serialBtnKind, 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting…', 'connecting');
 
         await port.open({ baudRate: 115200 });
@@ -1331,6 +1384,20 @@ class MeshCoreApp {
         if (this.serialPort !== port) return;   // disconnected mid-detection
         if (this._sawCompanionFrame) { await this._finishCompanionConnect(port); return; }
 
+        // WiFi only ever reaches a companion (repeaters have no WiFi), and the
+        // text CLI probe below is meaningless over TCP — so stop here with a
+        // WiFi-specific message rather than falling through to the repeater path.
+        if (isWifi) {
+            this.updateStatus('No MeshCore companion found', 'disconnected');
+            alert('No MeshCore companion answered at that WiFi address.\n\n'
+                + 'Check that:\n'
+                + '• the IP and port are correct,\n'
+                + '• the device runs the WiFi companion firmware,\n'
+                + '• your phone is on the same WiFi network.');
+            this.onDisconnected();
+            return;
+        }
+
         // Phase 2 — repeater probe over the text CLI.
         this.connectionMode = 'repeater';   // route the read loop to the text parser
         this._serialReadBuffer = new Uint8Array(0);
@@ -1364,7 +1431,7 @@ class MeshCoreApp {
         await this.sendGetContacts();
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
-        this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
+        this._setActiveTransportBtn(this._serialBtnKind || 'serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
         // A fully-established connection: from here a drop we didn't initiate is
@@ -1403,7 +1470,7 @@ class MeshCoreApp {
 
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (repeater)', 'connected');
-        this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());
+        this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());   // repeaters are USB-only
         this._updateSoundHighlight();
         this._collecting = true;
         // A fully-established connection: from here a drop we didn't initiate is
@@ -2008,6 +2075,10 @@ class MeshCoreApp {
     saveSerialPort(port) {
         let info = {};
         try { info = port.getInfo?.() || {}; } catch (e) {}
+        // WiFi/TCP companion: just a display name. Not persisted to the saved
+        // list — reconnecting needs the IP re-entered, and saved entries assume
+        // USB/BLE identity.
+        if (info.wifi) return `WiFi ${info.host}:${info.port}`;
         const vid = info.usbVendorId;
         const pid = info.usbProductId;
         const hex4 = n => (n == null ? '????' : n.toString(16).padStart(4, '0').toUpperCase());
