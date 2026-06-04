@@ -68,6 +68,12 @@ export class Signal3DMap {
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
         this.nameForCol = opts.nameForCol || null;
+        // True while the app is actively capturing packets (connected, not
+        // paused). When live we keep the user's own position inside the tiled
+        // area so fast movement without incoming packets doesn't drive off the
+        // map. When just viewing an imported dataset this is false, so a far-away
+        // current position never drags the tiles away from the data.
+        this.isLiveCapture = opts.isLiveCapture || (() => false);
 
         this._rxPoints       = [];     // { lat, lon, rssi, snr, col, time }
         this._pins     = [];   // { lat, lon, name, color }
@@ -963,7 +969,13 @@ export class Signal3DMap {
         const locs = this._rxPoints
             .filter(p => (!cutoff || p.time >= cutoff) && (!this._filterFn || this._filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
-        if (this._userLoc && this._showMarker) locs.push({ lat: this._userLoc.lat, lon: this._userLoc.lon });
+        // Include the user's own position in the tile bbox when the marker is
+        // shown OR we're live-capturing — the latter keeps tiles under the user
+        // even if they've hidden their marker and are moving with no packets
+        // arriving. (When viewing a static import this is false, so a position
+        // somewhere else doesn't pull the map off the data.)
+        if (this._userLoc && (this._showMarker || this.isLiveCapture()))
+            locs.push({ lat: this._userLoc.lat, lon: this._userLoc.lon });
         if (!locs.length) return null;
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
         for (const l of locs) {
