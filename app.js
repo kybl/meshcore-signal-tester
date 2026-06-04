@@ -1805,8 +1805,12 @@ class MeshCoreApp {
         for (const key of this.repeaterColumns) {
             for (const seg of key.split('/')) {
                 if (seg === 'direct' || seg === 'unknown') continue;
-                if (seg && pk.startsWith(seg) && seg.length > bestLen) {
-                    bestKey = key; bestLen = seg.length;
+                // Column keys are stored upper-case, contact pub keys lower-case,
+                // so compare case-insensitively. Return the ORIGINAL key so it
+                // still matches the rx data / _selectedCol exactly.
+                const s = seg.toLowerCase();
+                if (s && pk.startsWith(s) && s.length > bestLen) {
+                    bestKey = key; bestLen = s.length;
                 }
             }
         }
