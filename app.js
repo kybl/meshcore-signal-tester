@@ -1790,6 +1790,29 @@ class MeshCoreApp {
         return this._contactsByPrefix(hexPrefix)[0] ?? null;
     }
 
+    // Map a contact's full public key back to the live repeater column it
+    // belongs to. Columns are keyed by a short hash *prefix* of the repeater id
+    // (often just 2 hex chars, sometimes promoted longer, or an "a/b" collision
+    // key) — NOT by a fixed 6-char pubkey slice. A pinned map marker must resolve
+    // its real column this way; keying it off slice(0,6) instead selects a
+    // phantom column that matches no data, so the dots, table and chart all come
+    // up empty (looking as if everything were filtered out). Picks the longest
+    // (most specific) matching prefix. Null when no current column matches.
+    _colForPubKey(pubKeyHex) {
+        if (!pubKeyHex) return null;
+        const pk = pubKeyHex.toLowerCase();
+        let bestKey = null, bestLen = -1;
+        for (const key of this.repeaterColumns) {
+            for (const seg of key.split('/')) {
+                if (seg === 'direct' || seg === 'unknown') continue;
+                if (seg && pk.startsWith(seg) && seg.length > bestLen) {
+                    bestKey = key; bestLen = seg.length;
+                }
+            }
+        }
+        return bestKey;
+    }
+
     _contactNameForCol(col) {
         const matches = this._contactsByPrefix(col);
         if (!matches.length) return null;
@@ -1846,7 +1869,10 @@ class MeshCoreApp {
             if (seen.has(pubKeyFullHex)) continue;
             const contact = this._contacts.get(pubKeyFullHex);
             if (!contact?.name || (contact.lat === 0 && contact.lon === 0)) continue;
-            const col = pubKeyFullHex.slice(0, 6);
+            // Resolve the live data column so clicking the marker selects the
+            // same key the dots/table/chart use; fall back to a 6-char prefix
+            // only when the repeater isn't currently in the data.
+            const col = this._colForPubKey(pubKeyFullHex) ?? pubKeyFullHex.slice(0, 6);
             if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
             seen.add(pubKeyFullHex);
             markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name,
@@ -1861,7 +1887,7 @@ class MeshCoreApp {
         if (!col) return false;
         if (col === this._selectedCol && this._contactsForMapButtons(col).length) return true;
         for (const pubKeyFullHex of this._mapPins) {
-            if (pubKeyFullHex.slice(0, 6) === col) return true;
+            if (this._colForPubKey(pubKeyFullHex) === col) return true;
         }
         return false;
     }
