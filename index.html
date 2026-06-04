@@ -197,6 +197,7 @@
                                     <label class="map-setting-toggle"><input type="checkbox" id="perspSizeChk" checked> Perspective dot size</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showLinesChk" checked> Guide lines</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showMarkerChk" checked> My location</label>
+                                    <label class="map-setting-toggle"><input type="checkbox" id="showDeviceChk"> Device location</label>
                                     <label class="map-setting-toggle">Cluster radius
                                         <select id="clusterRadiusSelect" class="ttl-header-select">
                                             <option value="0" selected>Off</option>
@@ -371,6 +372,7 @@
                 <li><b>Text size</b> — scales the whole interface (Small → Larger) for readability on small or high-DPI screens; remembered across sessions.</li>
                 <li><b>2D graphs dot size</b> — scales the points drawn on the SNR and RSSI charts.</li>
                 <li><b>3D map dot size</b> — set separately in the 3D map's ⚙ menu, alongside the map source, guide lines, and location marker.</li>
+                <li><b>Device location</b> — the 3D map's ⚙ menu can show the connected device's own position (a blue antenna marker), when the companion or repeater reports one. Off by default. A companion shows its configured advert position; a repeater shows its <code>get lat</code>/<code>get lon</code> setting. Nothing appears if the device has no position set.</li>
             </ul>
 
             <div class="help-section-title">Android app</div>
@@ -396,6 +398,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=206"></script>
+    <script type="module" src="app.js?v=207"></script>
 </body>
 </html>

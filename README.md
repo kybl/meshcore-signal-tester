@@ -28,6 +28,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 - **Light / dark theme** — toggle in the header; preference is persisted in localStorage
 - **Text size** — UI scale selector (Small → Larger) for small or high-DPI screens; persisted in localStorage
 - **Adjustable dot size** — independent controls for the 2D chart dots (header slider) and the 3D map dots (⚙ menu)
+- **Device location on the 3D map** — optionally shows the connected device's own position as a blue antenna marker (3D map ⚙ menu, off by default). A companion reports its configured advertised position via the `SELF_INFO` reply; a repeater reports it via `get lat` / `get lon` over the CLI. Hidden when the device has no position set
 
 ## Screenshots
 

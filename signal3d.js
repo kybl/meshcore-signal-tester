@@ -93,6 +93,9 @@ export class Signal3DMap {
         this._sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
         this._showLines   = opts.showLines !== false;
         this._showMarker  = opts.showMarker !== false;
+        this._showDevice  = !!opts.showDevice;   // connected-device marker, default off
+        this._deviceLoc   = null;                // { lat, lon } of the device, or null
+        this._deviceMarker = null;
         this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
         this._perspSize   = opts.initialPerspSize !== false; // default on
@@ -825,6 +828,26 @@ export class Signal3DMap {
         this._scheduleMapUpdate();
     }
 
+    setShowDeviceMarker(v) {
+        this._showDevice = !!v;
+        if (this._deviceMarker) this._deviceMarker.visible = this._showDevice && !!this._deviceLoc;
+        this._scheduleMapUpdate();
+    }
+
+    // The connected device's own (configured/advertised) position. Pass null —
+    // or 0,0 — to clear it (no position / unsupported).
+    setDeviceLocation(lat, lon) {
+        if (lat == null || lon == null || (lat === 0 && lon === 0)) {
+            this._deviceLoc = null;
+            if (this._deviceMarker) this._deviceMarker.visible = false;
+            this._scheduleMapUpdate();
+            return;
+        }
+        this._deviceLoc = { lat, lon };
+        this._updateDeviceMarker();
+        this._scheduleMapUpdate();
+    }
+
     setClusterRadius(r) {
         if (r === this._clusterRadius) return;
         this._clusterRadius = r;
@@ -1012,6 +1035,7 @@ export class Signal3DMap {
         const key = `${sourceId}/${zoom}/${x0}/${y0}/${x1}/${y1}`;
         if (key === this._lastMapKey) {
             this._updateUserMarker();  // tiles unchanged — just move the user pin
+            this._updateDeviceMarker();
             return;
         }
 
@@ -1043,6 +1067,7 @@ export class Signal3DMap {
             this._rebuildDots();
             this._rebuildPins();   // reposition markers against the new tile scale
             this._updateUserMarker();
+            this._updateDeviceMarker();
             this._fitCameraOnce();         // no-op after the first tile load
 
             // Restore the camera to the same geographic look-at point and eye position.
@@ -1571,6 +1596,7 @@ export class Signal3DMap {
         };
         // Cone local height = 2.8; target 40 CSS pixels tall on screen
         if (this._userMarker) scaleFor(this._userMarker, 2.8);
+        if (this._deviceMarker) scaleFor(this._deviceMarker, 3.1);
         for (const g of this._pinGroups) {
             scaleFor(g, 4.0);
         }
@@ -1600,6 +1626,42 @@ export class Signal3DMap {
             this.scene.add(this._userMarker);
         }
         this._userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
+    }
+
+    // The connected device's own position — drawn as a blue antenna (mast +
+    // ball), deliberately distinct from the red "my location" cone and from the
+    // repeater pins, so it reads as "this is the radio/repeater I'm talking to".
+    _updateDeviceMarker() {
+        if (!this._deviceLoc || !this._tileBounds) return;
+        const pos = this._latLonToWorld(this._deviceLoc.lat, this._deviceLoc.lon);
+        if (!pos) return;
+        if (!this._deviceMarker) {
+            const COL = 0x2299ff;
+            const group = new THREE.Group();
+            const mast = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.18, 0.18, 2.4, 10),
+                new THREE.MeshBasicMaterial({ color: COL })
+            );
+            mast.position.y = 1.2;
+            group.add(mast);
+            const ball = new THREE.Mesh(
+                new THREE.SphereGeometry(0.5, 16, 12),
+                new THREE.MeshBasicMaterial({ color: COL })
+            );
+            ball.position.y = 2.6;
+            group.add(ball);
+            const base = new THREE.Mesh(
+                new THREE.CircleGeometry(1.44, 24),
+                new THREE.MeshBasicMaterial({ color: COL, transparent: true, opacity: 0.35 })
+            );
+            base.rotation.x = -Math.PI / 2;
+            base.position.y = 0.05;
+            group.add(base);
+            this._deviceMarker = group;
+            this.scene.add(this._deviceMarker);
+        }
+        this._deviceMarker.visible = this._showDevice;
+        this._deviceMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
     }
 
 }

@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=99';
+import { Signal3DMap } from './signal3d.js?v=100';
 
 // Per-repeater colour: hue, saturation AND lightness are all derived from the id
 // hash, so different repeaters differ in all three — within bounds that keep the
@@ -67,6 +67,9 @@ class MeshCoreApp {
         this._neighborPollTimer = null;
         this._logPollTimer = null;
         this._pendingRaw = [];             // decoded RAW dumps awaiting their summary line (logging build)
+        this._deviceLocation = null;       // connected device's own position { lat, lon }, or null
+        this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
+        this._posQueryTimer = null;
         this.hashData = new Map();
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
@@ -708,6 +711,7 @@ class MeshCoreApp {
                 initialSphereSize: this._sphereSize,
                 initialClusterRadius: Store.num('clusterRadius', 0),
                 initialPerspSize: Store.bool('perspSize', true),
+                showDevice:    Store.bool('showDevice', false),
                 onSelect:      col => {
                     this._selectRepeater(col);
                 },
@@ -773,6 +777,7 @@ class MeshCoreApp {
 
         const showLinesChk      = document.getElementById('showLinesChk');
         const showMarkerChk     = document.getElementById('showMarkerChk');
+        const showDeviceChk     = document.getElementById('showDeviceChk');
         const clusterSel        = document.getElementById('clusterRadiusSelect');
         const perspSizeChk      = document.getElementById('perspSizeChk');
         showLinesChk?.addEventListener('change', () => {
@@ -782,6 +787,10 @@ class MeshCoreApp {
         showMarkerChk?.addEventListener('change', () => {
             this.signalMap?.setShowMarker(showMarkerChk.checked);
             Store.set('showMarker', showMarkerChk.checked);
+        });
+        showDeviceChk?.addEventListener('change', () => {
+            this.signalMap?.setShowDeviceMarker(showDeviceChk.checked);
+            Store.set('showDevice', showDeviceChk.checked);
         });
         clusterSel?.addEventListener('change', () => {
             this.signalMap?.setClusterRadius(parseFloat(clusterSel.value));
@@ -797,6 +806,8 @@ class MeshCoreApp {
         if (showLinesChk)  { showLinesChk.checked  = showLines;  this.signalMap?.setShowLines(showLines); }
         const showMarker = Store.bool('showMarker', true);
         if (showMarkerChk) { showMarkerChk.checked = showMarker; this.signalMap?.setShowMarker(showMarker); }
+        const showDevice = Store.bool('showDevice', false);
+        if (showDeviceChk) { showDeviceChk.checked = showDevice; this.signalMap?.setShowDeviceMarker(showDevice); }
         if (clusterSel)   clusterSel.value   = String(Store.num('clusterRadius', 0));
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
 
@@ -889,7 +900,7 @@ class MeshCoreApp {
             'msg-type':
                 'Type abbreviations — AD: Advert · GT: GroupText · TR: Traceroute · RS: Response · RQ: Request · PN: Ping · TX: TextMessage · PT: Path · CT: Control · PV: Private · RD: Repeater DSC (discover response, includes uplink SNR). Full type is shown in the expanded row.',
             'signal3d':
-                'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. When the repeater\'s own position is known, the info panel offers an eye button (turn the camera toward it) and a pushpin (keep it on the map — tilted = shown only temporarily, upright = kept permanently). "Center on me" is a toggle — it recentres on your location and then follows you as you move (the camera tracks your GPS); press it again, or pan/rotate the map yourself, to stop following. "Show all repeaters" adds every known position. Use ⚙ (top right) to change map source, dot size, guide lines, and the location marker. Navigation: drag to pan · scroll/pinch to zoom · two-finger twist (or right-drag) to tilt/rotate.',
+                'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. When the repeater\'s own position is known, the info panel offers an eye button (turn the camera toward it) and a pushpin (keep it on the map — tilted = shown only temporarily, upright = kept permanently). "Center on me" is a toggle — it recentres on your location and then follows you as you move (the camera tracks your GPS); press it again, or pan/rotate the map yourself, to stop following. "Show all repeaters" adds every known position. Use ⚙ (top right) to change map source, dot size, guide lines, your own location marker, and the connected device\'s own location (a blue antenna marker, shown when the radio or repeater reports a position). Navigation: drag to pan · scroll/pinch to zoom · two-finger twist (or right-drag) to tilt/rotate.',
             'discover':
                 'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
         };
@@ -1365,6 +1376,9 @@ class MeshCoreApp {
         this._neighborSeen = new Map();
         this._pendingRaw = [];
         this._startRepeaterPolling();
+        // Read the repeater's own configured position once, a moment after the
+        // connect-time command burst settles (the CLI serialises writes loosely).
+        setTimeout(() => { if (this.connectionMode === 'repeater') this._queryRepeaterLocation(); }, 600);
 
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (repeater)', 'connected');
@@ -1481,6 +1495,24 @@ class MeshCoreApp {
         // End of a 'log' dump → erase the file so the next dump is only-new.
         if (body === 'EOF') { this._serialWriteText('log erase\r\n').catch(() => {}); return; }
 
+        // Reply to our get lat / get lon location probe. The firmware answers
+        // each with a bare "> <decimal>" carrying no field name, so we map the
+        // replies to fields in the order we asked (lat first, then lon).
+        if (this._pendingPosFields && this._pendingPosFields.length) {
+            const pm = body.match(/^>\s*(-?\d+(?:\.\d+)?)$/);
+            if (pm) {
+                this._sawRepeaterReply = true;
+                const field = this._pendingPosFields.shift();
+                const val = parseFloat(pm[1]);
+                if (field === 'lat') this._repeaterLat = val; else this._repeaterLon = val;
+                if (!this._pendingPosFields.length) {
+                    clearTimeout(this._posQueryTimer);
+                    this._setDeviceLocation(this._repeaterLat, this._repeaterLon);
+                }
+                return;
+            }
+        }
+
         // Neighbours-table row: "<8 hex>:<secs_ago>:<snr*4>".
         const nb = body.match(/^([0-9A-Fa-f]{8}):(\d+):(-?\d+)$/);
         if (nb) { this._sawRepeaterReply = true; this._handleNeighborLine(nb[1], parseInt(nb[2], 10), parseInt(nb[3], 10)); return; }
@@ -1594,6 +1626,24 @@ class MeshCoreApp {
 
     _showRepeaterNotice() {
         document.getElementById('repeaterNotice')?.classList.remove('hidden');
+    }
+
+    // Read the repeater's own configured position once over the CLI. There's no
+    // single command for both, and the replies are unlabelled ("> <decimal>"),
+    // so we ask lat then lon and pair the answers by order (see the parser in
+    // _handleRepeaterLine). A repeater with no position set answers "> 0.0",
+    // which _setDeviceLocation treats as unset. Firmware that doesn't know the
+    // commands answers non-numerically, so the pending fields simply time out.
+    async _queryRepeaterLocation() {
+        this._repeaterLat = null;
+        this._repeaterLon = null;
+        this._pendingPosFields = ['lat', 'lon'];
+        // Await between writes — the serial writer is single-locked, so firing
+        // both at once would make the second getWriter() throw.
+        await this._serialWriteText('get lat\r\n').catch(() => {});
+        await this._serialWriteText('get lon\r\n').catch(() => {});
+        clearTimeout(this._posQueryTimer);
+        this._posQueryTimer = setTimeout(() => { this._pendingPosFields = []; }, 5000);
     }
 
     // Repeater data is pulled, not pushed. Both the neighbours table and the
@@ -1968,6 +2018,10 @@ class MeshCoreApp {
             return;
         }
 
+        // PACKET_SELF_INFO (0x05): the device's own info, returned in reply to
+        // APP_START. We only want the configured advertised position from it.
+        if (pushCode === 0x05) { this._handleSelfInfo(payload); return; }
+
         // Contact list responses (from CMD_GET_CONTACTS = 0x04)
         if (pushCode === 0x02) {
             this._contactsReceiving = true;
@@ -2025,6 +2079,25 @@ class MeshCoreApp {
             const packet = MeshCoreDecoder.decode(rawHex);
             if (packet.isValid) this._processPacket(packet, rawHex, snr, rssi);
         } catch (e) { console.error('Decode error:', e); }
+    }
+
+    // PACKET_SELF_INFO (0x05) layout: [0]=code, [1]=adv_type, [2-3]=tx powers,
+    // [4-35]=pub_key, [36-39]=adv_lat, [40-43]=adv_lon (int32 LE / 1e6),
+    // [45]=adv_loc_policy. We read only the device's own advertised position.
+    _handleSelfInfo(payload) {
+        if (payload.length < 44) return;
+        const lat = ((payload[36] | (payload[37] << 8) | (payload[38] << 16) | (payload[39] << 24)) | 0) / 1e6;
+        const lon = ((payload[40] | (payload[41] << 8) | (payload[42] << 16) | (payload[43] << 24)) | 0) / 1e6;
+        this._setDeviceLocation(lat, lon);
+    }
+
+    // Record the connected device's own configured position and place it on the
+    // 3D map. lat/lon of 0,0 (or null) means unset / unsupported → clear it. The
+    // zero-zero convention matches how contacts and adverts mark "no position".
+    _setDeviceLocation(lat, lon) {
+        const has = lat != null && lon != null && !(lat === 0 && lon === 0);
+        this._deviceLocation = has ? { lat, lon } : null;
+        this.signalMap?.setDeviceLocation(has ? lat : null, has ? lon : null);
     }
 
     _handleAdvertPush(_payload) {
@@ -4561,6 +4634,9 @@ class MeshCoreApp {
         this._repeaterStockNoticed = false;
         this._neighborSeen = new Map();
         this._pendingRaw = [];
+        this._pendingPosFields = [];
+        clearTimeout(this._posQueryTimer);
+        this._setDeviceLocation(null, null);
         document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
