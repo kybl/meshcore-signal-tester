@@ -619,6 +619,7 @@ class MeshCoreApp {
         });
 
         this._initHelpSystem();
+        this._initWifiModal();
         this._initSignalMap();
         this._initDebug();
     }
@@ -1002,6 +1003,8 @@ class MeshCoreApp {
         // topmost open overlay instead of leaving the app; return true when we
         // handled it so the native side knows not to background the app.
         window.__mcHandleBack = () => {
+            const wifiModal = document.getElementById('wifiModal');
+            if (wifiModal && !wifiModal.classList.contains('hidden')) { wifiModal.classList.add('hidden'); return true; }
             if (tipEl && tipEl.style.display === 'block') { hideTip(); return true; }
             if (helpModal && !helpModal.classList.contains('hidden')) { closeHelp(); return true; }
             const settings = document.getElementById('mapSettingsPanel');
@@ -1048,6 +1051,9 @@ class MeshCoreApp {
         const saved = this.getSavedDevices().find(d => d.id === deviceId);
         if (saved?.transport === 'serial') {
             return this.quickConnectSerial(saved);
+        }
+        if (saved?.transport === 'wifi') {
+            return this.quickConnectWifi(saved);
         }
 
         // Try getDevices() for zero-friction reconnect (Chrome 85+, may need flag)
@@ -1299,8 +1305,8 @@ class MeshCoreApp {
 
     async connectWifi() {
         // Raw TCP can't be opened from a browser; only the native Android host
-        // can. Off-app, explain why and where it works (the user asked for the
-        // button to be visible everywhere).
+        // can. Off-app, explain why and where it works (the button is shown
+        // everywhere by request).
         if (!window.__MESHCORE_NATIVE__ || typeof window.__mcMakeWifiPort !== 'function') {
             alert('WiFi connection isn’t available in the browser.\n\n'
                 + 'MeshCore’s WiFi companion firmware speaks raw TCP, and browsers can’t open raw TCP '
@@ -1310,25 +1316,77 @@ class MeshCoreApp {
                 + 'Note: repeaters have no WiFi (and no Bluetooth) — they connect over USB only.');
             return;
         }
-        const last = Store.get('wifiAddr', '192.168.1.50:5000');
-        const input = window.prompt('Connect to a MeshCore WiFi companion.\nEnter its address as IP:port', last);
-        if (!input) return;
-        const m = input.trim().match(/^([0-9a-zA-Z.\-]+):(\d{1,5})$/);
-        if (!m) { alert('Please enter the address as IP:port — for example 192.168.1.50:5000'); return; }
-        const host = m[1], tcpPort = parseInt(m[2], 10);
-        Store.set('wifiAddr', `${host}:${tcpPort}`);
+        this._openWifiModal();
+    }
+
+    _initWifiModal() {
+        const modal = document.getElementById('wifiModal');
+        if (!modal) return;
+        const close = () => this._closeWifiModal();
+        document.getElementById('wifiModalClose')?.addEventListener('click', close);
+        document.getElementById('wifiModalCancel')?.addEventListener('click', close);
+        modal.addEventListener('click', e => { if (e.target === modal) close(); });
+        document.getElementById('wifiModalConnect')?.addEventListener('click', () => this._submitWifiModal());
+        for (const id of ['wifiHostInput', 'wifiPortInput']) {
+            document.getElementById(id)?.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); this._submitWifiModal(); }
+            });
+        }
+    }
+
+    _openWifiModal() {
+        const modal = document.getElementById('wifiModal');
+        if (!modal) return;
+        const hostEl = document.getElementById('wifiHostInput');
+        const portEl = document.getElementById('wifiPortInput');
+        const errEl  = document.getElementById('wifiModalError');
+        if (hostEl) hostEl.value = Store.get('wifiHost', '');
+        if (portEl) portEl.value = Store.get('wifiPort', '5000');
+        if (errEl)  { errEl.textContent = ''; errEl.classList.add('hidden'); }
+        modal.classList.remove('hidden');
+        setTimeout(() => hostEl?.focus(), 50);
+    }
+
+    _closeWifiModal() {
+        document.getElementById('wifiModal')?.classList.add('hidden');
+    }
+
+    _submitWifiModal() {
+        const host = (document.getElementById('wifiHostInput')?.value || '').trim();
+        const port = parseInt(document.getElementById('wifiPortInput')?.value, 10);
+        const errEl = document.getElementById('wifiModalError');
+        const fail = (msg) => { if (errEl) { errEl.textContent = msg; errEl.classList.remove('hidden'); } };
+        if (!host || !/^[0-9a-zA-Z.\-]+$/.test(host)) { fail('Enter a valid IP address or hostname.'); return; }
+        if (!(port >= 1 && port <= 65535)) { fail('Enter a port between 1 and 65535.'); return; }
+        Store.set('wifiHost', host);
+        Store.set('wifiPort', String(port));
+        this._closeWifiModal();
+        this._doWifiConnect(host, port);
+    }
+
+    // Open a WiFi/TCP companion at host:port. Shared by the connect form and by
+    // quick-reconnect of a saved WiFi device.
+    async _doWifiConnect(host, port) {
         try {
             this.connectBtn.disabled = true;
             if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
             if (this.connectWifiBtn) this.connectWifiBtn.disabled = true;
             this.updateStatus('Connecting…', 'connecting');
-            const port = window.__mcMakeWifiPort(host, tcpPort);
-            await this.connectToSerialPort(port);
+            const port_ = window.__mcMakeWifiPort(host, port);
+            await this.connectToSerialPort(port_);
         } catch (error) {
             alert('WiFi connection failed: ' + (error.message || error));
             if (this.serialPort || this.device) this.onDisconnected();
             else this._resetConnectBtn();
         }
+    }
+
+    async quickConnectWifi(saved) {
+        if (!window.__MESHCORE_NATIVE__ || typeof window.__mcMakeWifiPort !== 'function') {
+            alert('This is a saved WiFi device — WiFi connection only works in the Android app.');
+            return;
+        }
+        await this._doWifiConnect(saved.host, saved.port);
     }
 
     async connectToSerialPort(port) {
@@ -2075,10 +2133,23 @@ class MeshCoreApp {
     saveSerialPort(port) {
         let info = {};
         try { info = port.getInfo?.() || {}; } catch (e) {}
-        // WiFi/TCP companion: just a display name. Not persisted to the saved
-        // list — reconnecting needs the IP re-entered, and saved entries assume
-        // USB/BLE identity.
-        if (info.wifi) return `WiFi ${info.host}:${info.port}`;
+        // WiFi/TCP companion: persisted by host:port so it appears in the Saved
+        // list and can be reconnected with one tap (Android only).
+        if (info.wifi) {
+            const id = `wifi:${info.host}:${info.port}`;
+            const name = `WiFi ${info.host}:${info.port}`;
+            const devices = this.getSavedDevices();
+            const existing = devices.find(d => d.id === id);
+            if (existing) {
+                existing.name = name; existing.transport = 'wifi';
+                existing.host = info.host; existing.port = info.port;
+            } else {
+                devices.push({ id, name, transport: 'wifi', host: info.host, port: info.port });
+            }
+            Store.set('devices', JSON.stringify(devices));
+            this._renderSavedDevices();
+            return name;
+        }
         const vid = info.usbVendorId;
         const pid = info.usbProductId;
         const hex4 = n => (n == null ? '????' : n.toString(16).padStart(4, '0').toUpperCase());

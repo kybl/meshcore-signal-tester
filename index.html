@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=132">
+    <link rel="stylesheet" href="style.css?v=133">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -278,6 +278,26 @@
     <div id="chartTooltip" class="chart-tooltip"></div>
     <div id="helpTip" class="chart-tooltip help-tip-float"></div>
 
+    <!-- WiFi connect form (native Android only) -->
+    <div id="wifiModal" class="wifi-modal-overlay hidden">
+        <div class="wifi-modal" role="dialog" aria-modal="true" aria-labelledby="wifiModalTitle">
+            <button class="wifi-modal-close" id="wifiModalClose" aria-label="Close">✕</button>
+            <h3 id="wifiModalTitle">Connect over WiFi</h3>
+            <p class="wifi-modal-sub">Enter the IP address and TCP port of a MeshCore companion running the WiFi firmware.</p>
+            <label class="wifi-field">IP address
+                <input id="wifiHostInput" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="192.168.x.x">
+            </label>
+            <label class="wifi-field">Port
+                <input id="wifiPortInput" type="number" min="1" max="65535" placeholder="5000">
+            </label>
+            <div id="wifiModalError" class="wifi-modal-error hidden"></div>
+            <div class="wifi-modal-actions">
+                <button id="wifiModalCancel" class="btn-pause">Cancel</button>
+                <button id="wifiModalConnect" class="btn-primary">Connect</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Corner notice: repeater filter active -->
     <div id="filterNotice" class="corner-notice hidden">
         <div class="corner-notice-line1">
@@ -399,6 +419,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=216"></script>
+    <script type="module" src="app.js?v=217"></script>
 </body>
 </html>
