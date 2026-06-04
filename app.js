@@ -2291,6 +2291,24 @@ class MeshCoreApp {
     }
 
     _extractRepeater(packet) {
+        // Trace packets (payloadType 9) are the one case where the header `path`
+        // field does NOT hold node IDs: it holds one per-hop SNR byte
+        // (signed / 4 = dB). The real traversed node hashes live in
+        // payload.decoded.pathHashes, so for traces that is the only correct
+        // source of the last repeater (empty = a 0-hop/direct trace).
+        if (packet.payloadType === 9) {
+            const hops = packet.payload?.decoded?.pathHashes;
+            return Array.isArray(hops) && hops.length > 0
+                ? (hops[hops.length - 1] || 'unknown')
+                : 'direct';
+        }
+        // Every other type: the header path accumulates forwarder hashes as the
+        // packet floods, so its last element is the last repeater. NOTE: Path
+        // payloads (type 8) also expose payload.decoded.pathHashes, but it is
+        // meaningless — the real PATH body is "dest/src hashes, MAC, encrypted
+        // (path, extra)", and the decoder misreads that ciphertext as a
+        // plaintext path (often erroring on a reserved hash-size bit pattern).
+        // The header path is plaintext and stays valid regardless, so use it.
         if (packet.path && packet.path.length > 0) {
             return packet.path[packet.path.length - 1] || 'unknown';
         }
