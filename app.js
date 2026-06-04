@@ -1561,6 +1561,19 @@ class MeshCoreApp {
     }
 
     _extractRepeater(packet) {
+        // Trace (payloadType 9) and Path (payloadType 8) packets carry the
+        // real traversed node hashes in payload.decoded.pathHashes. For these,
+        // the header `path` field means something else entirely — for Trace it
+        // holds per-hop SNR bytes (signed byte / 4 = dB), NOT node IDs — so the
+        // header path must never be used as the repeater. Prefer pathHashes
+        // whenever the decoder provides it; an empty array means a direct hop
+        // (no repeater), so we don't fall back to the header SNR bytes.
+        const pathHashes = packet.payload?.decoded?.pathHashes;
+        if (Array.isArray(pathHashes)) {
+            return pathHashes.length > 0
+                ? (pathHashes[pathHashes.length - 1] || 'unknown')
+                : 'direct';
+        }
         if (packet.path && packet.path.length > 0) {
             return packet.path[packet.path.length - 1] || 'unknown';
         }
