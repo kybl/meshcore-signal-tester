@@ -7,11 +7,9 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 
 ## Features
 
-- **Bluetooth connection** — connects to a MeshCore companion device via Web Bluetooth; previously paired devices appear as one-click reconnect buttons
-- **USB connection** — connects to a MeshCore companion device over USB serial via the Web Serial API (Chrome/Edge/Opera desktop); previously used ports appear as one-click reconnect buttons alongside Bluetooth devices (labelled by USB vendor/product id, since serial ports expose no name)
-- **WiFi connection (Android app)** — connects to a companion running the WiFi firmware over a raw TCP socket, which carries the same frame protocol as USB serial. Browsers can't open raw TCP, so this is available only in the native Android app: you enter the device's IP and port in a small form, and successful connections are saved as one-click reconnect buttons alongside Bluetooth and USB. Repeaters have no WiFi
+- **Connection** — connects to a MeshCore companion device over **Bluetooth** (Web Bluetooth) or **USB serial** (Web Serial); previously used devices appear as one-click reconnect buttons (USB ports are labelled by vendor/product id, since serial ports expose no name). The **Android app** adds a **WiFi** option — a raw TCP link to a companion running the WiFi firmware (same frame protocol as USB serial) — which browsers can't provide; you enter the device's IP and port, and the connection is saved for one-click reconnect too
 - **Repeater support (USB)** — also connects to a MeshCore repeater, which exposes a plain-text CLI instead of the binary protocol; the device type (companion vs repeater) is auto-detected on connect. On stock firmware the app polls the packet log and neighbour table; on a `MESH_PACKET_LOGGING` build it decodes the live raw packet stream for full per-packet detail. See [Device detection](#device-detection)
-- **Packet decoding** — uses `@michaelhart/meshcore-decoder` to decode MeshCore packets; extracts type, path, repeater IDs, RSSI, SNR, and payload fields; packets are grouped by message so it's visible which repeaters forwarded which message
+- **Packet grouping** — groups every reception by message, so you can see at a glance which repeaters forwarded the same packet and compare their signal side by side. Packets are decoded with `@michaelhart/meshcore-decoder` (type, path, last-hop repeater IDs, RSSI, SNR, payload fields) to drive the grouping and labelling
 - **Seen repeaters table** — per-repeater statistics (RX count, max/last RSSI, max/last SNR, last seen); sortable columns
 - **SNR & RSSI history charts** — scrolling time-series per repeater with noise floor estimate; click a chart dot to highlight one repeater across all views
 - **Signal 3D map** — places each received packet as a dot at your GPS position; height encodes SNR (taller = higher SNR); click a dot to select a repeater, turn the camera toward a repeater whose position is known, keep repeaters pinned on the map, or follow your own location as you move (**Center on me** toggles follow mode — any manual pan/rotate leaves it); while capturing live, the map keeps tiles loaded around your current position so you don't move off the map even when no packets are arriving (an imported dataset from elsewhere is left in place); map tile sources: Mapy.com (basic/outdoor/aerial/winter) and OpenStreetMap (standard/OpenTopoMap)
@@ -47,7 +45,8 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 
 ## Requirements
 
-- Chrome, Edge, or Opera (Web Bluetooth / Web Serial APIs required; Safari and Firefox are not supported)
+- **Bluetooth** needs a Chromium browser (Chrome, Edge, or Opera) — Web Bluetooth isn't available in Firefox or Safari
+- **USB serial** works in those Chromium browsers and, since **Firefox 151** (desktop, 2026), in Firefox too — both ship the Web Serial API
 - Page must be served over **HTTPS or localhost**
 
 ## How to use
