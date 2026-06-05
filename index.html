@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=137">
+    <link rel="stylesheet" href="style.css?v=138">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -23,12 +23,14 @@
         <div class="header-row header-row-connect">
             <img src="logo.svg" class="app-logo" alt="">
             <span class="app-title">MeshCore Signal Tester</span>
+            <a id="appVersion" class="app-version" href="https://github.com/kybl/meshcore-signal-tester/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version"></a>
             <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
             <div id="status" class="status disconnected">
                 <span id="statusText" class="status-text">Disconnected</span>
                 <button id="connectBtn" class="btn-primary">Connect Bluetooth</button>
                 <button id="connectUsbBtn" class="btn-primary">Connect USB</button>
                 <button id="connectWifiBtn" class="btn-primary">Connect WiFi</button>
+                <div id="connectHint" class="connect-hint">Companion over Bluetooth, USB or WiFi — or a MeshCore repeater over USB. The device type is detected automatically.</div>
                 <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <button id="disconnectBtn" class="btn-pause btn-disconnect">Disconnect</button>
                 <span id="connectedDeviceName" class="connected-device-name"></span>
@@ -397,6 +399,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=222"></script>
+    <script type="module" src="app.js?v=223"></script>
 </body>
 </html>

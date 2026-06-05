@@ -2,6 +2,12 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=102';
 
+// Single source of truth for the released app version, shown in the header (and
+// forwarded to the Android wrapper). Bump this on a release alongside the
+// CHANGELOG and the Android versionName. Distinct from the per-asset ?v= cache
+// busters, which change on every edit.
+const APP_VERSION = '1.1.0';
+
 // Per-repeater colour: hue, saturation AND lightness are all derived from the id
 // hash, so different repeaters differ in all three — within bounds that keep the
 // colour usable (never grey, never too dark/light). Dark theme lifts the
@@ -874,6 +880,8 @@ class MeshCoreApp {
     }
 
     _initHelpSystem() {
+        const verEl = document.getElementById('appVersion');
+        if (verEl) verEl.textContent = 'v' + APP_VERSION;
         const HELP = {
             'active':
                 'Unique packets in the current display window. Data outside the window is still stored (see Auto-remove) but not shown (see Display).',
