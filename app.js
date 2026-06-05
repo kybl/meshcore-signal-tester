@@ -2126,15 +2126,20 @@ class MeshCoreApp {
     }
 
     saveDevice(device) {
-        const devices = this.getSavedDevices();
-        const existing = devices.find(d => d.id === device.id);
-        const name = device.name || existing?.name || 'Unknown';
-        if (existing) {
-            existing.name = name;
-            existing.transport = 'ble';
-        } else {
-            devices.push({ id: device.id, name, transport: 'ble' });
-        }
+        let devices = this.getSavedDevices();
+        // Web Bluetooth's device.id is NOT reliably stable across
+        // requestDevice() calls — getDevices() (the zero-friction reconnect
+        // path) needs an experimental Chrome flag, so a quick-connect usually
+        // falls back to re-pairing, which can mint a fresh id for the very same
+        // physical device. Keyed on id alone, those re-pairs piled up duplicate
+        // saved entries over time. So also match a prior BLE entry by name
+        // (MeshCore names carry a unique suffix) and collapse onto one entry.
+        const prior = devices.find(d => d.id === device.id
+            || (device.name && d.transport === 'ble' && d.name === device.name));
+        const name = device.name || prior?.name || 'Unknown';
+        devices = devices.filter(d => d.id !== device.id
+            && !(device.name && d.transport === 'ble' && d.name === device.name));
+        devices.push({ id: device.id, name, transport: 'ble' });
         Store.set('devices', JSON.stringify(devices));
         this._renderSavedDevices();
         return name;
