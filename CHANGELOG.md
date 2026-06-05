@@ -20,11 +20,8 @@ All notable changes to this project are documented here. The format is based on
   running the WiFi firmware, with a connect form and saved devices for
   one-click reconnect. (Browsers can't open raw sockets, so this is
   Android-only.)
-- **Native Android app** for field use — Bluetooth/USB/WiFi radio link and GPS
-  run in a foreground service, so capture keeps going with the screen off or
-  the app in the background. Includes a live status notification, external
-  links opening in the system browser, hardware Back closing overlays, and CSV
-  save confirmation.
+- **Android app** — a live status notification, external links opening in the
+  system browser, and hardware Back closing open overlays.
 - **3D signal map** improvements:
   - optional **device location marker** showing the connected device's own
     position (a companion's live GPS fix refreshes about once a second);
@@ -39,18 +36,9 @@ All notable changes to this project are documented here. The format is based on
 
 - Reworked the header into a colour-coded connection status frame consolidating
   the connect/disconnect controls.
-- Improved per-packet **sound feedback** (pitch scales with SNR; respects the
-  active repeater filter).
-- Brighter, hash-derived repeater colour palette with distinct markers for
-  direct/unknown buckets.
-- Updated help texts and README throughout (connection transports, repeater
-  firmware detection, WiFi, device-location refresh).
 
 ### Fixed
 
-- More robust companion-over-USB detection (active probing).
-- Packet decoding/path fixes for Trace and Path packets; repeater ID prefix
-  resolution and de-duplication.
 - Contact sync no longer gets stuck after an interrupted fetch.
 - The 3D map's "Enable location" button no longer freezes when GPS is off; it
   stays usable so capture recovers once location is switched back on.
