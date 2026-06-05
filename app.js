@@ -967,21 +967,12 @@ class MeshCoreApp {
         });
 
         const helpModal = document.getElementById('helpModal');
-        let _helpScrollY = 0;
         const openHelp = () => {
-            // The overlay is fixed but the body's zoom transform makes "fixed"
-            // resolve against the body, so it only lands on the viewport when the
-            // page is at the top. Scroll there (remembering where we were) and
-            // lock the body so it stays put while the modal is open.
-            _helpScrollY = window.scrollY || window.pageYOffset || 0;
-            window.scrollTo(0, 0);
             helpModal?.classList.remove('hidden');
-            document.body.style.overflow = 'hidden';
+            helpModal?.querySelector('.help-modal')?.scrollTo(0, 0);
         };
         const closeHelp = () => {
             helpModal?.classList.add('hidden');
-            document.body.style.overflow = '';
-            window.scrollTo(0, _helpScrollY);
         };
         document.getElementById('helpBtn')?.addEventListener('click', e => {
             e.stopPropagation();

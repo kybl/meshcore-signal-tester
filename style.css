@@ -1322,23 +1322,14 @@ header .help-icon.active {
 /* Help modal */
 .help-modal-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    /* Bound to the viewport (100vh), NOT 100% — under the body transform used by
-       the zoom/text-size feature, "fixed" resolves against the body, so height:
-       100% would be the whole (tall) document and the overlay would never scroll
-       internally, leaving the modal's lower half unreachable. 100vh keeps it
-       viewport-sized so overflow-y scrolls a tall modal. openHelp() scrolls to
-       the top + locks the body so the overlay lands on the viewport. */
-    height: 100vh;
+    inset: 0;
     background: rgba(0, 0, 0, 0.5);
     z-index: 2000;
     display: flex;
     align-items: flex-start;
     justify-content: center;
     padding: 16px;
-    overflow-y: auto;
+    overflow: hidden;
     box-sizing: border-box;
 }
 
@@ -1406,7 +1397,9 @@ header .help-icon.active {
     font-size: 13px;
     line-height: 1.6;
     color: #c8ccd4;
-    margin: 0 auto 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    box-sizing: border-box;
 }
 
 .help-modal-close {
