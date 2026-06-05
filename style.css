@@ -359,6 +359,14 @@ html.light-theme .status.importing {
     cursor: not-allowed;
 }
 
+/* The pressed/scanning connect button is shown via :disabled. In the light
+   theme that lightens its background (the default above), which reads well.
+   In the dark theme a lightened background is counterproductive, so keep it
+   dark and brighten the text instead. */
+html:not(.light-theme) .btn-connect:disabled {
+    color: #cfe0f0;
+}
+
 .btn-primary.hidden {
     display: none;
 }

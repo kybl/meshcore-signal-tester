@@ -1323,12 +1323,19 @@ class MeshCoreApp {
         // can. Off-app, explain why and where it works (the button is shown
         // everywhere by request).
         if (!window.__MESHCORE_NATIVE__ || typeof window.__mcMakeWifiPort !== 'function') {
+            // Flash the WiFi button as the pressed/active one while the
+            // explanatory message is up, then restore it — same feedback as
+            // BLE/USB get, even though WiFi can't actually connect in a browser.
+            this._beginConnectAttempt('wifi');
+            // Let the browser paint the pressed state before the blocking alert.
+            await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
             alert('WiFi connection isn’t available in the browser.\n\n'
                 + 'MeshCore’s WiFi companion firmware speaks raw TCP, and browsers can’t open raw TCP '
                 + 'sockets — so connecting over WiFi only works in the Android app, which opens the socket '
                 + 'natively.\n\n'
                 + 'Here in the browser, use Bluetooth or USB instead.\n\n'
                 + 'Note: repeaters have no WiFi (and no Bluetooth) — they connect over USB only.');
+            if (this.connectWifiBtn) this.connectWifiBtn.disabled = false;
             return;
         }
         this._openWifiModal();
@@ -4436,12 +4443,23 @@ class MeshCoreApp {
         if ((data.type || '').toLowerCase().includes(filter)) return true;
         if (this._abbreviateType(data.type).toLowerCase().includes(filter)) return true;
         for (const col of data.repeaters.keys()) {
+            // Match the short ID label AND the repeater's synced contact name.
             if (this.displayId(col).toLowerCase().includes(filter)) return true;
+            const cName = this._contactNameForCol(col);
+            if (cName && cName.toLowerCase().includes(filter)) return true;
         }
         const m = data.meta;
         if (m?.text?.toLowerCase().includes(filter)) return true;
         if (m?.sender?.toLowerCase().includes(filter)) return true;
         if (m?.name?.toLowerCase().includes(filter)) return true;
+        // An advert's own node name, resolved from the contact list (this is what
+        // the expanded packet detail shows).
+        if (m?.pubKeyFull) {
+            const cn = this._contacts.get(m.pubKeyFull)?.name;
+            if (cn && cn.toLowerCase().includes(filter)) return true;
+        }
+        // Raw bytes too, so a hex substring from the packet can be searched.
+        if (data.rawHex?.toLowerCase().includes(filter)) return true;
         return false;
     }
 
