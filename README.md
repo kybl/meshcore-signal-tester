@@ -1,6 +1,6 @@
 # MeshCore Signal Tester
 
-Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **companion radio** (Bluetooth or USB) or a MeshCore **repeater** (USB serial CLI). The connected device type is auto-detected.
+Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **companion radio** (Bluetooth, USB, or — in the Android app — WiFi) or a MeshCore **repeater** (USB serial CLI). The connected device type is auto-detected.
 
 ### Live app: [meshcore.kyblsoft.cz/signal-tester](https://meshcore.kyblsoft.cz/signal-tester)
 #### Android app available in [repo releases](https://github.com/kybl/meshcore-signal-tester/releases).</sub>
@@ -9,11 +9,12 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 
 - **Bluetooth connection** — connects to a MeshCore companion device via Web Bluetooth; previously paired devices appear as one-click reconnect buttons
 - **USB connection** — connects to a MeshCore companion device over USB serial via the Web Serial API (Chrome/Edge/Opera desktop); previously used ports appear as one-click reconnect buttons alongside Bluetooth devices (labelled by USB vendor/product id, since serial ports expose no name)
+- **WiFi connection (Android app)** — connects to a companion running the WiFi firmware over a raw TCP socket, which carries the same frame protocol as USB serial. Browsers can't open raw TCP, so this is available only in the native Android app: you enter the device's IP and port in a small form, and successful connections are saved as one-click reconnect buttons alongside Bluetooth and USB. Repeaters have no WiFi
 - **Repeater support (USB)** — also connects to a MeshCore repeater, which exposes a plain-text CLI instead of the binary protocol; the device type (companion vs repeater) is auto-detected on connect. On stock firmware the app polls the packet log and neighbour table; on a `MESH_PACKET_LOGGING` build it decodes the live raw packet stream for full per-packet detail. See [Device detection](#device-detection)
 - **Packet decoding** — uses `@michaelhart/meshcore-decoder` to decode MeshCore packets; extracts type, path, repeater IDs, RSSI, SNR, and payload fields; packets are grouped by message so it's visible which repeaters forwarded which message
 - **Seen repeaters table** — per-repeater statistics (RX count, max/last RSSI, max/last SNR, last seen); sortable columns
 - **SNR & RSSI history charts** — scrolling time-series per repeater with noise floor estimate; click a chart dot to highlight one repeater across all views
-- **Signal 3D map** — places each received packet as a dot at your GPS position; height encodes SNR (taller = higher SNR); click a dot to select a repeater, turn the camera toward a repeater whose position is known, keep repeaters pinned on the map, or follow your own location as you move (**Center on me** toggles follow mode — any manual pan/rotate leaves it); map tile sources: Mapy.com (basic/outdoor/aerial/winter) and OpenStreetMap (standard/OpenTopoMap)
+- **Signal 3D map** — places each received packet as a dot at your GPS position; height encodes SNR (taller = higher SNR); click a dot to select a repeater, turn the camera toward a repeater whose position is known, keep repeaters pinned on the map, or follow your own location as you move (**Center on me** toggles follow mode — any manual pan/rotate leaves it); while capturing live, the map keeps tiles loaded around your current position so you don't move off the map even when no packets are arriving (an imported dataset from elsewhere is left in place); map tile sources: Mapy.com (basic/outdoor/aerial/winter) and OpenStreetMap (standard/OpenTopoMap)
 - **Discover nodes** — sends an active discovery request; nearby nodes (firmware ≥ v1.10) reply with their public key, name, GPS position, and the SNR they measured for your uplink
 - **Received packets table** — one row per unique packet hash, one column pair (RSSI/SNR) per repeater; click a cell to expand full packet detail with ms-precision reception time and raw hex; filterable
 - **CSV import / export** — export the captured packets to a CSV file and re-import them later to review offline; contact metadata is embedded so repeater names and positions survive the round-trip
@@ -28,7 +29,7 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 - **Light / dark theme** — toggle in the header; preference is persisted in localStorage
 - **Text size** — UI scale selector (Small → Larger) for small or high-DPI screens; persisted in localStorage
 - **Adjustable dot size** — independent controls for the 2D chart dots (header slider) and the 3D map dots (⚙ menu)
-- **Device location on the 3D map** — optionally shows the connected device's own position as a blue antenna marker (3D map ⚙ menu, off by default). A companion reports its configured advertised position via the `SELF_INFO` reply; a repeater reports it via `get lat` / `get lon` over the CLI. Read once on connect; a companion whose location policy is `share` (live GPS) auto-refreshes (~30 s) while the marker is shown. Hidden when the device has no position set
+- **Device location on the 3D map** — optionally shows the connected device's own position as a blue antenna marker (3D map ⚙ menu, off by default). A companion reports its current position via the `SELF_INFO` reply — its live onboard-GPS fix if it has one, otherwise its configured advertised position; a repeater reports it via `get lat` / `get lon` over the CLI. While the marker is shown, a connected companion's position is re-read about once a second (so a device with live GPS tracks your movement); a repeater's position is static and read once on connect. Hidden when the device has no position set
 
 ## Screenshots
 
@@ -52,14 +53,16 @@ Web application for real-time monitoring of LoRa mesh traffic from a MeshCore **
 ## How to use
 
 1. Serve the directory over HTTPS or open `index.html` via `localhost`
-2. Click **Connect Bluetooth** (wireless) or **Connect USB** (wired serial) and select your MeshCore device — a companion radio, or (over USB) a repeater; the type is auto-detected (see [Device detection](#device-detection))
+2. Click **Connect Bluetooth** (wireless) or **Connect USB** (wired serial) — or, in the Android app, **Connect WiFi** (raw TCP to a WiFi companion) — and select your MeshCore device — a companion radio, or (over USB) a repeater; the type is auto-detected (see [Device detection](#device-detection))
 3. Packet data appears automatically as the device receives LoRa traffic
 
 ## Android app
 
 A native Android wrapper is available for field use — see [`android/`](android/README.md).
 
-The key benefit over a browser tab: BLE and GPS run in a **native foreground service**, so data collection keeps going with the screen off or the app in the background. A browser tab suspends and drops the Bluetooth connection when the screen turns off; the Android app doesn't.
+The key benefit over a browser tab: the radio link (Bluetooth, USB, or WiFi) and GPS run in a **native foreground service**, so data collection keeps going with the screen off or the app in the background. A browser tab suspends and drops the connection when the screen turns off; the Android app doesn't.
+
+The Android app also adds a **WiFi** connection option — a raw TCP link to a companion running the WiFi firmware — which a browser can't provide, since browsers have no raw-socket API.
 
 APK releases are published on [GitHub](https://github.com/kybl/meshcore-signal-tester/releases).
 
@@ -73,13 +76,13 @@ APK releases are published on [GitHub](https://github.com/kybl/meshcore-signal-t
 | `style.css` | Styles |
 | `app.js` | Application logic (Bluetooth, decoding, rendering) |
 | `signal3d.js` | Three.js-based 3D signal map |
-| `native-bridge.js` | No-op on the web; bridges Bluetooth/Geolocation to native code inside the Android app |
+| `native-bridge.js` | No-op on the web; bridges Bluetooth, USB serial, WiFi (TCP) and Geolocation to native code inside the Android app |
 | `vendor/` | Locally bundled JS deps (three.js, MapControls, meshcore-decoder) so the app runs fully offline |
 | `android/` | Native Android wrapper for background (screen-off) capture |
 
 ## Transport protocols
 
-Both transports carry the same MeshCore companion command/response frames; only the framing differs.
+All three transports carry the same MeshCore companion command/response frames; only how each frame is delimited differs.
 
 ### Bluetooth — Nordic UART Service (NUS)
 
@@ -103,6 +106,10 @@ Opened at **115200 baud**. The byte stream is split into frames with a 3-byte he
 
 The app accumulates incoming bytes and extracts complete frames as they arrive, resynchronising past any unexpected bytes. This matches the framing used by [`meshcore.js`](https://github.com/meshcore-dev/meshcore.js) and the official MeshCore web app.
 
+### WiFi — raw TCP (Android app only)
+
+A companion running the WiFi firmware listens on a TCP port and speaks the **exact same `0x3c`/`0x3e` + 16-bit-length framing as USB serial**, so the app reuses its serial frame parser unchanged. Browsers can't open raw TCP sockets, so this transport exists only in the native Android wrapper: native code opens the socket and bridges the byte stream to the web layer. You enter the device's IP and port (the port is whatever the WiFi firmware build is configured for). This mirrors how the official cross-platform MeshCore app reaches a WiFi companion.
+
 ### Common command flow
 
 On connect the app sends `CMD_APP_START` (opcode `0x01`) to enable push notifications. The device then sends LoRa RX events (opcodes `0x84`, `0x88`, `0x8e`) carrying SNR, RSSI, and a raw LoRa payload, plus battery voltage events (opcode `0x0c`).
@@ -117,10 +124,11 @@ The app supports two kinds of MeshCore device and figures out which one is attac
 |---|---|---|
 | Protocol | Binary companion frames | Plain-text CLI |
 | Bluetooth | ✅ (always assumed) | ❌ |
+| WiFi (TCP) | ✅ (always assumed, Android app only) | ❌ |
 | USB serial | ✅ *if* the firmware has USB support (many companion builds are Bluetooth-only) | ✅ |
 | Data model | Device pushes every RX packet, fully decoded (path, last hop, SNR, RSSI) | App pulls data over the CLI; detail depends on firmware (see below) |
 
-Over **Bluetooth** the device is always treated as a companion. Over **USB** the app probes the freshly opened port (115200 baud) in three phases:
+Over **Bluetooth** — and over **WiFi** in the Android app — the device is always treated as a companion (a repeater offers neither transport). Over **USB** the app probes the freshly opened port (115200 baud) in three phases:
 
 1. **Companion probe** — sends `CMD_APP_START` (`0x01`) and a contacts request (`CMD_GET_CONTACTS`, `0x04`). A companion answers with a `0x3e` (radio→app) frame → connect as companion.
 2. **Repeater probe** — if no frame arrives, switch the read loop to text mode and send `ver`. A repeater replies over its CLI → connect as repeater.
