@@ -360,8 +360,12 @@ export class Signal3DMap {
                 if (p.state === 'granted') {
                     if (!this._watchId) this.startWatching();
                 } else if (p.state === 'denied') {
-                    this._setStatus('Location denied — new packets won\'t be placed on the map. You can still view and rotate existing data.');
-                    if (this.btnEl) { this.btnEl.disabled = true; this.btnEl.textContent = 'Location denied'; }
+                    // Keep the button live so the user can retry — "denied" is also
+                    // what some browsers report when location is simply turned off at
+                    // the OS level, and that recovers once it's switched back on.
+                    // A permanently-disabled button would leave no way back.
+                    this._setStatus('Location off or denied — enable it, then tap “Enable location”.');
+                    if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.textContent = 'Enable location'; }
                 } else {
                     this._setStatus('Location not enabled.');
                 }

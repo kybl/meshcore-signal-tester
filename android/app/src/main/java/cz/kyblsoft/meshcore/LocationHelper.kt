@@ -22,7 +22,6 @@ class LocationHelper(context: Context, private val js: JsApi) : LocationListener
 
     fun start() {
         if (active) return
-        active = true
         try {
             var any = false
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
@@ -33,13 +32,18 @@ class LocationHelper(context: Context, private val js: JsApi) : LocationListener
                 lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 0f, this, Looper.getMainLooper())
                 any = true
             }
+            if (!any) {
+                // No provider enabled (location turned off at the OS level). Leave
+                // `active` false so a later retry — after the user enables GPS —
+                // actually re-requests instead of short-circuiting on `if (active)`.
+                js.geoError(2, "No location provider enabled (turn on GPS)")
+                return
+            }
+            active = true
             lastKnown()?.let { emit(it) }
-            if (!any) js.geoError(2, "No location provider enabled (turn on GPS)")
         } catch (e: SecurityException) {
-            active = false
             js.geoError(1, "Location permission denied")
         } catch (e: Exception) {
-            active = false
             js.geoError(2, e.message ?: "Location error")
         }
     }

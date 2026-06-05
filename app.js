@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=101';
+import { Signal3DMap } from './signal3d.js?v=102';
 
 // Per-repeater colour: hue, saturation AND lightness are all derived from the id
 // hash, so different repeaters differ in all three — within bounds that keep the
