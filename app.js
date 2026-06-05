@@ -1912,7 +1912,14 @@ class MeshCoreApp {
         if (payload.length >= 144) lon = ((payload[140] | (payload[141] << 8) | (payload[142] << 16) | (payload[143] << 24)) | 0) / 1e6;
         if (payload.length >= 148) lastmod = payload[144] | (payload[145] << 8) | (payload[146] << 16) | (payload[147] << 24);
         this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod, pubKeyFullHex: pubKeyFull });
-        if (lastmod > this._contactsLastmod) this._contactsLastmod = lastmod;
+        // NB: do NOT advance _contactsLastmod here. The incremental-sync marker
+        // must only move forward once a FULL contact list has been received
+        // (END_OF_CONTACTS). Advancing it per-contact meant an interrupted fetch
+        // (e.g. another client grabbed the single-client companion) left the
+        // marker partway, so every later reconnect did an incremental sync that
+        // skipped the missing contacts — and only restarting the app (which
+        // resets the marker to 0) recovered. Re-fetching a contact we already
+        // have via push is a harmless upsert.
         this._updateContactsCount();
     }
 
@@ -4897,6 +4904,12 @@ class MeshCoreApp {
         this._deviceRefreshTimer = null;
         this._deviceLocPolicy = null;
         this._setDeviceLocation(null, null);
+        // Clear any in-flight contact fetch so a fresh connection starts clean
+        // (a stuck _contactsReceiving from an interrupted stream would otherwise
+        // linger). The lastmod marker is intentionally kept — it only ever
+        // reflects a fully-completed sync now, so incremental sync stays correct.
+        this._contactsReceiving = false;
+        this._setContactsLoading(false);
         document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
