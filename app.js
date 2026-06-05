@@ -969,11 +969,13 @@ class MeshCoreApp {
         const helpModal = document.getElementById('helpModal');
         const openHelp = () => {
             helpModal?.classList.remove('hidden');
-            document.body.style.overflow = 'hidden';
+            // The overlay is absolutely positioned (it has to be — see CSS), so it
+            // sits at the top of the document and scrolls with the page. Bring it
+            // into view; the page itself provides the scroll for a tall modal.
+            helpModal?.scrollIntoView({ block: 'start' });
         };
         const closeHelp = () => {
             helpModal?.classList.add('hidden');
-            document.body.style.overflow = '';
         };
         document.getElementById('helpBtn')?.addEventListener('click', e => {
             e.stopPropagation();

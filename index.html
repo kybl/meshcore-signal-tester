@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=134">
+    <link rel="stylesheet" href="style.css?v=135">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -331,32 +331,7 @@
             <p>Use <b>Import CSV</b> / <b>Export CSV</b> to save the captured packets to a file and reload them later, and <b>Clear data</b> to wipe the current session. If an established connection drops unexpectedly — cable unplugged, device reset, or out of range — a full-screen <b>alarm</b> warns you that data collection has stopped (a deliberate disconnect won't trigger it).</p>
 
             <div class="help-section-title">What you can connect to</div>
-            <p>The app auto-detects what it's talking to — you don't choose a device type.</p>
-            <div class="help-dl">
-                <div class="help-dt">Companion radio</div>
-                <div class="help-dd">A MeshCore <b>companion</b> speaks the binary frame protocol and pushes every received LoRa packet to the app with full decoding (path, last-hop repeater, SNR, RSSI). This is the richest source. Over <b>Bluetooth</b> a companion is assumed directly. Over <b>USB</b> it only works if the device runs a companion firmware with USB support — most companion builds speak the protocol over Bluetooth only, so a plain companion plugged in by USB won't be recognised (you'll get a clear error rather than a fake connection). Over <b>WiFi</b> a companion running the WiFi firmware exposes the same protocol over a raw TCP socket; because browsers can't open raw TCP, this works only in the <b>Android app</b> (you enter the device's IP and port). Repeaters have no WiFi.</div>
-
-                <div class="help-dt">Repeater (USB)</div>
-                <div class="help-dd">A MeshCore <b>repeater</b> has no binary protocol — it exposes a plain-text command-line over USB serial. The app drives that CLI to pull packet and neighbour data. There's no Bluetooth path to a repeater. How much detail you get depends on the firmware (see below).</div>
-            </div>
-
-            <div class="help-section-title">How device detection works</div>
-            <p>Bluetooth and WiFi always connect as a companion (a repeater offers neither). On <b>USB</b> the app probes in three steps right after opening the port at 115200 baud:</p>
-            <ul class="help-list">
-                <li><b>Companion probe</b> — sends the binary <code>APP_START</code> and a contacts request. A real companion answers with a <code>0x3e</code> (radio→app) frame → connected as a companion.</li>
-                <li><b>Repeater probe</b> — if no frame came back, the app switches to text mode and sends <code>ver</code>. A repeater answers with a CLI reply → connected as a repeater.</li>
-                <li><b>Neither</b> — if nothing answers, the app reports an unsupported device (the usual cause: a companion plugged in by USB whose firmware only speaks the protocol over Bluetooth).</li>
-            </ul>
-
-            <div class="help-section-title">Repeater firmware: stock vs. logging build</div>
-            <p>A repeater is data-pulled over the CLI, and how much it can tell you depends on how its firmware was built:</p>
-            <div class="help-dl">
-                <div class="help-dt">Stock firmware</div>
-                <div class="help-dd">The app polls the packet-log file (<code>log start</code>, then <code>log</code> every 2.5 s, clearing it on <code>EOF</code>) and the neighbour table (<code>neighbors</code> every 5 s). Log lines give SNR, RSSI and the route, but <b>not the last hop's identity</b> — a flood line names the origin, not the node you actually heard. Such packets are therefore bucketed into two pseudo-columns instead of a real repeater ID: <b>direct</b> (yellow dot — heard at the first hop) and <b>unknown</b> (red dot — forwarded, last hop not identifiable). The neighbour table is the only source of per-node signal on stock firmware, and only gives <b>SNR</b> (no RSSI), only for direct neighbours, refreshed slowly. <b>Discover nodes</b> sends <code>discover.neighbors</code> to refresh that table on demand.</div>
-
-                <div class="help-dt">Logging build (<code>MESH_PACKET_LOGGING</code>)</div>
-                <div class="help-dd">Built with this flag, the repeater streams every received packet live as a raw hex dump plus a summary line. The app decodes the dump for the full path — giving the <b>real last-hop repeater ID</b> — and pairs it with the summary for SNR/RSSI, exactly like a companion. The first raw dump it sees flips the app into this mode, after which it stops polling the redundant log file. This is the recommended firmware for a repeater you want to use as a measurement node.</div>
-            </div>
+            <p>The app auto-detects the device — you don't pick a type. A <b>companion radio</b> (Bluetooth, USB, or WiFi in the Android app) pushes every received packet fully decoded, which is the richest source. A <b>repeater</b> (USB only) instead exposes a text CLI the app drives; how much it can report depends on its firmware (see below).</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -396,6 +371,9 @@
                 <li><b>Device location</b> — the 3D map's ⚙ menu can show the connected device's own position (a blue antenna marker), when the companion or repeater reports one. Off by default. A companion shows its current position — its live onboard-GPS fix if it has one, otherwise its configured advert position; a repeater shows its <code>get lat</code>/<code>get lon</code> setting. Nothing appears if the device has no position set. While the marker is shown, a connected <b>companion</b>'s position is re-read about once a second, so one with live GPS tracks your movement; a <b>repeater</b>'s position is static and read once on connect.</li>
             </ul>
 
+            <div class="help-section-title">Repeater firmware: stock vs. logging build</div>
+            <p>How much a repeater can report depends on its firmware. <b>Stock</b> builds expose only the packet log and neighbour table, so forwarded packets can't be tied to a specific last hop — they show as <b>direct</b> / <b>unknown</b>, and per-node signal comes only from the neighbour table (SNR, no RSSI). A <b>MESH_PACKET_LOGGING</b> build streams raw packets the app decodes for the real last-hop ID with both SNR and RSSI, like a companion — the build to use for a measurement node. Full details are in the project README.</p>
+
             <div class="help-section-title">Android app</div>
             <p>A native Android wrapper is available for field use. It packages this web app into an APK so it works fully offline — no browser needed. It also adds a <b>Connect WiFi</b> option — a raw TCP link to a companion running the WiFi firmware — which a browser can't do. The radio link (Bluetooth, USB or WiFi) and the GPS work run in a native foreground service, so <b>data collection keeps going with the screen off or the app in the background</b> — you can drop the phone in your pocket and keep mapping signal as you move. A plain browser tab would suspend and stop collecting once the screen turns off, which is exactly what this avoids.</p>
             <p>The <b>Keep screen on</b> toggle is a separate convenience for when you do want the display to stay lit — e.g. to watch packets arrive live while walking. It only affects the screen, not collection.</p>
@@ -419,6 +397,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=218"></script>
+    <script type="module" src="app.js?v=219"></script>
 </body>
 </html>
