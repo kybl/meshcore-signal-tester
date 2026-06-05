@@ -302,9 +302,10 @@ html.light-theme .status.importing {
     font-weight: 600;
     opacity: 0.8;
 }
-/* The sub-label is only meaningful in the idle state; while connecting or
-   connected the same button shows just "Cancel"/"Disconnect". */
-.status:not(.disconnected) .btn-connect::after { display: none; }
+/* The sub-label belongs to a "Connect …" button. Once a button switches to its
+   Cancel/Disconnect role (btn-action), drop it — but keep it through the
+   scanning phase, while the label still reads "Connect …". */
+.btn-connect.btn-action::after { display: none; }
 
 /* Stop/Resume, Disconnect and the device name make sense only once a
    device is actually connected (green) or paused (yellow). */

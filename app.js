@@ -1031,8 +1031,7 @@ class MeshCoreApp {
             return;
         }
         try {
-            this.connectBtn.disabled = true;
-            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
+            this._beginConnectAttempt('ble');
             this.updateStatus('Scanning…', 'connecting');
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
@@ -1089,8 +1088,7 @@ class MeshCoreApp {
         // Fall back to requestDevice — use saved name as filter so picker pre-selects it
         const name = saved?.name;
         try {
-            this.connectBtn.disabled = true;
-            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
+            this._beginConnectAttempt('ble');
             this.updateStatus('Scanning…', 'connecting');
             const filters = (name && name !== 'Unknown')
                 ? [{ name }]
@@ -1118,8 +1116,7 @@ class MeshCoreApp {
             return;
         }
         try {
-            this.connectBtn.disabled = true;
-            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
+            this._beginConnectAttempt('serial');
             this.updateStatus('Scanning…', 'connecting');
 
             // Look for an already-authorised port matching the saved vid/pid so
@@ -1162,19 +1159,29 @@ class MeshCoreApp {
         this.connectBtn.textContent = 'Connect Bluetooth';
         this.connectBtn.disabled = false;
         this.connectBtn.onclick = () => this.connectBluetooth();
-        this.connectBtn.classList.remove('hidden');
+        this.connectBtn.classList.remove('hidden', 'btn-action');
         if (this.connectUsbBtn) {
             this.connectUsbBtn.textContent = 'Connect USB';
             this.connectUsbBtn.disabled = false;
             this.connectUsbBtn.onclick = () => this.connectUsb();
-            this.connectUsbBtn.classList.remove('hidden');
+            this.connectUsbBtn.classList.remove('hidden', 'btn-action');
         }
         if (this.connectWifiBtn) {
             this.connectWifiBtn.textContent = 'Connect WiFi';
             this.connectWifiBtn.disabled = false;
             this.connectWifiBtn.onclick = () => this.connectWifi();
-            this.connectWifiBtn.classList.remove('hidden');
+            this.connectWifiBtn.classList.remove('hidden', 'btn-action');
         }
+    }
+
+    // Start of a connection attempt: visually mark ONLY the chosen transport's
+    // button (it goes disabled/greyed while scanning), leaving the other
+    // transports' buttons untouched — normal colour, sub-labels still showing.
+    // The modal device picker blocks page interaction, so there's no need to
+    // disable the others to prevent a parallel attempt.
+    _beginConnectAttempt(kind) {
+        const btns = { ble: this.connectBtn, serial: this.connectUsbBtn, wifi: this.connectWifiBtn };
+        if (btns[kind]) btns[kind].disabled = true;
     }
 
     // Make one transport's button the active Cancel/Disconnect control and hide
@@ -1182,11 +1189,13 @@ class MeshCoreApp {
     _setActiveTransportBtn(kind, label, onClick) {
         const btns = { ble: this.connectBtn, serial: this.connectUsbBtn, wifi: this.connectWifiBtn };
         const active = btns[kind];
-        if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; active.classList.remove('hidden'); }
+        // btn-action marks the button as showing Cancel/Disconnect (not a
+        // "Connect …" label), which hides its companion/repeater sub-label.
+        if (active) { active.textContent = label; active.disabled = false; active.onclick = onClick; active.classList.remove('hidden'); active.classList.add('btn-action'); }
         for (const k of Object.keys(btns)) {
             if (k === kind) continue;
             const b = btns[k];
-            if (b) { b.disabled = true; b.classList.add('hidden'); }
+            if (b) { b.disabled = true; b.classList.add('hidden'); b.classList.remove('btn-action'); }
         }
     }
 
@@ -1294,8 +1303,7 @@ class MeshCoreApp {
             return;
         }
         try {
-            this.connectBtn.disabled = true;
-            this.connectUsbBtn.disabled = true;
+            this._beginConnectAttempt('serial');
             this.updateStatus('Scanning…', 'connecting');
             // No filters — MeshCore companions appear behind many USB-serial
             // bridges (CP210x, CH340, native USB CDC), so we let the user pick.
@@ -1375,9 +1383,7 @@ class MeshCoreApp {
     // quick-reconnect of a saved WiFi device.
     async _doWifiConnect(host, port) {
         try {
-            this.connectBtn.disabled = true;
-            if (this.connectUsbBtn) this.connectUsbBtn.disabled = true;
-            if (this.connectWifiBtn) this.connectWifiBtn.disabled = true;
+            this._beginConnectAttempt('wifi');
             this.updateStatus('Connecting…', 'connecting');
             const port_ = window.__mcMakeWifiPort(host, port);
             await this.connectToSerialPort(port_);
