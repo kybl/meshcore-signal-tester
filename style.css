@@ -1614,7 +1614,9 @@ html.light-theme .msg-filter-clear:hover {
 
 .msg-filter-count {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.55);
+    /* Theme-aware so it stays legible in the light theme too (a hardcoded
+       translucent white vanished on a light background). */
+    color: var(--text-secondary);
     white-space: nowrap;
     flex-shrink: 0;
 }
