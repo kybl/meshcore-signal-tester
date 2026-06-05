@@ -1321,23 +1321,24 @@ header .help-icon.active {
 
 /* Help modal */
 .help-modal-overlay {
-    /* Absolute, not fixed: the page applies body { transform: scale() } for the
-       text-size / desktop-zoom feature, and a transformed ancestor makes
-       position:fixed resolve against the body (the whole document) instead of
-       the viewport — which left the modal's lower half unreachable on desktop.
-       Absolute scrolls with the page and works under the transform (same reason
-       the chart tooltip is absolute). */
-    position: absolute;
+    position: fixed;
     top: 0;
     left: 0;
     width: 100%;
-    min-height: 100%;
+    /* Bound to the viewport (100vh), NOT 100% — under the body transform used by
+       the zoom/text-size feature, "fixed" resolves against the body, so height:
+       100% would be the whole (tall) document and the overlay would never scroll
+       internally, leaving the modal's lower half unreachable. 100vh keeps it
+       viewport-sized so overflow-y scrolls a tall modal. openHelp() scrolls to
+       the top + locks the body so the overlay lands on the viewport. */
+    height: 100vh;
     background: rgba(0, 0, 0, 0.5);
     z-index: 2000;
     display: flex;
     align-items: flex-start;
     justify-content: center;
     padding: 16px;
+    overflow-y: auto;
     box-sizing: border-box;
 }
 
