@@ -1,10 +1,6 @@
 # Changelog
 
-All notable changes to this project are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/), and the project follows
-[Semantic Versioning](https://semver.org/).
-
-## [1.1.0] - 2026-06-05
+## [1.1.0] - 2026-06-06
 
 ### Added
 
@@ -39,9 +35,13 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- Corrected the path shown for Trace packets, which previously displayed the
+  wrong route.
 - Contact sync no longer gets stuck after an interrupted fetch.
 - The 3D map's "Enable location" button no longer freezes when GPS is off; it
   stays usable so capture recovers once location is switched back on.
+
+Plus many smaller UX improvements throughout.
 
 ## [1.0.0] - 2026-05-31
 
