@@ -592,7 +592,10 @@ export class Signal3DMap {
         if (!this.infoEl) return;
         const col = this._selectedCol;
         if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
-        const pts = this._rxPoints.filter(p => p.col === col);
+        // Consider both received (sphere) and sent (star) points so a repeater
+        // we've only ever transmitted to still shows a panel when clicked.
+        const pts = this._rxPoints.filter(p => p.col === col)
+            .concat(this._outgoingPts.filter(p => p.col === col));
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const isPseudo = col === 'direct' || col === 'unknown';
         const dotStyle = isPseudo
@@ -1543,6 +1546,7 @@ export class Signal3DMap {
         addGroup(dimPts, 0.07);
 
         // Points used for screen-space click picking (see _onCanvasClick).
+        // Outgoing TX stars are appended further below, once sentAll is built.
         this._hitPoints = visible;
 
         // Vertical lines — split into lit (coloured) and dim (flat grey, low opacity)
@@ -1598,6 +1602,10 @@ export class Signal3DMap {
         const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
         addPoints(sentLit, 1.0,  3.2, this._starTex);
         addPoints(sentDim, 0.07, 3.2, this._starTex);
+
+        // Make the TX stars clickable too (clicking one selects its repeater,
+        // exactly like clicking an RX sphere).
+        this._hitPoints = this._hitPoints.concat(sentAll);
 
         this._rebuildPins();
         this._updatePerspUniforms();
