@@ -112,6 +112,7 @@ class MeshCoreApp {
         this._contactsRetries = 0;
         this._contactsLastStallSize = -1;
         this._contactsFetchedKeys = new Set();   // keys received during the current fetch
+        this._contactsFetchActive = false;       // a GET_CONTACTS dump is in progress
         this._selShowMore = false;
         this._filterShowMore = false;
         this._mapPins = new Set(); // pubKeyFullHex of contacts pinned to 3D map
@@ -1893,6 +1894,7 @@ class MeshCoreApp {
         this._contactsRetries = 0;
         this._contactsLastStallSize = -1;
         this._contactsFetchedKeys.clear();
+        this._contactsFetchActive = true;
         this._setContactsLoading(true);
         await this._sendGetContactsCmd();
     }
@@ -1923,6 +1925,7 @@ class MeshCoreApp {
     // after the retry cap.
     _onContactsStall() {
         if (!this._canSend() || this.connectionMode !== 'companion') {
+            this._contactsFetchActive = false;
             this._setContactsLoading(false);
             return;
         }
@@ -1932,6 +1935,7 @@ class MeshCoreApp {
         const noProgress = this._contactsRetries > 0 && fetched === this._contactsLastStallSize;
         if (noProgress || this._contactsRetries >= CONTACTS_MAX_RETRIES) {
             this._contactsReceiving = false;
+            this._contactsFetchActive = false;
             this._updateContactsCount();
             if (fetched === 0) {
                 this._setContactsError('Contact fetch failed — try reconnecting.');
@@ -2326,6 +2330,7 @@ class MeshCoreApp {
         if (pushCode === 0x04 && this._contactsReceiving) {
             this._contactsReceiving = false;
             this._contactsRetries = 0;
+            this._contactsFetchActive = false;
             this._setContactsLoading(false);
             if (payload.length >= 5)
                 this._contactsLastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
@@ -2419,7 +2424,9 @@ class MeshCoreApp {
         }
         if (this._deviceRefreshTimer) return;   // already polling — don't restart or double-poll
         const poll = () => {
-            if (this.connectionMode === 'companion' && this._canSend()) {
+            // Never poll while contacts are being fetched: re-issuing APP_START
+            // mid-stream disrupts the companion's contact dump and stalls it.
+            if (this.connectionMode === 'companion' && this._canSend() && !this._contactsFetchActive) {
                 this.sendAppStart().catch(() => {});   // its SELF_INFO reply refreshes the position
             }
         };
@@ -5013,6 +5020,7 @@ class MeshCoreApp {
         // linger). The lastmod marker is intentionally kept — it only ever
         // reflects a fully-completed sync now, so incremental sync stays correct.
         this._contactsReceiving = false;
+        this._contactsFetchActive = false;
         this._setContactsLoading(false);
         document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
