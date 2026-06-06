@@ -1904,8 +1904,15 @@ class MeshCoreApp {
     }
 
     async sendAppStart() {
-        // CMD_APP_START = 0x01, firmware target version = 0x03, 6 padding bytes, app name
-        const payload = new Uint8Array([0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x72, 0x78, 0x6D, 0x6F, 0x6E]);
+        // CMD_APP_START = [0x01, app_ver 0x03, 6 padding bytes, app_name (UTF-8)].
+        // app_name only identifies this client to the device (informational, not
+        // echoed back in SELF_INFO), so its length is irrelevant — the frame stays
+        // tiny either way.
+        const header = [0x01, 0x03, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20];
+        const name = new TextEncoder().encode('signal-tester');
+        const payload = new Uint8Array(header.length + name.length);
+        payload.set(header, 0);
+        payload.set(name, header.length);
         await this._sendFrame(payload);
     }
 
