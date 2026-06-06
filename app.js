@@ -163,6 +163,8 @@ class MeshCoreApp {
             this.statusEl.classList.toggle('paused', !this._collecting);
         }
         this._syncWakeLock();
+        // Keep the Android notification in step with the pause state.
+        this._refreshNativeStatus();
     }
 
     _syncWakeLock() {
@@ -417,6 +419,8 @@ class MeshCoreApp {
         this.soundSelect?.addEventListener('change', () => {
             Store.set('sound', this.soundSelect.value);
             this._updateSoundHighlight();
+            // Show/hide the speaker icon in the Android notification.
+            this._refreshNativeStatus();
         });
 
         // Keep screen on
@@ -4890,8 +4894,23 @@ class MeshCoreApp {
     updateStatus(text, className) {
         if (this.statusTextEl) this.statusTextEl.textContent = text;
         this.statusEl.className = `status ${className}`;
+        this._lastStatusText = text;
         // Mirror the connection status into the native foreground-service
         // notification so it reflects reality (including self-disconnects).
+        this._refreshNativeStatus();
+    }
+
+    // Build the text shown in the Android foreground-service notification from
+    // the current state: the base connection status, plus a speaker icon when
+    // sound alerts are armed and capture is live, plus a paused marker when the
+    // capture is stopped. No-op outside the Android wrapper.
+    _refreshNativeStatus() {
+        let text = this._lastStatusText || '';
+        if (this._canSend()) {
+            const soundOn = (this.soundSelect?.value || 'off') !== 'off';
+            if (!this._collecting) text += ' — paused';
+            else if (soundOn) text = '🔊 ' + text;
+        }
         try { window.AndroidScreen?.setStatus?.(text); } catch (e) {}
     }
 

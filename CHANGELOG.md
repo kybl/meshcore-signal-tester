@@ -15,8 +15,9 @@
   network by typing in its IP address. Web browsers can't do this, so it works
   only in the Android app.
 - **Android app niceties** — it now shows the current status in the phone's
-  notification bar, opens web links in your normal browser, and closes pop-ups
-  when you press Back.
+  notification bar (with a speaker icon while beep alerts are on, and a "paused"
+  marker when capture is stopped), opens web links in your normal browser, and
+  closes pop-ups when you press Back.
 - **3D map additions:**
   - optionally show your own device's location on the map;
   - a **Center on me** button that recentres the map and then follows you as
