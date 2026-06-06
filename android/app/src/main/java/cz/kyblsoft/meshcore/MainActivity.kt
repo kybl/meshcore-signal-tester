@@ -260,7 +260,10 @@ class MainActivity : AppCompatActivity() {
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                 )
-                webView.visibility = View.GONE
+                // INVISIBLE (not GONE): the custom view covers the WebView, but
+                // keeping it laid out preserves its scroll position. GONE drops it
+                // from layout (0 height), which resets the page scroll to the top.
+                webView.visibility = View.INVISIBLE
                 setImmersiveFullscreen(true)
             }
 
@@ -270,8 +273,8 @@ class MainActivity : AppCompatActivity() {
                 customView = null
                 webView.visibility = View.VISIBLE
                 setImmersiveFullscreen(false)
-                // Showing the WebView again resets its scroll to the top, so
-                // restore the previous position once it has been laid out.
+                // Belt-and-suspenders: INVISIBLE already preserves the scroll, but
+                // restore it explicitly once laid out in case the WebView nudged it.
                 webView.post { webView.scrollTo(0, savedWebViewScrollY) }
                 customViewCallback?.onCustomViewHidden()
                 customViewCallback = null
