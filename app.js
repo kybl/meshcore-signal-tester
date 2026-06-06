@@ -111,6 +111,7 @@ class MeshCoreApp {
         this._contactsReceiving = false;
         this._contactsRetries = 0;
         this._contactsLastStallSize = -1;
+        this._contactsFetchedKeys = new Set();   // keys received during the current fetch
         this._selShowMore = false;
         this._filterShowMore = false;
         this._mapPins = new Set(); // pubKeyFullHex of contacts pinned to 3D map
@@ -1891,6 +1892,7 @@ class MeshCoreApp {
         if (!this._canSend()) return;
         this._contactsRetries = 0;
         this._contactsLastStallSize = -1;
+        this._contactsFetchedKeys.clear();
         this._setContactsLoading(true);
         await this._sendGetContactsCmd();
     }
@@ -1924,25 +1926,27 @@ class MeshCoreApp {
             this._setContactsLoading(false);
             return;
         }
-        const size = this._contacts.size;
-        const noProgress = this._contactsRetries > 0 && size === this._contactsLastStallSize;
+        // Count only what THIS fetch has pulled, not the whole contact map
+        // (which may already hold CSV-imported or previously-known contacts).
+        const fetched = this._contactsFetchedKeys.size;
+        const noProgress = this._contactsRetries > 0 && fetched === this._contactsLastStallSize;
         if (noProgress || this._contactsRetries >= CONTACTS_MAX_RETRIES) {
             this._contactsReceiving = false;
             this._updateContactsCount();
-            if (size === 0) {
+            if (fetched === 0) {
                 this._setContactsError('Contact fetch failed — try reconnecting.');
             } else {
                 // Partial list and further retries aren't pulling the rest — say
                 // so rather than stopping silently, so the user knows to reconnect.
-                this._setContactsError(`Synced ${size} contacts — some may be missing. Reconnect to retry.`);
+                this._setContactsError(`Synced ${fetched} contacts — some may be missing. Reconnect to retry.`);
             }
             return;
         }
-        this._contactsLastStallSize = size;
+        this._contactsLastStallSize = fetched;
         this._contactsRetries++;
         if (this.contactsLoadingMsg) {
             this.contactsLoadingMsg.style.display = '';
-            this.contactsLoadingMsg.textContent = `Syncing contacts… (${size} so far)`;
+            this.contactsLoadingMsg.textContent = `Syncing contacts… (${fetched} so far)`;
         }
         this._sendGetContactsCmd();
     }
@@ -1998,6 +2002,7 @@ class MeshCoreApp {
         // resets the marker to 0) recovered. Re-fetching a contact we already
         // have via push is a harmless upsert.
         this._updateContactsCount();
+        return pubKeyFull;
     }
 
     _contactsByPrefix(hexPrefix) {
@@ -2312,7 +2317,8 @@ class MeshCoreApp {
         }
         if (pushCode === 0x03) {
             if (this._contactsReceiving) {
-                this._parseContact(payload);
+                const key = this._parseContact(payload);
+                if (key) this._contactsFetchedKeys.add(key);   // count what THIS fetch pulled
                 this._armContactsWatchdog();   // got a contact — keep the stream alive
             }
             return;
