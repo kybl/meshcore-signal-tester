@@ -89,6 +89,9 @@ class MainActivity : AppCompatActivity() {
     // onShowCustomView; we host that view on top of the window decor.
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+    // WebView scroll position is reset when it's hidden for fullscreen; remember
+    // it so we can put the user back where they were on exit.
+    private var savedWebViewScrollY = 0
 
     // File picker for CSV import — result wired to the pending WebView callback
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
@@ -249,6 +252,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 customView = view
                 customViewCallback = callback
+                savedWebViewScrollY = webView.scrollY
                 (window.decorView as FrameLayout).addView(
                     view,
                     FrameLayout.LayoutParams(
@@ -266,6 +270,9 @@ class MainActivity : AppCompatActivity() {
                 customView = null
                 webView.visibility = View.VISIBLE
                 setImmersiveFullscreen(false)
+                // Showing the WebView again resets its scroll to the top, so
+                // restore the previous position once it has been laid out.
+                webView.post { webView.scrollTo(0, savedWebViewScrollY) }
                 customViewCallback?.onCustomViewHidden()
                 customViewCallback = null
             }
