@@ -559,6 +559,9 @@ class MeshCoreApp {
             const mapContainer = document.querySelector('.map-container');
             fsBtn.addEventListener('click', () => {
                 if (!document.fullscreenElement) {
+                    // Remember where the page was scrolled so we can return there
+                    // on exit — entering fullscreen resets the document scroll.
+                    this._preFsScrollY = window.scrollY || window.pageYOffset || 0;
                     mapContainer?.requestFullscreen().catch(() => {});
                 } else {
                     document.exitFullscreen();
@@ -568,6 +571,17 @@ class MeshCoreApp {
                 const isFs = !!document.fullscreenElement;
                 fsBtn.textContent = isFs ? '✕' : '⛶';
                 fsBtn.title = isFs ? 'Exit fullscreen' : 'Fullscreen';
+                if (!isFs) {
+                    // Restore the page scroll after leaving fullscreen. The reset
+                    // can land a frame or two later (especially in the Android
+                    // WebView), so re-apply across a few ticks.
+                    const y = this._preFsScrollY || 0;
+                    const restore = () => window.scrollTo(0, y);
+                    restore();
+                    requestAnimationFrame(restore);
+                    setTimeout(restore, 60);
+                    setTimeout(restore, 200);
+                }
             });
         }
 

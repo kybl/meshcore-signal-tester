@@ -89,9 +89,6 @@ class MainActivity : AppCompatActivity() {
     // onShowCustomView; we host that view on top of the window decor.
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
-    // WebView scroll position is reset when it's hidden for fullscreen; remember
-    // it so we can put the user back where they were on exit.
-    private var savedWebViewScrollY = 0
 
     // File picker for CSV import — result wired to the pending WebView callback
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
@@ -252,7 +249,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 customView = view
                 customViewCallback = callback
-                savedWebViewScrollY = webView.scrollY
                 (window.decorView as FrameLayout).addView(
                     view,
                     FrameLayout.LayoutParams(
@@ -273,9 +269,8 @@ class MainActivity : AppCompatActivity() {
                 customView = null
                 webView.visibility = View.VISIBLE
                 setImmersiveFullscreen(false)
-                // Belt-and-suspenders: INVISIBLE already preserves the scroll, but
-                // restore it explicitly once laid out in case the WebView nudged it.
-                webView.post { webView.scrollTo(0, savedWebViewScrollY) }
+                // The page scroll is restored on the JS side (fullscreenchange),
+                // since the document scroll lives in Blink, not webView.scrollY.
                 customViewCallback?.onCustomViewHidden()
                 customViewCallback = null
             }
