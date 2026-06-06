@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.1.0] - 2026-06-06
+## [1.1.0] - 2026-06-07
 
 ### Added
 
@@ -19,7 +19,9 @@
   marker when capture is stopped), opens web links in your normal browser, and
   closes pop-ups when you press Back.
 - **3D map additions:**
-  - optionally show your own device's location on the map;
+  - optionally show your own device's location on the map (this keeps asking
+    the device for its position, which can drain the battery faster — leave it
+    off when you don't need it);
   - a **Center on me** button that recentres the map and then follows you as
     you move;
   - pin repeaters to the map and point the camera at one;
