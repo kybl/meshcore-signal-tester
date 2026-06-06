@@ -4567,6 +4567,10 @@ class MeshCoreApp {
     _applyRepFilter() {
         this._renderRepTable();
         this._renderMsgTable();
+        // Filtering changes how many repeater columns are shown, so the table
+        // width changes too — re-check overflow (allowing a return to full type
+        // names) once the new layout has been laid out.
+        requestAnimationFrame(() => this._checkTableOverflow(true));
         this._scheduleChartRender();
         this._updateStats();
         this.signalMap?.setFilterFn(
