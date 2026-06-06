@@ -44,6 +44,8 @@
   location is switched off — it works again once you turn location back on.
 - The same Bluetooth device no longer shows up several times in your list of
   saved devices.
+- The 3D map's fullscreen button now works in the Android app (it did nothing
+  there before).
 
 Plus lots of smaller improvements throughout.
 

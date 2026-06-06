@@ -16,6 +16,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
 import android.webkit.ValueCallback
@@ -24,12 +26,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.widget.ArrayAdapter
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import org.json.JSONArray
@@ -78,6 +84,12 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* user decides in settings; capture still works while screen is on */ }
 
+    // HTML5 fullscreen (the 3D map "fullscreen" button). When the page calls
+    // Element.requestFullscreen(), the WebView routes it through
+    // onShowCustomView; we host that view on top of the window decor.
+    private var customView: View? = null
+    private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+
     // File picker for CSV import — result wired to the pending WebView callback
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
     private val openFileLauncher = registerForActivityResult(
@@ -104,6 +116,19 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved.", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // Hide/show the system bars while an HTML element is in fullscreen.
+    private fun setImmersiveFullscreen(on: Boolean) {
+        WindowCompat.setDecorFitsSystemWindows(window, !on)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        if (on) {
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else {
+            controller.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -214,6 +239,37 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
+            // HTML5 Fullscreen API support. Without these the page's
+            // requestFullscreen() silently does nothing in a WebView, so the
+            // 3D map "fullscreen" button appeared dead on Android.
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                if (customView != null) {   // already in fullscreen — refuse the new one
+                    callback.onCustomViewHidden()
+                    return
+                }
+                customView = view
+                customViewCallback = callback
+                (window.decorView as FrameLayout).addView(
+                    view,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+                webView.visibility = View.GONE
+                setImmersiveFullscreen(true)
+            }
+
+            override fun onHideCustomView() {
+                val view = customView ?: return
+                (window.decorView as FrameLayout).removeView(view)
+                customView = null
+                webView.visibility = View.VISIBLE
+                setImmersiveFullscreen(false)
+                customViewCallback?.onCustomViewHidden()
+                customViewCallback = null
+            }
+
             override fun onShowFileChooser(
                 webView: WebView,
                 filePathCallback: ValueCallback<Array<Uri>>,
@@ -231,6 +287,15 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                // Leave HTML5 fullscreen first if the map is maximised. Asking the
+                // page to exit keeps document.fullscreenElement in sync and fires
+                // onHideCustomView to tear down our overlay.
+                if (customView != null) {
+                    webView.evaluateJavascript(
+                        "document.exitFullscreen && document.exitFullscreen()", null
+                    )
+                    return
+                }
                 // Let the web app close an open overlay (help / settings) first;
                 // only leave the app when nothing was open to dismiss.
                 webView.evaluateJavascript(
