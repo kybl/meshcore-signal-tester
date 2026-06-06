@@ -7,7 +7,7 @@
 - **Connect over USB** — plug a companion radio in with a USB cable instead of
   using Bluetooth. Devices you've connected to before show up as buttons for
   one-tap reconnecting.
-- **Connect to a repeater** — you can now plug a MeshCore repeater into USB,
+- **Repeater support** — you can now plug a MeshCore repeater into USB,
   not just a companion radio; the app detects which kind it is on its own. With
   special logging firmware it shows full detail for every packet; with normal
   firmware it shows what it can read from the repeater's logs.
