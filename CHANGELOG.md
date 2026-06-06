@@ -32,6 +32,9 @@
 
 - Reworked the header into a colour-coded connection status frame consolidating
   the connect/disconnect controls.
+- The Sound control is highlighted in yellow while sound alerts are enabled, as
+  a reminder they're armed.
+- Brighter, more distinct repeater colour palette.
 
 ### Fixed
 
@@ -40,6 +43,8 @@
 - Contact sync no longer gets stuck after an interrupted fetch.
 - The 3D map's "Enable location" button no longer freezes when GPS is off; it
   stays usable so capture recovers once location is switched back on.
+- The same Bluetooth device no longer piles up as duplicate entries in the
+  saved-devices list.
 
 Plus many smaller UX improvements throughout.
 
