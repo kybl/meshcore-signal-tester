@@ -1928,9 +1928,14 @@ class MeshCoreApp {
         const noProgress = this._contactsRetries > 0 && size === this._contactsLastStallSize;
         if (noProgress || this._contactsRetries >= CONTACTS_MAX_RETRIES) {
             this._contactsReceiving = false;
-            this._setContactsLoading(false);
             this._updateContactsCount();
-            if (size === 0) this._setContactsError('Contact fetch failed — try reconnecting.');
+            if (size === 0) {
+                this._setContactsError('Contact fetch failed — try reconnecting.');
+            } else {
+                // Partial list and further retries aren't pulling the rest — say
+                // so rather than stopping silently, so the user knows to reconnect.
+                this._setContactsError(`Synced ${size} contacts — some may be missing. Reconnect to retry.`);
+            }
             return;
         }
         this._contactsLastStallSize = size;

@@ -212,6 +212,14 @@ class BleManager(private val context: Context, private val js: JsApi) {
                     // onMtuChanged; if the request can't even be issued, start now.
                     main.post {
                         try {
+                            // Ask for the fastest connection interval. The default
+                            // BALANCED priority (~30-50 ms interval) is too slow for
+                            // the burst of frames the companion sends when dumping
+                            // its contact list — the device's notification queue
+                            // overflows and the tail of the list is dropped, so the
+                            // stream stalls before END_OF_CONTACTS. HIGH priority
+                            // (~7.5-15 ms) drains the burst several times faster.
+                            try { g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) } catch (_: Exception) {}
                             if (!g.requestMtu(517)) g.discoverServices()
                         } catch (_: Exception) {
                             try { g.discoverServices() } catch (_: Exception) {}
