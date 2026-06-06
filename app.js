@@ -8,6 +8,14 @@ import { Signal3DMap } from './signal3d.js?v=102';
 // busters, which change on every edit.
 const APP_VERSION = '1.1.0';
 
+// Contact-sync resilience. The companion streams its whole contact list as a
+// burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow
+// the device's notification queue and drop the tail, so the stream stalls
+// partway and END_OF_CONTACTS never arrives. If no contact frame lands for this
+// long mid-fetch we re-request and merge (contacts upsert by key), up to a cap.
+const CONTACTS_STALL_MS = 4000;
+const CONTACTS_MAX_RETRIES = 8;
+
 // Per-repeater colour: hue, saturation AND lightness are all derived from the id
 // hash, so different repeaters differ in all three — within bounds that keep the
 // colour usable (never grey, never too dark/light). Dark theme lifts the
@@ -101,6 +109,8 @@ class MeshCoreApp {
         this._contacts = new Map(); // pubKeyFullHex → {name, type, lat, lon, lastAdvert, lastmod}
         this._contactsLastmod = 0;
         this._contactsReceiving = false;
+        this._contactsRetries = 0;
+        this._contactsLastStallSize = -1;
         this._selShowMore = false;
         this._filterShowMore = false;
         this._mapPins = new Set(); // pubKeyFullHex of contacts pinned to 3D map
@@ -1879,14 +1889,57 @@ class MeshCoreApp {
 
     async sendGetContacts() {
         if (!this._canSend()) return;
+        this._contactsRetries = 0;
+        this._contactsLastStallSize = -1;
+        this._setContactsLoading(true);
+        await this._sendGetContactsCmd();
+    }
+
+    // Send the raw CMD_GET_CONTACTS frame and arm the stall watchdog. Separate
+    // from sendGetContacts() so a retry can re-request without resetting the
+    // retry counter.
+    async _sendGetContactsCmd() {
         // CMD_GET_CONTACTS = 0x04; optional 4-byte LE lastmod for incremental sync
         const cmd = new Uint8Array(this._contactsLastmod > 0 ? 5 : 1);
         cmd[0] = 0x04;
         if (this._contactsLastmod > 0)
             new DataView(cmd.buffer).setUint32(1, this._contactsLastmod, true);
-        this._setContactsLoading(true);
+        this._armContactsWatchdog();
         try { await this._sendFrame(cmd); }
         catch (e) { this._setContactsError('Contact request failed: ' + (e?.message || e)); }
+    }
+
+    _armContactsWatchdog() {
+        clearTimeout(this._contactsStallTimer);
+        this._contactsStallTimer = setTimeout(() => this._onContactsStall(), CONTACTS_STALL_MS);
+    }
+
+    // The contact stream went quiet before END_OF_CONTACTS — almost always a
+    // dropped frame on a busy BLE link. Re-request and merge; contacts upsert by
+    // key, so each pass fills more gaps. Stop once a pass adds nothing new (the
+    // list is as complete as it'll get — likely just the END frame was lost) or
+    // after the retry cap.
+    _onContactsStall() {
+        if (!this._canSend() || this.connectionMode !== 'companion') {
+            this._setContactsLoading(false);
+            return;
+        }
+        const size = this._contacts.size;
+        const noProgress = this._contactsRetries > 0 && size === this._contactsLastStallSize;
+        if (noProgress || this._contactsRetries >= CONTACTS_MAX_RETRIES) {
+            this._contactsReceiving = false;
+            this._setContactsLoading(false);
+            this._updateContactsCount();
+            if (size === 0) this._setContactsError('Contact fetch failed — try reconnecting.');
+            return;
+        }
+        this._contactsLastStallSize = size;
+        this._contactsRetries++;
+        if (this.contactsLoadingMsg) {
+            this.contactsLoadingMsg.style.display = '';
+            this.contactsLoadingMsg.textContent = `Syncing contacts… (${size} so far)`;
+        }
+        this._sendGetContactsCmd();
     }
 
     _setContactsLoading(on) {
@@ -1894,14 +1947,11 @@ class MeshCoreApp {
             this.contactsLoadingMsg.style.display = on ? '' : 'none';
             if (on) this.contactsLoadingMsg.textContent = 'Fetching contacts…';
         }
-        clearTimeout(this._contactsLoadingTimeout);
-        if (on) this._contactsLoadingTimeout = setTimeout(() => {
-            if (this.contactsLoadingMsg) this.contactsLoadingMsg.textContent = 'Contact fetch failed — try reconnecting.';
-        }, 15000);
+        if (!on) clearTimeout(this._contactsStallTimer);
     }
 
     _setContactsError(msg) {
-        clearTimeout(this._contactsLoadingTimeout);
+        clearTimeout(this._contactsStallTimer);
         if (this.contactsLoadingMsg) {
             this.contactsLoadingMsg.style.display = '';
             this.contactsLoadingMsg.textContent = msg;
@@ -2252,14 +2302,19 @@ class MeshCoreApp {
         // Contact list responses (from CMD_GET_CONTACTS = 0x04)
         if (pushCode === 0x02) {
             this._contactsReceiving = true;
+            this._armContactsWatchdog();   // stream started — reset the stall timer
             return;
         }
         if (pushCode === 0x03) {
-            if (this._contactsReceiving) this._parseContact(payload);
+            if (this._contactsReceiving) {
+                this._parseContact(payload);
+                this._armContactsWatchdog();   // got a contact — keep the stream alive
+            }
             return;
         }
         if (pushCode === 0x04 && this._contactsReceiving) {
             this._contactsReceiving = false;
+            this._contactsRetries = 0;
             this._setContactsLoading(false);
             if (payload.length >= 5)
                 this._contactsLastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
