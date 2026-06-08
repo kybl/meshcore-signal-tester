@@ -2,19 +2,40 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Captured data is now stored on disk (IndexedDB) instead of only in memory.**
+  The full session history is persisted as it is captured; only a bounded recent
+  window is kept in RAM for rendering. This means:
+  - "Auto-remove: Never" keeps the full history without growing memory without
+    limit — it is bounded by disk storage instead of RAM.
+  - Captured data survives a WebView renderer crash / app restart: it is replayed
+    back from disk on startup.
+  - "Display: All" (or a window wider than the in-RAM budget) renders the signal
+    charts from a **downsampled** view of the full history on disk, so showing the
+    whole session no longer has to load every packet into memory at once.
+  - CSV export streams the full history from disk, not just what is in memory.
+
 ### Fixed
 
 - **Android app no longer freezes on a blank screen after running for hours.**
   Two causes were addressed:
-  - With Auto-remove set to "Never" (the default), captured data was kept in
-    memory forever even though only the Display window (default 15 min) was ever
-    shown. Over a long session the heap grew without limit until Android killed
-    the WebView's renderer. Now, when Auto-remove is "Never", data older than the
-    Display window is also dropped from memory, so a finite Display window bounds
-    memory use. "Show all" and CSV imports still keep the full history.
+  - Unbounded memory growth. With Auto-remove "Never" (the default) the heap grew
+    until Android OOM-killed the WebView renderer. Memory is now bounded by a
+    fixed in-RAM window (the full history lives on disk — see above).
   - If the WebView renderer was killed anyway (e.g. the OS reclaiming memory in
     the background), the app showed a permanent blank screen. It now detects this
     and rebuilds the WebView so the UI recovers instead of staying frozen.
+
+### Known limitations / to verify on-device
+
+- The packet table and 3D map still show only the in-RAM window (≈ the most
+  recent hour); the downsampled full-history view currently applies to the 2D
+  signal charts and CSV export. The "All" charts are a point-in-time snapshot
+  refreshed when the Display window changes (not continuously while capturing).
+- The IndexedDB storage + downsampling path has been syntax-checked but needs
+  runtime validation on a device (it cannot be exercised in CI without a browser
+  and a live packet stream).
 
 ## [1.1.0] - 2026-06-07
 

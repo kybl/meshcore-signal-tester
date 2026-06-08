@@ -1,6 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=103';
+import { PacketStore } from './packet-store.js?v=1';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -131,8 +132,26 @@ class MeshCoreApp {
         this._unsavedRxCount = 0; // packets received since last CSV export
         this._chartFrozenAt = Date.now();
 
+        // --- Durable storage (IndexedDB) ---------------------------------
+        // The full session history lives on disk; RAM holds only a bounded
+        // recent window for rendering. This keeps "Auto-remove: Never" from
+        // growing the heap until the WebView renderer is OOM-killed, and lets
+        // captured data survive a renderer crash / app restart (it is replayed
+        // back from disk on startup).
+        this.store = new PacketStore();
+        this._storeReady = false;
+        this.RENDER_BUDGET_MS = 60 * 60 * 1000;  // raw points kept in RAM (≥ this much recent history)
+        this.MAX_RAW_VIEW    = 40000;            // above this a window renders downsampled
+        this.DOWNSAMPLE_BUCKETS = 1500;          // time-bucket count for wide-window charts
+        this._obsWriteBuf  = [];                 // pending obs records to flush to disk
+        this._sentWriteBuf = [];                 // pending outgoing-SNR records
+        this._writeFlushTimer = null;
+        this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
+        this._wideSentPoints  = null;
+
         this.initUI();
         this.startCleanupTimer();
+        this._initStore();
         this._renderSavedDevices();
         this._renderRepTable();
         this._renderMsgTable();
@@ -2515,6 +2534,7 @@ class MeshCoreApp {
         // Record uplink SNR in the Sent SNR History chart and 3D map
         const now = Date.now();
         this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex });
+        if (this.store) { this._sentWriteBuf.push({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex }); this._scheduleWriteFlush(); }
         this._scheduleChartRender();
         const sentLoc = this.signalMap?.currentLocation() ?? null;
         if (sentLoc && remoteSnr != null) {
@@ -3027,6 +3047,10 @@ class MeshCoreApp {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
         }
         if (loc) this.signalMap?.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
+
+        // Persist this observation (rawHex is per-path, so it lives per-obs).
+        // Skipped only while replaying from disk to avoid writing it back.
+        if (!opts.replaying) this._ingestToStore({ now, hash, repeater, rawHex, snr, rssi, meta, type, loc, remoteSnr: opts.remoteSnr }, isNewHash);
 
         if (opts.importing) return;
 
@@ -3973,21 +3997,188 @@ class MeshCoreApp {
         this.cleanupInterval = setInterval(() => this.cleanup(), 10000);
     }
 
-    // Effective in-memory retention. HASH_LIFETIME ("Auto-remove") is the
-    // primary bound, but when it is "Never" we fall back to the display window:
-    // data older than what is ever shown would otherwise accumulate without
-    // limit and, on multi-hour mobile sessions, grow the heap until the WebView
-    // renderer is OOM-killed (blank screen). When both are Infinity (e.g. "show
-    // all" or after a CSV import) nothing is pruned, preserving full history.
-    _effectiveLifetime() {
-        if (isFinite(this.HASH_LIFETIME)) return this.HASH_LIFETIME;
-        if (isFinite(this.DISPLAY_LIFETIME)) return this.DISPLAY_LIFETIME;
-        return Infinity;
+    // --- Durable storage: write-through, startup replay, downsampled views ---
+
+    // How much recent history to keep materialised in RAM. Never more than the
+    // retention bound; otherwise the larger of the display window and the render
+    // budget, so Display changes within the budget need no disk round-trip.
+    _ramWindowMs() {
+        // Without durable storage there is no disk to fall back to, so we must
+        // keep everything that should be visible in RAM (the pre-storage
+        // behaviour: bounded by retention, else the display window, else
+        // unbounded). With storage, RAM is bounded by the render budget.
+        if (!this._storeReady) {
+            if (isFinite(this.HASH_LIFETIME)) return this.HASH_LIFETIME;
+            if (isFinite(this.DISPLAY_LIFETIME)) return this.DISPLAY_LIFETIME;
+            return Infinity;
+        }
+        const ret  = isFinite(this.HASH_LIFETIME) ? this.HASH_LIFETIME : Infinity;
+        const disp = isFinite(this.DISPLAY_LIFETIME) ? this.DISPLAY_LIFETIME : 0;
+        return Math.min(Math.max(disp, this.RENDER_BUDGET_MS), ret);
+    }
+
+    async _initStore() {
+        const ok = await this.store.open();
+        if (!ok) {
+            // IndexedDB unavailable → RAM-only, as before. Stop buffering writes
+            // (nothing will drain them) so the buffer can't grow without bound.
+            this._storeDead = true;
+            this._obsWriteBuf = [];
+            this._sentWriteBuf = [];
+            return;
+        }
+        this._storeReady = true;
+        this.store.onQuotaExceeded = () => this._onStorageQuota();
+        try {
+            const totals = await this.store.getKV('totals');
+            if (totals && Number.isFinite(totals.totalRxCount)) this.totalRxCount = totals.totalRxCount;
+        } catch (_) {}
+        await this._replayWindow();
+        this._scheduleChartRender();
+        this._renderMsgTable();
+        this._renderRepTable();
+        this._updateStats();
+        this._refreshWideView();
+    }
+
+    // Rebuild the in-RAM render window from disk by replaying the most recent
+    // observations through the normal ingest path, so columns / collision state
+    // reconstruct identically. Used on startup and after a renderer-crash reload.
+    async _replayWindow() {
+        if (!this.store.available) return;
+        const w = this._ramWindowMs();
+        const from = isFinite(w) ? Date.now() - w : -Infinity;
+        const obsList = [];
+        await this.store.eachObs(from, Infinity, r => { obsList.push(r); });
+        if (obsList.length) {
+            const hashMeta = new Map();
+            for (const h of new Set(obsList.map(o => o.hash))) {
+                const rec = await this.store.getHash(h);
+                if (rec) hashMeta.set(h, rec);
+            }
+            const savedTotal = this.totalRxCount, savedUnsaved = this._unsavedRxCount;
+            for (const o of obsList) {
+                const hm = hashMeta.get(o.hash) ?? {};
+                this._ingestPacket(o.hash, o.rawId, hm.type ?? null, o.rawHex ?? hm.rawHex ?? null,
+                    o.snr ?? null, o.rssi ?? null, hm.meta ?? {}, null,
+                    { importing: true, replaying: true, timestamp: o.time,
+                      lat: o.lat ?? undefined, lon: o.lon ?? undefined, remoteSnr: o.remoteSnr });
+            }
+            // Counters are authoritative from kv, not from the (windowed) replay.
+            this.totalRxCount = savedTotal; this._unsavedRxCount = savedUnsaved;
+        }
+        await this.store.eachSent(from, Infinity, r => {
+            this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label });
+        });
+    }
+
+    // Write-through: buffer an observation (and, for a new hash, its
+    // path-invariant payload) and schedule a debounced flush to disk.
+    _ingestToStore(o, isNewHash) {
+        if (!this.store || this._storeDead) return;
+        this._obsWriteBuf.push({
+            time: o.now, hash: o.hash, rawId: o.repeater, rawHex: o.rawHex ?? null,
+            snr: o.snr ?? null, rssi: o.rssi ?? null,
+            lat: o.loc?.lat ?? null, lon: o.loc?.lon ?? null,
+            ...(o.remoteSnr != null ? { remoteSnr: o.remoteSnr } : {}),
+        });
+        if (isNewHash) {
+            this.store.putHash({ hash: o.hash, firstSeen: o.now, type: o.type ?? null, meta: o.meta ?? null });
+        }
+        this._scheduleWriteFlush();
+    }
+
+    _scheduleWriteFlush() {
+        if (this._writeFlushTimer || this._storeDead) return;
+        this._writeFlushTimer = setTimeout(() => {
+            this._writeFlushTimer = null;
+            if (!this.store.available) {
+                // DB not open yet: keep buffering and retry. If it turned out to
+                // be unavailable, _initStore sets _storeDead and clears buffers.
+                if (!this._storeDead && (this._obsWriteBuf.length || this._sentWriteBuf.length)) this._scheduleWriteFlush();
+                return;
+            }
+            const obs = this._obsWriteBuf;  this._obsWriteBuf  = [];
+            const sent = this._sentWriteBuf; this._sentWriteBuf = [];
+            if (obs.length)  this.store.putObs(obs);
+            if (sent.length) this.store.putSent(sent);
+            this.store.setKV('totals', { totalRxCount: this.totalRxCount });
+        }, 1500);
+    }
+
+    _onStorageQuota() {
+        // Disk full: keep the newest history by trimming the oldest on disk down
+        // to the render budget. The session keeps running on its RAM window.
+        if (this._quotaPruning || !this.store.available) return;
+        this._quotaPruning = true;
+        this.store.pruneOlderThan(Date.now() - this.RENDER_BUDGET_MS)
+            .finally(() => { this._quotaPruning = false; });
+    }
+
+    // Should wide windows be served from disk (downsampled) rather than RAM?
+    // Only when Auto-remove is "Never" (so deep history exists) and the display
+    // window is wider than what we keep materialised in RAM.
+    _shouldUseWideView() {
+        if (!this._storeReady || !this.store.available) return false;
+        if (isFinite(this.HASH_LIFETIME)) return false;        // finite retention ⇒ RAM already holds it all
+        return !isFinite(this.DISPLAY_LIFETIME) || this.DISPLAY_LIFETIME > this.RENDER_BUDGET_MS;
+    }
+
+    // Resolve a rawId to an existing column WITHOUT mutating the column model
+    // (used to colour downsampled overlay points; live ingest uses
+    // findOrCreateColumn, which may promote/merge).
+    _resolveColReadonly(rawId) {
+        if (rawId === 'direct' || rawId === 'unknown') return rawId;
+        if (this.repeaterColumns.includes(rawId)) return rawId;
+        for (const col of this.repeaterColumns) {
+            if (col === 'direct' || col === 'unknown') continue;
+            const head = col.split('/')[0];
+            const p = Math.min(this.idPrecision(rawId), this.idPrecision(head));
+            if (this.idSuffix(head, p) === this.idSuffix(rawId, p)) return col;
+        }
+        return rawId;
+    }
+
+    // Build (or clear) the downsampled chart overlay for wide / "All" windows.
+    async _refreshWideView() {
+        if (!this._shouldUseWideView()) {
+            if (this._wideChartPoints) {
+                this._wideChartPoints = null; this._wideSentPoints = null;
+                this._scheduleChartRender();
+            }
+            return;
+        }
+        const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
+        try {
+            const buckets = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
+            const cps = [];
+            for (const b of buckets) {
+                const col = this._resolveColReadonly(b.rawId);
+                if (b.snrMin != null)  cps.push({ time: b.time, snr: b.snrMin,  rssi: b.rssiMin,  col, rawId: b.rawId, _bucket: true });
+                cps.push({ time: b.time, snr: b.snrAvg, rssi: b.rssiAvg, col, rawId: b.rawId, _bucket: true, count: b.count });
+                if (b.snrMax != null)  cps.push({ time: b.time, snr: b.snrMax,  rssi: b.rssiMax,  col, rawId: b.rawId, _bucket: true });
+            }
+            this._wideChartPoints = cps;
+            const sent = [];
+            await this.store.eachSent(from, Infinity, r =>
+                sent.push({ time: r.time, snr: r.snr, col: this._resolveColReadonly(r.rawId), label: r.label }));
+            this._wideSentPoints = sent;
+            this._scheduleChartRender();
+        } catch (e) {
+            console.warn('Wide-view load failed:', e);
+            this._wideChartPoints = null; this._wideSentPoints = null;
+        }
     }
 
     cleanup() {
         const now = Date.now();
-        const lifetime = this._effectiveLifetime();
+        // RAM is bounded by the render budget (and never exceeds retention).
+        // Disk keeps full history when Auto-remove is "Never"; when it is finite,
+        // history is truly deleted from disk too.
+        if (isFinite(this.HASH_LIFETIME) && this._storeReady) {
+            this.store.pruneOlderThan(now - this.HASH_LIFETIME);
+        }
+        const lifetime = this._ramWindowMs();
         const toRemove = [];
         for (const [hash, data] of this.hashData.entries()) {
             if (now - data.lastSeen > lifetime) toRemove.push(hash);
@@ -4116,6 +4307,12 @@ class MeshCoreApp {
         this.hashData.clear();
         this.chartPoints = [];
         this._sentSnrHistory = [];
+        this._wideChartPoints = null;
+        this._wideSentPoints = null;
+        this._obsWriteBuf = [];
+        this._sentWriteBuf = [];
+        this.totalRxCount = 0;
+        this.store?.clearAll();
         this._dscSeq = 0;
         this.repeaterColumns = [];
         this.allRepeaters.clear();
@@ -4147,10 +4344,10 @@ class MeshCoreApp {
         this._renderRepTable();
         this._renderMsgTable();
         this._updateStats();
-        // When Auto-remove is "Never", the display window also bounds in-memory
-        // retention (see _effectiveLifetime). Reclaim immediately on shrink
-        // instead of waiting for the next cleanup tick.
-        if (!isFinite(this.HASH_LIFETIME) && isFinite(this.DISPLAY_LIFETIME)) this.cleanup();
+        // Load (or drop) the downsampled disk overlay for wide / "All" windows,
+        // and reclaim RAM promptly if the window shrank below the budget.
+        this._refreshWideView();
+        this.cleanup();
     }
 
     _updateHideSelectOptions() {
@@ -4596,6 +4793,13 @@ class MeshCoreApp {
     }
 
     _visibleChartPoints() {
+        // Wide / "All" windows are served by a downsampled disk overlay so the
+        // chart can span the full history without materialising it in RAM.
+        if (this._wideChartPoints) {
+            return this._repFilterTerms.length
+                ? this._wideChartPoints.filter(p => this._colMatchesRepFilter(p.col))
+                : this._wideChartPoints;
+        }
         const cutoff = this._displayCutoffNow();
         let pts = cutoff ? this.chartPoints.filter(p => p.time >= cutoff) : this.chartPoints;
         return this._repFilterTerms.length
@@ -4604,6 +4808,11 @@ class MeshCoreApp {
     }
 
     _visibleSentSnrPts() {
+        if (this._wideSentPoints) {
+            return this._repFilterTerms.length
+                ? this._wideSentPoints.filter(p => this._colMatchesRepFilter(p.col))
+                : this._wideSentPoints;
+        }
         const cutoff = this._displayCutoffNow();
         let pts = cutoff ? this._sentSnrHistory.filter(p => p.time >= cutoff) : this._sentSnrHistory;
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
@@ -4626,8 +4835,16 @@ class MeshCoreApp {
     }
 
     async _exportCsv() {
-        if (this.hashData.size === 0) return;
+        const useDisk = this._storeReady && this.store.available;
+        if (this.hashData.size === 0 && !useDisk) return;
         this._unsavedRxCount = 0;
+
+        // Flush any buffered writes so the export reflects everything captured.
+        if (useDisk) {
+            if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
+            if (this._obsWriteBuf.length)  { await this.store.putObs(this._obsWriteBuf);  this._obsWriteBuf  = []; }
+            if (this._sentWriteBuf.length) { await this.store.putSent(this._sentWriteBuf); this._sentWriteBuf = []; }
+        }
 
         const msgFilter = this._msgFilter.toLowerCase().trim();
 
@@ -4641,13 +4858,42 @@ class MeshCoreApp {
         const header = ['time', 'type', 'hash', 'repeater', 'snr', 'uplink_snr', 'rssi', 'raw_hex', 'lat', 'lon', 'text', 'sender'];
         const lines = [];
 
-        // One row per (hash, repeater) pair, sorted chronologically
+        // One row per (hash, repeater) observation, sorted chronologically.
+        // Source the full history from disk when available; otherwise the RAM
+        // window. Each row carries its own rawHex (per-path) and the per-hash
+        // type/meta loaded once.
         const allRows = [];
-        for (const [hash, data] of this.hashData) {
-            if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
-            for (const [col, rep] of data.repeaters) {
+        let sentSource = this._sentSnrHistory;
+        if (useDisk) {
+            const obsAll = [];
+            await this.store.eachObs(-Infinity, Infinity, r => obsAll.push(r));
+            const hashCache = new Map();
+            for (const h of new Set(obsAll.map(o => o.hash))) {
+                const rec = await this.store.getHash(h);
+                if (rec) hashCache.set(h, rec);
+            }
+            for (const o of obsAll) {
+                const col = this._resolveColReadonly(o.rawId);
+                const hm = hashCache.get(o.hash) ?? {};
+                const rep = { rawId: o.rawId, snr: o.snr, rssi: o.rssi, remoteSnr: o.remoteSnr,
+                              rawHex: o.rawHex, lat: o.lat, lon: o.lon, time: o.time };
+                const data = { type: hm.type, meta: hm.meta, firstSeen: hm.firstSeen,
+                               rawHex: o.rawHex, repeaters: new Map([[col, rep]]) };
+                if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
                 if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
-                allRows.push({ hash, data, col, rep });
+                allRows.push({ hash: o.hash, data, col, rep });
+            }
+            const sent = [];
+            await this.store.eachSent(-Infinity, Infinity, r =>
+                sent.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label }));
+            sentSource = sent;
+        } else {
+            for (const [hash, data] of this.hashData) {
+                if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
+                for (const [col, rep] of data.repeaters) {
+                    if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
+                    allRows.push({ hash, data, col, rep });
+                }
             }
         }
         allRows.sort((a, b) => (a.rep.time ?? 0) - (b.rep.time ?? 0));
@@ -4684,7 +4930,7 @@ class MeshCoreApp {
         }
 
         // Append sent SNR history rows
-        for (const p of this._sentSnrHistory) {
+        for (const p of sentSource) {
             lines.push([
                 new Date(p.time).toISOString(),
                 'SentSNR',
@@ -4904,10 +5150,20 @@ class MeshCoreApp {
         // Import SentSNR history rows
         for (const r of sentSnrRows) {
             this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.repeater, label: r.csvText || r.repeater });
+            if (this.store) this._sentWriteBuf.push({ time: r.time, snr: r.snr, rawId: r.repeater, label: r.csvText || r.repeater });
         }
         if (sentSnrRows.length) {
             this._sentSnrHistory.sort((a, b) => a.time - b.time);
             this._renderChart('snr');
+        }
+
+        // Persist the import to disk and rebuild the downsampled "All" overlay,
+        // so imported (historical) data survives the RAM-window prune and shows.
+        if (this._storeReady && this.store.available) {
+            if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
+            if (this._obsWriteBuf.length)  { await this.store.putObs(this._obsWriteBuf);  this._obsWriteBuf  = []; }
+            if (this._sentWriteBuf.length) { await this.store.putSent(this._sentWriteBuf); this._sentWriteBuf = []; }
+            await this._refreshWideView();
         }
 
         this._sortColumns();
