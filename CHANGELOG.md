@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Android app no longer freezes on a blank screen after running for hours.**
+  Two causes were addressed:
+  - With Auto-remove set to "Never" (the default), captured data was kept in
+    memory forever even though only the Display window (default 15 min) was ever
+    shown. Over a long session the heap grew without limit until Android killed
+    the WebView's renderer. Now, when Auto-remove is "Never", data older than the
+    Display window is also dropped from memory, so a finite Display window bounds
+    memory use. "Show all" and CSV imports still keep the full history.
+  - If the WebView renderer was killed anyway (e.g. the OS reclaiming memory in
+    the background), the app showed a permanent blank screen. It now detects this
+    and rebuilds the WebView so the UI recovers instead of staying frozen.
+
 ## [1.1.0] - 2026-06-07
 
 ### Added

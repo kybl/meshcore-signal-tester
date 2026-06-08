@@ -20,6 +20,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.GeolocationPermissions
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -54,6 +55,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var jsApi: JsApi
+
+    private val appUrl = "https://appassets.androidplatform.net/assets/www/index.html"
 
     val main = Handler(Looper.getMainLooper())
 
@@ -159,6 +162,18 @@ class MainActivity : AppCompatActivity() {
         wifi = TcpManager(jsApi)
         location = LocationHelper(applicationContext, jsApi)
 
+        configureWebView()
+        webView.loadUrl(appUrl)
+        wireBackHandler()
+
+        // Permissions are requested lazily at BLE connect time.
+    }
+
+    // Build (or rebuild) this WebView's settings, JS bridges and clients.
+    // Extracted from onCreate so the exact same configuration can be reapplied
+    // to a freshly constructed WebView after the renderer process dies — see
+    // onRenderProcessGone and recreateWebView.
+    private fun configureWebView() {
         with(webView.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -195,6 +210,18 @@ class MainActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     false
                 }
+            }
+
+            // The renderer process was torn down (almost always the OS reclaiming
+            // memory while the app was in the background, occasionally a real
+            // crash). Returning false here would let the system kill our whole
+            // process; instead we claim the event and rebuild the WebView so the
+            // user gets the app back instead of a frozen blank screen.
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                if (view !== webView) return true
+                android.util.Log.w("MeshWeb", "WebView renderer gone (didCrash=${detail.didCrash()}); rebuilding")
+                recreateWebView()
+                return true
             }
         }
 
@@ -287,9 +314,11 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         }
+    }
 
-        webView.loadUrl("https://appassets.androidplatform.net/assets/www/index.html")
-
+    // Registered once from onCreate. The callback reads the current webView
+    // field each time it fires, so it keeps working after a WebView rebuild.
+    private fun wireBackHandler() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 // Leave HTML5 fullscreen first if the map is maximised. Asking the
@@ -311,8 +340,26 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
 
-        // Permissions are requested lazily at BLE connect time.
+    // Replace a dead WebView with a fresh one and reload the app. Called when
+    // the renderer process is gone (see onRenderProcessGone). The page starts
+    // over — in-memory capture from before the crash is lost — but the UI
+    // recovers instead of staying stuck on a blank screen. The managers keep
+    // their JsApi reference; only its target WebView is rebound.
+    private fun recreateWebView() {
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
+        // Drop any lingering HTML5-fullscreen overlay left over from the old page.
+        customView?.let { (window.decorView as FrameLayout).removeView(it) }
+        customView = null
+        customViewCallback = null
+
+        webView = WebView(this)
+        setContentView(webView)
+        jsApi.rebind(webView)
+        configureWebView()
+        webView.loadUrl(appUrl)
     }
 
     override fun onDestroy() {

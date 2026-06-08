@@ -10,7 +10,15 @@ import org.json.JSONObject
  *
  * The matching JS handlers live in native-bridge.js.
  */
-class JsApi(private val webView: WebView) {
+class JsApi(private var webView: WebView) {
+
+    /**
+     * Point this bridge at a freshly built WebView. Used when the renderer
+     * process is killed (e.g. Android reclaiming memory in the background) and
+     * [MainActivity] rebuilds the WebView from scratch — the managers keep their
+     * reference to this same JsApi, so only the target view changes.
+     */
+    fun rebind(view: WebView) { webView = view }
 
     private fun eval(js: String) {
         webView.post { webView.evaluateJavascript(js, null) }

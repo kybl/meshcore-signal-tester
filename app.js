@@ -928,9 +928,9 @@ class MeshCoreApp {
             'sound':
                 'off = silent. short / medium / long play a two-tone beep of increasing duration (long is 4× short) on each new packet. The first tone (1/3 of the beep) is a fixed 700 Hz click; the second tone (2/3) shifts pitch with SNR — higher SNR → higher pitch. When a repeater filter is active, the alert sounds only for packets from the filtered repeater(s). Setting is remembered across sessions.',
             'ttl':
-                'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import).',
+                'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import) — but note that when Auto-remove is "Never", the Display window below also bounds how much is held in memory, so the heap can\'t grow without limit on long runs.',
             'display':
-                'How far back to look when displaying data. Does not delete anything — data outside this window is still stored and continues to influence repeater ID merging and collision detection. "All" shows the full storage window. Can only be set equal to or shorter than Auto-remove.',
+                'How far back to look when displaying data. With a finite Auto-remove it deletes nothing — data outside this window is still stored and continues to influence repeater ID merging and collision detection. "All" shows the full storage window. When Auto-remove is "Never", anything older than this window is dropped from memory too (a finite Display window is what keeps a multi-hour session from exhausting memory and crashing). Can only be set equal to or shorter than Auto-remove.',
             'keepscreen':
                 'This could be necessary in a mobile browser to keep collection running — when the screen turns off, the browser suspends JavaScript and stops capturing. In the Android app, collection runs in a background service so the screen can be off without losing data — unless the system\'s battery optimization is active and kills the service. Setting is remembered across sessions.',
             'repeater':
@@ -3973,20 +3973,34 @@ class MeshCoreApp {
         this.cleanupInterval = setInterval(() => this.cleanup(), 10000);
     }
 
+    // Effective in-memory retention. HASH_LIFETIME ("Auto-remove") is the
+    // primary bound, but when it is "Never" we fall back to the display window:
+    // data older than what is ever shown would otherwise accumulate without
+    // limit and, on multi-hour mobile sessions, grow the heap until the WebView
+    // renderer is OOM-killed (blank screen). When both are Infinity (e.g. "show
+    // all" or after a CSV import) nothing is pruned, preserving full history.
+    _effectiveLifetime() {
+        if (isFinite(this.HASH_LIFETIME)) return this.HASH_LIFETIME;
+        if (isFinite(this.DISPLAY_LIFETIME)) return this.DISPLAY_LIFETIME;
+        return Infinity;
+    }
+
     cleanup() {
         const now = Date.now();
+        const lifetime = this._effectiveLifetime();
         const toRemove = [];
         for (const [hash, data] of this.hashData.entries()) {
-            if (now - data.lastSeen > this.HASH_LIFETIME) toRemove.push(hash);
+            if (now - data.lastSeen > lifetime) toRemove.push(hash);
         }
 
         if (!toRemove.length) {
-            // No hashData expired, but chartPoints may still need pruning
-            if (isFinite(this.HASH_LIFETIME)) {
-                const cutoff = now - this.HASH_LIFETIME;
+            // No hashData expired, but chartPoints / map points may still need pruning
+            if (isFinite(lifetime)) {
+                const cutoff = now - lifetime;
                 const before = this.chartPoints.length;
                 this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
                 this._sentSnrHistory = this._sentSnrHistory.filter(p => p.time >= cutoff);
+                this.signalMap?.purgeOlderThan(cutoff);
                 if (this.chartPoints.length !== before) this._rebuildAfterPrune();
             }
             const prev = this.repeaterColumns.join('|');
@@ -4001,12 +4015,12 @@ class MeshCoreApp {
         }
 
         setTimeout(() => {
-            const cutoff = Date.now() - this.HASH_LIFETIME;
+            const cutoff = Date.now() - lifetime;
             for (const hash of toRemove) {
                 const data = this.hashData.get(hash);
                 if (data && data.lastSeen <= cutoff) this.hashData.delete(hash);
             }
-            if (isFinite(this.HASH_LIFETIME)) {
+            if (isFinite(lifetime)) {
                 this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
                 this._sentSnrHistory = this._sentSnrHistory.filter(p => p.time >= cutoff);
             }
@@ -4133,6 +4147,10 @@ class MeshCoreApp {
         this._renderRepTable();
         this._renderMsgTable();
         this._updateStats();
+        // When Auto-remove is "Never", the display window also bounds in-memory
+        // retention (see _effectiveLifetime). Reclaim immediately on shrink
+        // instead of waiting for the next cleanup tick.
+        if (!isFinite(this.HASH_LIFETIME) && isFinite(this.DISPLAY_LIFETIME)) this.cleanup();
     }
 
     _updateHideSelectOptions() {
