@@ -2,7 +2,8 @@
 // each captured packet is a colored bead floating above its GPS location at a
 // height proportional to RSSI.
 //
-// Two tile sources: Mapy.com (default, requires API key) and OpenStreetMap.
+// Several tile sources: Mapy.com (default, requires API key), OpenStreetMap,
+// a dark basemap (CARTO Dark Matter), and "none" (a plain floor, no imagery).
 
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js';
@@ -40,6 +41,14 @@ const TILE_SOURCES = {
         url:    (z, x, y) => `https://tile.opentopomap.org/${z}/${x}/${y}.png`,
         attrib: '© OpenTopoMap (CC-BY-SA), © OpenStreetMap contributors',
     },
+    // Dark-themed basemap (CARTO Dark Matter, no API key required).
+    'cartodark':       {
+        label:  'Dark (CARTO Dark Matter)',
+        url:    (z, x, y) => `https://a.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}.png`,
+        attrib: '© OpenStreetMap contributors, © CARTO',
+    },
+    // No map tiles at all — the floor is rendered as a plain colour (theme-aware).
+    'none':            { label: 'None (no map)', url: null, attrib: '' },
 };
 const DEFAULT_SOURCE = 'mapycom-basic';
 
@@ -74,6 +83,10 @@ export class Signal3DMap {
         // map. When just viewing an imported dataset this is false, so a far-away
         // current position never drags the tiles away from the data.
         this.isLiveCapture = opts.isLiveCapture || (() => false);
+        // True when the page is in dark mode. Used to paint the map background
+        // (the area around the tiled floor) black, independent of the chosen
+        // tile source — a dark *basemap* and a dark *page* are two separate things.
+        this.isDarkMode = opts.isDarkMode || (() => false);
 
         this._rxPoints       = [];     // { lat, lon, rssi, snr, col, time }
         this._pins     = [];   // { lat, lon, name, color }
@@ -202,7 +215,7 @@ export class Signal3DMap {
         const canvas = this.canvas;
         this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-        this.renderer.setClearColor(0xeef2f7);
+        this.renderer.setClearColor(this._bgColor());
 
         const w = Math.max(1, canvas.clientWidth);
         const h = Math.max(1, canvas.clientHeight);
@@ -278,7 +291,7 @@ export class Signal3DMap {
 
         // Placeholder floor until tiles arrive
         const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
-        const phMat = new THREE.MeshBasicMaterial({ color: 0xdcdcdc });
+        const phMat = new THREE.MeshBasicMaterial({ color: this._floorColor() });
         this._mapMesh = new THREE.Mesh(phGeo, phMat);
         this._mapMesh.rotation.x = -Math.PI / 2;
         this.scene.add(this._mapMesh);
@@ -875,6 +888,26 @@ export class Signal3DMap {
         this._scheduleMapUpdate();
     }
 
+    // Map background (clear colour) and plain-floor colour, both theme-aware.
+    // Dark page → black background so the scene reads as dark regardless of the
+    // chosen tile source.
+    _bgColor()    { return this.isDarkMode() ? 0x000000 : 0xeef2f7; }
+    _floorColor() { return this.isDarkMode() ? 0x000000 : 0xdcdcdc; }
+
+    // Called by the host app when the page theme (light/dark) toggles.
+    applyTheme() {
+        this.renderer.setClearColor(this._bgColor());
+        // When no tiles are drawn (placeholder floor, or "none" source) the floor
+        // colour comes from the theme — refresh it. With real tiles the floor is
+        // the imagery itself, so only the background needed updating above.
+        if (!this._tileBounds) {
+            this._mapMesh?.material.color.set(this._floorColor());
+        } else if (this._mapSource === 'none') {
+            this._lastMapKey = null;
+            this._scheduleMapUpdate();
+        }
+    }
+
     // ---- Packet ingestion ----
 
     addPacket(opts) {
@@ -939,6 +972,18 @@ export class Signal3DMap {
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#dfdfdf';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // "None" source: no imagery, just a plain theme-aware floor (no fetches,
+        // no attribution).
+        if (!src.url) {
+            ctx.fillStyle = this.isDarkMode() ? '#000000' : '#eef2f7';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.colorSpace  = THREE.SRGBColorSpace;
+            tex.minFilter   = THREE.LinearFilter;
+            tex.needsUpdate = true;
+            return tex;
+        }
 
         const tasks = [];
         for (let dx = 0; dx < nx; dx++) {
@@ -1314,6 +1359,7 @@ export class Signal3DMap {
 
     async _updateOverlay() {
         if (!this._tileBounds || this._overlayBusy) return;
+        if (this._mapSource === 'none') { this._removeOverlay(); return; }  // nothing to detail
         const camBb = this._cameraViewBbox();
         if (!camBb) { this._removeOverlay(); return; }
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **3D map dark styles:**
+  - a dark map style (CARTO Dark Matter) in the map style list;
+  - a **None (no map)** option that drops the map imagery and shows a plain floor;
+  - when the page is in dark mode the map background is now black (separate from
+    the chosen map style — a dark *page* and a dark *basemap* are two different
+    things).
+
 ## [1.1.0] - 2026-06-07
 
 ### Added

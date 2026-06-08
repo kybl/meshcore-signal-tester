@@ -466,6 +466,7 @@ class MeshCoreApp {
                 applyTheme(isLight);
                 Store.set('theme', isLight ? 'light' : 'dark');
                 this._renderCharts();
+                this.signalMap?.applyTheme();
             });
         }
 
@@ -754,6 +755,7 @@ class MeshCoreApp {
                 },
                 nameForCol:    col => this._contactNameForCol(col),
                 isLiveCapture: () => this._collecting,   // tiles follow the user only while live
+                isDarkMode:    () => !document.documentElement.classList.contains('light-theme'),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
                 initialClusterRadius: Store.num('clusterRadius', 0),
