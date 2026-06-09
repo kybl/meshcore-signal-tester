@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=104';
-import { PacketStore } from './packet-store.js?v=4';
+import { PacketStore } from './packet-store.js?v=5';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -145,6 +145,8 @@ class MeshCoreApp {
         this.DOWNSAMPLE_BUCKETS = 1500;          // time-bucket count for wide-window charts
         this._obsWriteBuf  = [];                 // pending obs records to flush to disk
         this._sentWriteBuf = [];                 // pending outgoing-SNR records
+        this._hashWriteBuf = [];                 // pending per-hash payload records
+        this.WRITE_FLUSH_MS = 4000;              // debounce for batching disk writes
         this._writeFlushTimer = null;
         this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
         this._wideSentPoints  = null;
@@ -4131,6 +4133,7 @@ class MeshCoreApp {
             this._storeDead = true;
             this._obsWriteBuf = [];
             this._sentWriteBuf = [];
+            this._hashWriteBuf = [];
             return;
         }
         this._storeReady = true;
@@ -4192,7 +4195,9 @@ class MeshCoreApp {
             ...(o.remoteSnr != null ? { remoteSnr: o.remoteSnr } : {}),
         });
         if (isNewHash) {
-            this.store.putHash({ hash: o.hash, firstSeen: o.now, type: o.type ?? null, meta: o.meta ?? null });
+            // Buffered like obs (flushed in one batched transaction) — an
+            // immediate per-hash write would cost one transaction per new hash.
+            this._hashWriteBuf.push({ hash: o.hash, firstSeen: o.now, type: o.type ?? null, meta: o.meta ?? null });
         }
         this._scheduleWriteFlush();
     }
@@ -4204,15 +4209,17 @@ class MeshCoreApp {
             if (!this.store.available) {
                 // DB not open yet: keep buffering and retry. If it turned out to
                 // be unavailable, _initStore sets _storeDead and clears buffers.
-                if (!this._storeDead && (this._obsWriteBuf.length || this._sentWriteBuf.length)) this._scheduleWriteFlush();
+                if (!this._storeDead && (this._obsWriteBuf.length || this._sentWriteBuf.length || this._hashWriteBuf.length)) this._scheduleWriteFlush();
                 return;
             }
-            const obs = this._obsWriteBuf;  this._obsWriteBuf  = [];
+            const obs  = this._obsWriteBuf;  this._obsWriteBuf  = [];
             const sent = this._sentWriteBuf; this._sentWriteBuf = [];
+            const hs   = this._hashWriteBuf; this._hashWriteBuf = [];
+            if (hs.length)   this.store.putHashes(hs);   // before obs: readers join obs → hashes
             if (obs.length)  this.store.putObs(obs);
             if (sent.length) this.store.putSent(sent);
             this.store.setKV('totals', { totalRxCount: this.totalRxCount });
-        }, 1500);
+        }, this.WRITE_FLUSH_MS);
     }
 
     _onStorageQuota() {
@@ -4300,6 +4307,7 @@ class MeshCoreApp {
     async _flushWrites() {
         if (!this._storeReady || !this.store.available) return;
         if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
+        if (this._hashWriteBuf.length) { const h = this._hashWriteBuf; this._hashWriteBuf = []; await this.store.putHashes(h); }
         if (this._obsWriteBuf.length)  { const o = this._obsWriteBuf;  this._obsWriteBuf  = []; await this.store.putObs(o); }
         if (this._sentWriteBuf.length) { const s = this._sentWriteBuf; this._sentWriteBuf = []; await this.store.putSent(s); }
     }
@@ -4559,6 +4567,7 @@ class MeshCoreApp {
         this._wideSentPoints = null;
         this._obsWriteBuf = [];
         this._sentWriteBuf = [];
+        this._hashWriteBuf = [];
         this.totalRxCount = 0;
         this.store?.clearAll();
         this._dscSeq = 0;
@@ -5362,6 +5371,7 @@ class MeshCoreApp {
         const existingKeys = new Set();
         const existingSent = new Set();
         if (this._storeReady && this.store.available) {
+            await this._flushWrites();   // dedupe must also see still-buffered packets
             for (const h of new Set(rows.map(r => r.hash))) {
                 for (const o of await this.store.obsForHash(h)) existingKeys.add(h + '|' + o.rawId + '|' + o.time);
             }

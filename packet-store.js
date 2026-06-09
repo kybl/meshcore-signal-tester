@@ -188,6 +188,18 @@ export class PacketStore {
         } catch (e) { this._onWriteError(e); }
     }
 
+    /** Batched putHash: all records in one transaction. Used by the debounced
+     *  write flush so a burst of new hashes doesn't cost one transaction each. */
+    async putHashes(records) {
+        if (!this.db || !records || !records.length) return;
+        try {
+            const tx = this.db.transaction('hashes', 'readwrite');
+            const os = tx.objectStore('hashes');
+            for (const r of records) os.put(r);
+            await this._txComplete(tx);
+        } catch (e) { this._onWriteError(e); }
+    }
+
     async getHash(hash) {
         if (!this.db) return null;
         try {
