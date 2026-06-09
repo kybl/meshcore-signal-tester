@@ -9,8 +9,11 @@
   window is kept in RAM for rendering. This means:
   - "Auto-remove: Never" keeps the full history without growing memory without
     limit — it is bounded by disk storage instead of RAM.
-  - Captured data survives a WebView renderer crash / app restart: it is replayed
-    back from disk on startup.
+  - Storage is isolated per browser tab, so two tabs capturing different devices
+    never mix their data. Reopening the app starts with a clean session; a
+    within-tab reload (and, on Android, a renderer-crash rebuild via a recovery
+    flag) resumes the in-progress session. Databases left by closed tabs are
+    garbage-collected.
   - "Display: All" (or a window wider than the in-RAM budget) renders the signal
     charts from a **downsampled** view of the full history on disk, so showing the
     whole session no longer has to load every packet into memory at once.
@@ -38,6 +41,11 @@
   - If the WebView renderer was killed anyway (e.g. the OS reclaiming memory in
     the background), the app showed a permanent blank screen. It now detects this
     and rebuilds the WebView so the UI recovers instead of staying frozen.
+- **Re-importing the same CSV no longer keeps adding duplicate points.** Imports
+  are deduplicated against the persisted history, so importing an already-imported
+  file is a no-op.
+- **Cancelling the CSV import "data already loaded" prompt** no longer leaves the
+  Import button stuck showing "Importing…".
 
 ### Known limitations / to verify on-device
 

@@ -57,17 +57,20 @@ export class PacketStore {
         this.db = null;
         this._ready = null;
         this.lastError = null;
+        this.dbName = PS_DB_NAME;
     }
 
     /** Open (and if needed create) the database. Idempotent. Never rejects —
-     *  resolves to true on success, false if IndexedDB is unavailable. */
-    open() {
+     *  resolves to true on success, false if IndexedDB is unavailable.
+     *  `dbName` lets the host isolate data per browser tab (see app.js). */
+    open(dbName = PS_DB_NAME) {
         if (this._ready) return this._ready;
+        this.dbName = dbName;
         this._ready = new Promise((resolve) => {
             let req;
             try {
                 if (typeof indexedDB === 'undefined') throw new Error('no indexedDB');
-                req = indexedDB.open(PS_DB_NAME, PS_DB_VERSION);
+                req = indexedDB.open(dbName, PS_DB_VERSION);
             } catch (e) {
                 this.lastError = e;
                 console.warn('PacketStore: IndexedDB unavailable, falling back to RAM-only:', e);

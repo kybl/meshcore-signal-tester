@@ -359,7 +359,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(webView)
         jsApi.rebind(webView)
         configureWebView()
-        webView.loadUrl(appUrl)
+        // ?recover=1 tells the page this is a crash rebuild (not a fresh launch),
+        // so it resumes the just-crashed session's data instead of starting clean.
+        webView.loadUrl("$appUrl?recover=1")
     }
 
     override fun onDestroy() {

@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=104';
-import { PacketStore } from './packet-store.js?v=3';
+import { PacketStore } from './packet-store.js?v=4';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -4037,8 +4037,64 @@ class MeshCoreApp {
         return Math.min(Math.max(disp, this.RENDER_BUDGET_MS), ret);
     }
 
+    // Per-tab database name. Data is isolated per browser tab so two tabs
+    // capturing different devices never share a store (#5), and reopening the
+    // app starts fresh (#2). A within-tab reload reuses the same DB (sessionStorage
+    // survives it). On Android, a renderer-crash rebuild reloads with ?recover=1
+    // (single WebView, no ambiguity) so the just-crashed session is resumed.
+    _resolveDbName() {
+        let tabId = null;
+        try { tabId = sessionStorage.getItem('mc_tab'); } catch (_) {}
+        if (!tabId) {
+            const recover = new URLSearchParams(location.search).get('recover');
+            if (recover) {
+                try {
+                    const last = JSON.parse(localStorage.getItem('mc_last_tab') || 'null');
+                    if (last && Date.now() - last.beat < 120000) tabId = last.id;
+                } catch (_) {}
+            }
+        }
+        if (!tabId) tabId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        try { sessionStorage.setItem('mc_tab', tabId); } catch (_) {}
+        this._tabId = tabId;
+        return 'meshcore-capture-' + tabId;
+    }
+
+    // Mark this tab's DB alive (for Android crash-resume) and refresh its
+    // registry entry (for GC of databases left by closed tabs).
+    _startDbHeartbeat() {
+        const beat = () => {
+            try {
+                localStorage.setItem('mc_last_tab', JSON.stringify({ id: this._tabId, beat: Date.now() }));
+                const reg = JSON.parse(localStorage.getItem('mc_db_reg') || '{}');
+                reg[this._tabId] = Date.now();
+                localStorage.setItem('mc_db_reg', JSON.stringify(reg));
+            } catch (_) {}
+        };
+        beat();
+        this._dbHeartbeat = setInterval(beat, 30000);
+    }
+
+    // Delete per-tab databases left behind by tabs that haven't checked in for a
+    // while (closed tabs). Live tabs heartbeat every 30 s, so a long-stale entry
+    // is safe to drop. Never touches this tab's own DB.
+    _gcOrphanDbs() {
+        try {
+            const reg = JSON.parse(localStorage.getItem('mc_db_reg') || '{}');
+            const now = Date.now(), STALE = 10 * 60 * 1000;
+            let changed = false;
+            for (const [id, last] of Object.entries(reg)) {
+                if (id !== this._tabId && now - last > STALE) {
+                    try { indexedDB.deleteDatabase('meshcore-capture-' + id); } catch (_) {}
+                    delete reg[id]; changed = true;
+                }
+            }
+            if (changed) localStorage.setItem('mc_db_reg', JSON.stringify(reg));
+        } catch (_) {}
+    }
+
     async _initStore() {
-        const ok = await this.store.open();
+        const ok = await this.store.open(this._resolveDbName());
         if (!ok) {
             // IndexedDB unavailable → RAM-only, as before. Stop buffering writes
             // (nothing will drain them) so the buffer can't grow without bound.
@@ -4048,6 +4104,8 @@ class MeshCoreApp {
             return;
         }
         this._storeReady = true;
+        this._gcOrphanDbs();
+        this._startDbHeartbeat();
         this.store.onQuotaExceeded = () => this._onStorageQuota();
         try {
             const totals = await this.store.getKV('totals');
