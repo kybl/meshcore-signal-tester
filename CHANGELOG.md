@@ -14,6 +14,12 @@
   - "Display: All" (or a window wider than the in-RAM budget) renders the signal
     charts from a **downsampled** view of the full history on disk, so showing the
     whole session no longer has to load every packet into memory at once.
+  - The 3D map downsamples the full history onto a lat/lon grid whose cell size is
+    estimated up-front from the region's extent and a target dot budget, then
+    clamped to the screen resolution; it re-queries a finer grid for the visible
+    region as you zoom/pan.
+  - The packet table is paginated (prev/next, newest first) over the disk history
+    when viewing a wide / "All" window.
   - CSV export streams the full history from disk, not just what is in memory.
 
 ### Fixed
@@ -29,13 +35,15 @@
 
 ### Known limitations / to verify on-device
 
-- The packet table and 3D map still show only the in-RAM window (≈ the most
-  recent hour); the downsampled full-history view currently applies to the 2D
-  signal charts and CSV export. The "All" charts are a point-in-time snapshot
-  refreshed when the Display window changes (not continuously while capturing).
-- The IndexedDB storage + downsampling path has been syntax-checked but needs
-  runtime validation on a device (it cannot be exercised in CI without a browser
-  and a live packet stream).
+- Wide / "All" views (charts, map, table) are a point-in-time snapshot of the
+  disk history, refreshed when the Display window changes (and, for the map, on
+  zoom/pan); they do not update continuously while capturing. The live narrow
+  window updates in real time as before.
+- The map's full-history regrid scans the time range on each (debounced) zoom;
+  on very large histories this could be slow without a spatial index.
+- The IndexedDB storage + downsampling + pagination paths have been
+  syntax-checked but need runtime validation on a device (they cannot be
+  exercised in CI without a browser and a live packet stream).
 
 ## [1.1.0] - 2026-06-07
 

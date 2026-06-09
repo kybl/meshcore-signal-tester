@@ -25,7 +25,7 @@
 // rather than crashing if IndexedDB is unavailable (e.g. private mode).
 
 const PS_DB_NAME = 'meshcore-capture';
-const PS_DB_VERSION = 1;
+const PS_DB_VERSION = 2;
 
 export class PacketStore {
     constructor() {
@@ -51,13 +51,26 @@ export class PacketStore {
             }
             req.onupgradeneeded = () => {
                 const db = req.result;
+                const tx = req.transaction;            // versionchange transaction
+                // obs: per-observation facts. Indexed by time (range scans) and
+                // by hash (gather all observations of one packet for the table).
+                let obs;
                 if (!db.objectStoreNames.contains('obs')) {
-                    const obs = db.createObjectStore('obs', { keyPath: 'seq', autoIncrement: true });
+                    obs = db.createObjectStore('obs', { keyPath: 'seq', autoIncrement: true });
                     obs.createIndex('time', 'time', { unique: false });
+                } else {
+                    obs = tx.objectStore('obs');
                 }
+                if (!obs.indexNames.contains('hash')) obs.createIndex('hash', 'hash', { unique: false });
+                // hashes: per-hash payload. Indexed by firstSeen for newest-first
+                // paginated table reads.
+                let hashes;
                 if (!db.objectStoreNames.contains('hashes')) {
-                    db.createObjectStore('hashes', { keyPath: 'hash' });
+                    hashes = db.createObjectStore('hashes', { keyPath: 'hash' });
+                } else {
+                    hashes = tx.objectStore('hashes');
                 }
+                if (!hashes.indexNames.contains('firstSeen')) hashes.createIndex('firstSeen', 'firstSeen', { unique: false });
                 if (!db.objectStoreNames.contains('sent')) {
                     const s = db.createObjectStore('sent', { keyPath: 'seq', autoIncrement: true });
                     s.createIndex('time', 'time', { unique: false });
@@ -311,6 +324,102 @@ export class PacketStore {
                 lo.onerror = () => reject(lo.error);
             });
         } catch (_) { return null; }
+    }
+
+    // ---- spatial downsampling (3D map) ------------------------------------
+
+    /** count + lat/lon bounding box over obs in [from,to], optionally clipped to
+     *  a geographic bbox {minLat,maxLat,minLon,maxLon}. Only positioned obs are
+     *  counted. Used to pre-estimate the map cluster grid cell size. */
+    async regionStats(fromTime, toTime, bbox = null) {
+        const out = { count: 0, minLat: Infinity, maxLat: -Infinity, minLon: Infinity, maxLon: -Infinity };
+        if (!this.db) return out;
+        await this.eachObs(fromTime, toTime, r => {
+            if (r.lat == null || r.lon == null) return;
+            if (bbox && (r.lat < bbox.minLat || r.lat > bbox.maxLat || r.lon < bbox.minLon || r.lon > bbox.maxLon)) return;
+            out.count++;
+            if (r.lat < out.minLat) out.minLat = r.lat;
+            if (r.lat > out.maxLat) out.maxLat = r.lat;
+            if (r.lon < out.minLon) out.minLon = r.lon;
+            if (r.lon > out.maxLon) out.maxLon = r.lon;
+        });
+        return out;
+    }
+
+    /** Spatially downsample obs in [from,to] onto a lat/lon grid of `cellMeters`
+     *  cells, grouped by rawId. Keeps one representative per (rawId, cell): the
+     *  strongest-RSSI observation, plus a count. Optionally clipped to bbox.
+     *  Output is bounded by (#cells × #rawIds), independent of input size. */
+    async gridObs(fromTime, toTime, cellMeters, bbox = null) {
+        if (!this.db || !(cellMeters > 0)) return [];
+        const latCell = cellMeters / 111320;
+        const groups = new Map(); // `${rawId}|${gx}|${gy}` -> representative
+        await this.eachObs(fromTime, toTime, r => {
+            if (r.lat == null || r.lon == null) return;
+            if (bbox && (r.lat < bbox.minLat || r.lat > bbox.maxLat || r.lon < bbox.minLon || r.lon > bbox.maxLon)) return;
+            const lonCell = cellMeters / (111320 * Math.cos(r.lat * Math.PI / 180) || 1);
+            const gy = Math.round(r.lat / latCell);
+            const gx = Math.round(r.lon / lonCell);
+            const key = r.rawId + '|' + gx + '|' + gy;
+            let g = groups.get(key);
+            if (!g) { g = { rawId: r.rawId, lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time, count: 0 }; groups.set(key, g); }
+            g.count++;
+            // Representative = strongest RSSI seen in the cell.
+            if (r.rssi != null && (g.rssi == null || r.rssi > g.rssi)) {
+                g.lat = r.lat; g.lon = r.lon; g.snr = r.snr; g.rssi = r.rssi; g.time = r.time;
+            }
+        });
+        return [...groups.values()];
+    }
+
+    // ---- paginated table reads --------------------------------------------
+
+    async countHashes() {
+        if (!this.db) return 0;
+        try {
+            return await new Promise((resolve, reject) => {
+                const tx = this.db.transaction('hashes', 'readonly');
+                const r = tx.objectStore('hashes').count();
+                r.onsuccess = () => resolve(r.result);
+                r.onerror = () => reject(r.error);
+            });
+        } catch (_) { return 0; }
+    }
+
+    /** Newest-first page of hash records (ordered by firstSeen descending). */
+    async pageHashes(offset, limit) {
+        if (!this.db) return [];
+        try {
+            return await new Promise((resolve, reject) => {
+                const tx = this.db.transaction('hashes', 'readonly');
+                const idx = tx.objectStore('hashes').index('firstSeen');
+                const out = [];
+                let skipped = false;
+                const req = idx.openCursor(null, 'prev');
+                req.onsuccess = () => {
+                    const cur = req.result;
+                    if (!cur) { resolve(out); return; }
+                    if (offset > 0 && !skipped) { skipped = true; cur.advance(offset); return; }
+                    out.push(cur.value);
+                    if (out.length >= limit) { resolve(out); return; }
+                    cur.continue();
+                };
+                req.onerror = () => reject(req.error);
+            });
+        } catch (_) { return []; }
+    }
+
+    /** All observations of one hash (every path/repeater it arrived by). */
+    async obsForHash(hash) {
+        if (!this.db) return [];
+        try {
+            return await new Promise((resolve, reject) => {
+                const tx = this.db.transaction('obs', 'readonly');
+                const req = tx.objectStore('obs').index('hash').getAll(hash);
+                req.onsuccess = () => resolve(req.result || []);
+                req.onerror = () => reject(req.error);
+            });
+        } catch (_) { return []; }
     }
 
     // ---- maintenance ------------------------------------------------------

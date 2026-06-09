@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=103';
-import { PacketStore } from './packet-store.js?v=1';
+import { Signal3DMap } from './signal3d.js?v=104';
+import { PacketStore } from './packet-store.js?v=2';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -148,6 +148,10 @@ class MeshCoreApp {
         this._writeFlushTimer = null;
         this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
         this._wideSentPoints  = null;
+        this._tablePageData   = null;            // disk-paged packet table (null = live RAM window)
+        this._tablePage       = 0;
+        this._tablePageSize   = 100;
+        this._tablePageCount  = 1;
 
         this.initUI();
         this.startCleanupTimer();
@@ -373,7 +377,7 @@ class MeshCoreApp {
                 const row = rxCell.closest('tr[id^="row-"]');
                 if (!row) return;
                 const hash = row.id.slice(4);
-                const data = this.hashData.get(hash);
+                const data = this._tableSource().get(hash);
                 if (!data) return;
                 const firstCol = this.repeaterColumns.find(col => data.repeaters.has(col));
                 if (firstCol) this.toggleDetailRow(hash, firstCol);
@@ -780,6 +784,11 @@ class MeshCoreApp {
                 showDevice:    Store.bool('showDevice', false),
                 onSelect:      col => {
                     this._selectRepeater(col);
+                },
+                onViewChange:  (bbox, mpp) => {
+                    // Zoom/pan in a wide ("All") view → re-query a finer disk
+                    // grid for the now-visible region.
+                    if (this._wideChartPoints) this._refreshWideMap(bbox, mpp);
                 },
                 onFilter:      col => {
                     if (!col) return;
@@ -3169,14 +3178,19 @@ class MeshCoreApp {
         const msgFilterBar = document.getElementById('msgFilterBar');
 
         const filter = this._msgFilter.toLowerCase().trim();
-        const displayCutoff = this._displayCutoffNow();
-        const allRows = Array.from(this.hashData.entries())
+        // Source is the live RAM window, or — in a wide / "All" view — the
+        // current disk page (see _loadTablePage). When paginating, the page IS
+        // the window, so the display cutoff is not re-applied.
+        const paginating = this._tablePageData != null;
+        const displayCutoff = paginating ? 0 : this._displayCutoffNow();
+        const allRows = Array.from(this._tableSource().entries())
             .filter(([, data]) => !data._stub && (!displayCutoff || data.lastSeen >= displayCutoff))
             .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
 
         // Only include columns that actually appear in the visible rows (respects display cutoff)
         const activeColsInRows = new Set(allRows.flatMap(([, data]) => [...data.repeaters.keys()]));
-        const visibleCols = this.repeaterColumns
+        const colList = paginating ? [...new Set([...this.repeaterColumns, ...activeColsInRows])] : this.repeaterColumns;
+        const visibleCols = colList
             .filter(c => this._colMatchesRepFilter(c) && activeColsInRows.has(c));
 
         const msgTableEmpty = document.getElementById('msgTableEmpty');
@@ -3242,7 +3256,7 @@ class MeshCoreApp {
         ).join('');
 
         for (const [hash, col] of openDetails) {
-            if (!this.hashData.has(hash)) continue;
+            if (!this._tableSource().has(hash)) continue;
             // Drop detail for a column that is now filtered out
             if (col && !this._colMatchesRepFilter(col)) continue;
             const row = document.getElementById(`row-${hash}`);
@@ -3375,7 +3389,7 @@ class MeshCoreApp {
     }
 
     _buildDetailRow(hash, col = null) {
-        const data = this.hashData.get(hash);
+        const data = this._tableSource().get(hash);
         if (!data) return '';
         const colspan = 1 + this.repeaterColumns.length * 2;
 
@@ -4146,8 +4160,14 @@ class MeshCoreApp {
                 this._wideChartPoints = null; this._wideSentPoints = null;
                 this._scheduleChartRender();
             }
+            this.signalMap?.setHistoricalPoints?.(null);   // back to live map points
+            this._tablePageData = null;                     // back to live table window
+            this._refreshTablePager();
+            this._renderMsgTable();
             return;
         }
+        this._refreshWideMap();        // spatial downsample for the 3D map
+        this._loadTablePage(0, true);  // paginate the packet table over disk
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         try {
             const buckets = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
@@ -4168,6 +4188,100 @@ class MeshCoreApp {
             console.warn('Wide-view load failed:', e);
             this._wideChartPoints = null; this._wideSentPoints = null;
         }
+    }
+
+    // Spatially downsample the disk history onto the 3D map. The grid cell size
+    // is estimated up-front from the region's bounding box and a target dot
+    // budget (so the cluster granularity is chosen BEFORE touching individual
+    // points), then clamped to the screen resolution at the current zoom.
+    // `bbox`/`mpp` come from the map on zoom/pan; without them the whole extent
+    // is used. Output is bounded regardless of how many packets the span holds.
+    async _refreshWideMap(bbox = null, mpp = null) {
+        if (!this._shouldUseWideView() || !this.store.available) return;
+        const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
+        try {
+            const s = await this.store.regionStats(from, Infinity, bbox);
+            if (!s.count) { this.signalMap?.setHistoricalPoints?.([]); return; }
+            const midLat = (s.minLat + s.maxLat) / 2;
+            const latM = Math.max(1, (s.maxLat - s.minLat) * 111320);
+            const lonM = Math.max(1, (s.maxLon - s.minLon) * 111320 * Math.cos(midLat * Math.PI / 180));
+            const TARGET_DOTS = 2500;
+            // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
+            let cell = Math.sqrt((latM * lonM) / TARGET_DOTS);
+            if (mpp) cell = Math.max(cell, mpp * 4);   // never finer than ~4 screen px
+            cell = Math.max(cell, 5);                  // and never below 5 m
+            const reps = await this.store.gridObs(from, Infinity, cell, bbox);
+            const pts = reps.map(r => ({
+                lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time,
+                rawId: r.rawId, col: this._resolveColReadonly(r.rawId), count: r.count,
+            }));
+            this.signalMap?.setHistoricalPoints?.(pts);
+        } catch (e) {
+            console.warn('Wide-map load failed:', e);
+        }
+    }
+
+    // --- Packet table pagination over disk history (wide / "All" view) ---
+
+    _tableSource() {
+        return this._tablePageData ?? this.hashData;
+    }
+
+    // Build one page of the table from disk: the newest `_tablePageSize` hashes
+    // (by firstSeen) and all their observations, assembled into hashData-shaped
+    // entries so _renderMsgTable can render them unchanged.
+    async _loadTablePage(page, reset = false) {
+        if (!this._shouldUseWideView() || !this.store.available) { this._tablePageData = null; return; }
+        if (reset) this._tablePage = 0;
+        const size = this._tablePageSize;
+        this._tablePageCount = Math.max(1, Math.ceil((await this.store.countHashes()) / size));
+        this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
+        const hashes = await this.store.pageHashes(this._tablePage * size, size);
+        const map = new Map();
+        for (const h of hashes) {
+            const obs = await this.store.obsForHash(h.hash);
+            if (!obs.length) continue;
+            const repeaters = new Map();
+            let firstSeen = h.firstSeen ?? Infinity, lastSeen = 0;
+            for (const o of obs) {
+                const col = this._resolveColReadonly(o.rawId);
+                const rep = { snr: o.snr, rssi: o.rssi, rawHex: o.rawHex, rawId: o.rawId,
+                              time: o.time, lat: o.lat, lon: o.lon, remoteSnr: o.remoteSnr, packet: null };
+                // Keep the strongest-RSSI observation per column (matches live merge intent).
+                const prev = repeaters.get(col);
+                if (!prev || (rep.rssi != null && (prev.rssi == null || rep.rssi > prev.rssi))) repeaters.set(col, rep);
+                if (o.time < firstSeen) firstSeen = o.time;
+                if (o.time > lastSeen)  lastSeen  = o.time;
+            }
+            map.set(h.hash, { repeaters, firstSeen, lastSeen, type: h.type, meta: h.meta,
+                              rawHex: obs[0].rawHex, packet: null, _stub: false });
+        }
+        this._tablePageData = map;
+        this._renderMsgTable();
+        this._refreshTablePager();
+    }
+
+    // Insert / update / remove the prev-next pager beneath the packet table.
+    _refreshTablePager() {
+        const scroll = this.msgTableHead?.closest('.msg-table-scroll');
+        if (!scroll) return;
+        let pager = document.getElementById('msgTablePager');
+        const paginating = this._tablePageData != null;
+        if (!paginating) { pager?.remove(); return; }
+        if (!pager) {
+            pager = document.createElement('div');
+            pager.id = 'msgTablePager';
+            pager.className = 'msg-table-pager';
+            pager.innerHTML = '<button id="msgPagePrev" class="pager-btn">‹ Newer</button>'
+                + '<span id="msgPageInfo" class="pager-info"></span>'
+                + '<button id="msgPageNext" class="pager-btn">Older ›</button>';
+            scroll.parentNode.insertBefore(pager, scroll.nextSibling);
+            pager.querySelector('#msgPagePrev').addEventListener('click', () => this._loadTablePage(this._tablePage - 1));
+            pager.querySelector('#msgPageNext').addEventListener('click', () => this._loadTablePage(this._tablePage + 1));
+        }
+        pager.querySelector('#msgPageInfo').textContent = `Page ${this._tablePage + 1} / ${this._tablePageCount}`;
+        pager.querySelector('#msgPagePrev').disabled = this._tablePage <= 0;
+        pager.querySelector('#msgPageNext').disabled = this._tablePage >= this._tablePageCount - 1;
     }
 
     cleanup() {
@@ -4581,7 +4695,7 @@ class MeshCoreApp {
         document.querySelectorAll('#msgTableBody tr[id^="row-"]').forEach(tr => {
             if (!sel) { tr.style.display = ''; return; }
             const hash = tr.id.slice(4);
-            const data = this.hashData.get(hash);
+            const data = this._tableSource().get(hash);
             tr.style.display = data?.repeaters.has(sel) ? '' : 'none';
         });
         // Keep detail rows in sync with their parent row
@@ -4734,7 +4848,7 @@ class MeshCoreApp {
     // --- Stats & status ---
 
     _updateStats() {
-        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0;
+        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0 && !(this._storeReady && this.store.available);
         const displayCutoff = this._displayCutoffNow();
         const visibleHashes = displayCutoff
             ? Array.from(this.hashData.values()).filter(d => d.lastSeen >= displayCutoff).length

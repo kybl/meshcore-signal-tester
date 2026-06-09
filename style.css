@@ -808,6 +808,33 @@ html:not(.light-theme) .btn-connect:disabled {
     overflow-x: auto;
 }
 
+/* Prev/next pager beneath the packet table when browsing disk history. */
+.msg-table-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 8px;
+    font-size: 12px;
+}
+.msg-table-pager .pager-btn {
+    background: var(--bg-box);
+    color: var(--text);
+    border: 1px solid var(--border, #ccc);
+    border-radius: 6px;
+    padding: 4px 12px;
+    cursor: pointer;
+}
+.msg-table-pager .pager-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.msg-table-pager .pager-info {
+    opacity: 0.8;
+    min-width: 90px;
+    text-align: center;
+}
+
 .msg-table {
     width: 100%;
     border-collapse: collapse;

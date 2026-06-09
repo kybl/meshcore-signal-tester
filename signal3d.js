@@ -120,8 +120,14 @@ export class Signal3DMap {
         this._ringTexDirect  = this._makeRingTex('#111111', '#ffd400');
         this._ringTexUnknown = this._makeRingTex('#cc0000', '#ffffff');
         this._outgoingPts     = [];   // { lat, lon, snr, col, time } — outgoing SNR points
+        // Downsampled historical points loaded from disk for wide / "All" views.
+        // When non-null these replace _rxPoints as the render source (they are
+        // already spatially gridded, so no further clustering is applied).
+        this._histPoints      = null;
+        this._viewChangeTimer = null;
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
+        this.onViewChange    = opts.onViewChange    || null;  // (bbox, metresPerPixel) on zoom/pan, debounced
         this.onFilter        = opts.onFilter        || null;
         this.onRemoveMarker  = opts.onRemoveMarker  || null;
         this.onPinMarker     = opts.onPinMarker     || null;
@@ -227,6 +233,7 @@ export class Signal3DMap {
             this.controls.target.y = 0;
             this._updateHeightScale();
             this._updatePerspUniforms();
+            this._notifyViewChange();
         });
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
@@ -893,6 +900,34 @@ export class Signal3DMap {
         this._rebuildDots();
     }
 
+    // Replace the render source with a pre-gridded set of historical points from
+    // disk (wide / "All" view). Pass null to return to the live in-RAM points.
+    // Each point: { lat, lon, snr, rssi, col, time, rawId, count }.
+    setHistoricalPoints(arr) {
+        this._histPoints = (arr && arr.length) ? arr : (arr ? [] : null);
+        if (this.emptyEl && this._histPoints && this._histPoints.length) this.emptyEl.classList.add('hidden');
+        this._rebuildDots();
+        this._scheduleMapUpdate();
+    }
+
+    // Fire onViewChange (debounced) so the host can re-query a finer disk grid
+    // for the now-visible region when the user zooms or pans.
+    _notifyViewChange() {
+        if (!this.onViewChange) return;
+        clearTimeout(this._viewChangeTimer);
+        this._viewChangeTimer = setTimeout(() => {
+            const bb = this._cameraViewBbox();
+            if (bb) this.onViewChange(bb, this._metersPerPixel());
+        }, 350);
+    }
+
+    _metersPerPixel() {
+        const bb = this._cameraViewBbox();
+        if (!bb) return null;
+        const h = this.canvas.clientHeight || 600;
+        return ((bb.maxLat - bb.minLat) * 111320) / h;
+    }
+
     // Called by the host app when chart/legend selection changes.
     selectColumn(col) {
         this._infoPanelFromClick = false;   // always hide info panel on external selection
@@ -973,7 +1008,8 @@ export class Signal3DMap {
 
     _bbox() {
         const cutoff = this._displayCutoff;
-        const locs = this._rxPoints
+        const source = this._histPoints ?? this._rxPoints;
+        const locs = source
             .filter(p => (!cutoff || p.time >= cutoff) && (!this._filterFn || this._filterFn(p.col)))
             .map(p => ({ lat: p.lat, lon: p.lon }));
         // Include the user's own position in the tile bbox when the marker is
@@ -1414,14 +1450,17 @@ export class Signal3DMap {
 
         const sel     = this._selectedCol;
         const cutoff  = this._displayCutoff;
-        let visible = this._rxPoints.filter(p =>
+        // In wide / "All" mode the source is the pre-gridded historical set; it
+        // is already spatially downsampled, so the per-repeater merge is skipped.
+        const histMode = this._histPoints != null;
+        let visible = (histMode ? this._histPoints : this._rxPoints).filter(p =>
             (!this._filterFn || this._filterFn(p.col)) &&
             (!cutoff || p.time >= cutoff)
         );
         if (!visible.length) return;
 
         // Clustering: for each repeater, merge points within _clusterRadius metres
-        if (this._clusterRadius > 0) {
+        if (this._clusterRadius > 0 && !histMode) {
             // 1° latitude ≈ 111 320 m; 1° longitude ≈ 111 320 * cos(lat) m
             const latDeg = this._clusterRadius / 111320;
             const byCols = new Map();
