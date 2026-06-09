@@ -10,9 +10,10 @@
   - "Auto-remove: Never" keeps the full history without growing memory without
     limit — it is bounded by disk storage instead of RAM.
   - Storage is isolated per browser tab, so two tabs capturing different devices
-    never mix their data. Reopening the app starts with a clean session; a
-    within-tab reload (and, on Android, a renderer-crash rebuild via a recovery
-    flag) resumes the in-progress session. Databases left by closed tabs are
+    never mix their data. On launch, if a previous session's data is present, the
+    app asks whether to load it (otherwise it starts clean). A within-tab reload
+    resumes silently, and on Android a renderer-crash rebuild resumes the
+    in-progress session automatically. Databases of closed sessions are
     garbage-collected.
   - "Display: All" (or a window wider than the in-RAM budget) renders the signal
     charts from a **downsampled** view of the full history on disk, so showing the

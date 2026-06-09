@@ -4037,64 +4037,94 @@ class MeshCoreApp {
         return Math.min(Math.max(disp, this.RENDER_BUDGET_MS), ret);
     }
 
-    // Per-tab database name. Data is isolated per browser tab so two tabs
-    // capturing different devices never share a store (#5), and reopening the
-    // app starts fresh (#2). A within-tab reload reuses the same DB (sessionStorage
-    // survives it). On Android, a renderer-crash rebuild reloads with ?recover=1
-    // (single WebView, no ambiguity) so the just-crashed session is resumed.
-    _resolveDbName() {
-        let tabId = null;
-        try { tabId = sessionStorage.getItem('mc_tab'); } catch (_) {}
-        if (!tabId) {
-            const recover = new URLSearchParams(location.search).get('recover');
-            if (recover) {
-                try {
-                    const last = JSON.parse(localStorage.getItem('mc_last_tab') || 'null');
-                    if (last && Date.now() - last.beat < 120000) tabId = last.id;
-                } catch (_) {}
-            }
+    // Decide which database this tab uses. Data is isolated per browser tab so
+    // two tabs capturing different devices never share a store (#5). On a normal
+    // launch with previous captured data present, the user is asked whether to
+    // resume it (#2); a within-tab reload resumes silently, and an Android
+    // renderer-crash rebuild (?recover=1, single WebView so no ambiguity) resumes
+    // the just-crashed session seamlessly.
+    async _chooseSession() {
+        const mk = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        const setTab = id => { try { sessionStorage.setItem('mc_tab', id); } catch (_) {} this._tabId = id; return 'meshcore-capture-' + id; };
+
+        // Within-tab reload keeps the same session (sessionStorage survives it).
+        let cur = null;
+        try { cur = sessionStorage.getItem('mc_tab'); } catch (_) {}
+        if (cur) { this._tabId = cur; return 'meshcore-capture-' + cur; }
+
+        // Android renderer-crash rebuild: resume the just-crashed session.
+        if (new URLSearchParams(location.search).get('recover')) {
+            try {
+                const last = JSON.parse(localStorage.getItem('mc_last_tab') || 'null');
+                if (last && Date.now() - last.beat < 120000) return setTab(last.id);
+            } catch (_) {}
         }
-        if (!tabId) tabId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-        try { sessionStorage.setItem('mc_tab', tabId); } catch (_) {}
-        this._tabId = tabId;
-        return 'meshcore-capture-' + tabId;
+
+        // Normal launch: offer to resume the most recent closed session with data.
+        // On Android there is only ever one WebView, so any other session is
+        // closed; in a browser a recently-beating entry may be a live tab, so
+        // require it to be quiet for a while before treating it as resumable.
+        const isAndroid = !!(window.AndroidFiles || window.AndroidScreen || window.AndroidBle);
+        const LIVE = isAndroid ? 3000 : 60000;
+        const reg = this._readReg();
+        const now = Date.now();
+        const candidates = Object.entries(reg)
+            .filter(([, e]) => e && e.count > 0 && now - e.beat > LIVE)
+            .sort((a, b) => b[1].beat - a[1].beat);
+        if (candidates.length) {
+            const [id, e] = candidates[0];
+            const when = new Date(e.beat).toLocaleString();
+            if (confirm(`Load previously captured data?\n\n${e.count} packets received, last seen ${when}.`)) {
+                for (const [oid] of candidates.slice(1)) this._deleteSession(oid);  // drop the rest
+                return setTab(id);
+            }
+            for (const [oid] of candidates) this._deleteSession(oid);  // declined → discard all
+        }
+        this._gcStaleSessions();
+        return setTab(mk());
     }
 
-    // Mark this tab's DB alive (for Android crash-resume) and refresh its
-    // registry entry (for GC of databases left by closed tabs).
+    _readReg() { try { return JSON.parse(localStorage.getItem('mc_db_reg') || '{}'); } catch (_) { return {}; } }
+    _writeReg(reg) { try { localStorage.setItem('mc_db_reg', JSON.stringify(reg)); } catch (_) {} }
+
+    _deleteSession(id) {
+        try { indexedDB.deleteDatabase('meshcore-capture-' + id); } catch (_) {}
+        const reg = this._readReg(); delete reg[id]; this._writeReg(reg);
+    }
+
+    // Mark this session alive and record its packet count, so a later launch can
+    // offer to resume it. Also drops databases left by closed empty sessions.
     _startDbHeartbeat() {
         const beat = () => {
             try {
                 localStorage.setItem('mc_last_tab', JSON.stringify({ id: this._tabId, beat: Date.now() }));
-                const reg = JSON.parse(localStorage.getItem('mc_db_reg') || '{}');
-                reg[this._tabId] = Date.now();
-                localStorage.setItem('mc_db_reg', JSON.stringify(reg));
+                const reg = this._readReg();
+                reg[this._tabId] = { beat: Date.now(), count: this.totalRxCount || 0 };
+                this._writeReg(reg);
             } catch (_) {}
         };
         beat();
-        this._dbHeartbeat = setInterval(beat, 30000);
+        this._dbHeartbeat = setInterval(beat, 15000);
     }
 
-    // Delete per-tab databases left behind by tabs that haven't checked in for a
-    // while (closed tabs). Live tabs heartbeat every 30 s, so a long-stale entry
-    // is safe to drop. Never touches this tab's own DB.
-    _gcOrphanDbs() {
-        try {
-            const reg = JSON.parse(localStorage.getItem('mc_db_reg') || '{}');
-            const now = Date.now(), STALE = 10 * 60 * 1000;
-            let changed = false;
-            for (const [id, last] of Object.entries(reg)) {
-                if (id !== this._tabId && now - last > STALE) {
-                    try { indexedDB.deleteDatabase('meshcore-capture-' + id); } catch (_) {}
-                    delete reg[id]; changed = true;
-                }
+    // Garbage-collect databases of closed sessions that hold no data (stale and
+    // empty). Sessions that hold data are handled by the resume prompt instead.
+    _gcStaleSessions() {
+        const reg = this._readReg();
+        const now = Date.now(), STALE = 10 * 60 * 1000;
+        let changed = false;
+        for (const [id, e] of Object.entries(reg)) {
+            if (id === this._tabId) continue;
+            if (!e || (!e.count && now - (e.beat || 0) > STALE)) {
+                try { indexedDB.deleteDatabase('meshcore-capture-' + id); } catch (_) {}
+                delete reg[id]; changed = true;
             }
-            if (changed) localStorage.setItem('mc_db_reg', JSON.stringify(reg));
-        } catch (_) {}
+        }
+        if (changed) this._writeReg(reg);
     }
 
     async _initStore() {
-        const ok = await this.store.open(this._resolveDbName());
+        const ok = await this.store.open(await this._chooseSession());
         if (!ok) {
             // IndexedDB unavailable → RAM-only, as before. Stop buffering writes
             // (nothing will drain them) so the buffer can't grow without bound.
@@ -4104,7 +4134,6 @@ class MeshCoreApp {
             return;
         }
         this._storeReady = true;
-        this._gcOrphanDbs();
         this._startDbHeartbeat();
         this.store.onQuotaExceeded = () => this._onStorageQuota();
         try {
