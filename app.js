@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=106';
+import { Signal3DMap } from './signal3d.js?v=107';
 import { PacketStore } from './packet-store.js?v=6';
 
 // Single source of truth for the released app version, shown in the header (and
@@ -3090,33 +3090,56 @@ class MeshCoreApp {
 
         if (opts.importing) return;
 
-        this._renderRepTable();
-        this._sortColumns();
-        this._renderMsgTable(isNewHash ? hash : null);
-        // Flash the two signal cells that just received new values
-        this.msgTableBody?.querySelectorAll(`[data-hash="${hash}"][data-col="${canonicalKey}"]`)
-            .forEach(el => {
-                el.classList.remove('cell-flash');
-                // Force reflow so the animation restarts even on rapid back-to-back updates
-                void el.offsetWidth;
-                el.classList.add('cell-flash');
-            });
-        if (this.repeaterColumns.length !== prevColCount) {
-            requestAnimationFrame(() => this._checkTableOverflow(false));
-        }
-        if (wasAtBottom) {
-            requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' }));
-        }
+        // Heavy DOM work (both tables + stats) is coalesced so a busy mesh
+        // doesn't rebuild them on every packet and starve the 3D-map frame loop.
+        // The cells to flash and a pending "scroll to bottom" are remembered and
+        // applied by the coalesced pass.
+        (this._flashPending ??= new Set()).add(hash + '|' + canonicalKey);
+        this._scheduleLiveRender(wasAtBottom);
         this._scheduleChartRender();
 
-        // Sound only when the entry would actually appear under the current filters
+        // Sound stays immediate (cheap, and its timing matters).
         const data = this.hashData.get(hash);
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
         const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
         if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr);
-        this._updateStats();
         this.emptyState?.classList.add('hidden');
+    }
+
+    // Coalesce the per-packet table/stats render to ~7×/s. Rebuilding both
+    // tables on every packet (a busy mesh is many per second) saturates the main
+    // thread and makes the 3D map stutter while panning during capture.
+    _scheduleLiveRender(wasAtBottom = false) {
+        if (wasAtBottom) this._pendingScrollBottom = true;
+        if (this._liveRenderTimer) return;
+        const since = performance.now() - (this._lastLiveRender || 0);
+        this._liveRenderTimer = setTimeout(() => {
+            this._liveRenderTimer = null;
+            this._lastLiveRender = performance.now();
+            this._sortColumns();
+            this._renderRepTable();
+            this._renderMsgTable();
+            this._updateStats();
+            // Flash the cells that received new values since the last render.
+            if (this._flashPending && this._flashPending.size) {
+                for (const key of this._flashPending) {
+                    const sep = key.lastIndexOf('|');
+                    const h = key.slice(0, sep), c = key.slice(sep + 1);
+                    this.msgTableBody?.querySelectorAll(`[data-hash="${h}"][data-col="${c}"]`).forEach(el => {
+                        el.classList.remove('cell-flash');
+                        void el.offsetWidth;   // restart the animation
+                        el.classList.add('cell-flash');
+                    });
+                }
+                this._flashPending.clear();
+            }
+            this._checkTableOverflow(false);
+            if (this._pendingScrollBottom) {
+                this._pendingScrollBottom = false;
+                requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' }));
+            }
+        }, Math.max(0, 150 - since));
     }
 
     // --- Column management ---

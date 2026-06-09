@@ -125,6 +125,8 @@ export class Signal3DMap {
         // When non-null these replace _rxPoints as the render source (they are
         // already spatially gridded, so no further clustering is applied).
         this._histPoints      = null;
+        this._dotsDirty       = false;   // a live packet changed _rxPoints; rebuild is coalesced in the frame loop
+        this._lastDotsBuild   = 0;
         this._viewChangeTimer = null;
         this.infoEl          = opts.infoEl          || null;
         this.onSelect        = opts.onSelect        || null;
@@ -343,6 +345,7 @@ export class Signal3DMap {
         const tick = () => {
             this._stepCameraAnim();
             this.controls.update();
+            this._maybeRebuildDots();
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
             this._rafId = requestAnimationFrame(tick);
@@ -899,7 +902,11 @@ export class Signal3DMap {
         this._rxPoints.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
         if (opts.col === this._selectedCol) this._updateInfoPanel();
-        this._rebuildDots();
+        // Coalesced rebuild (see _maybeRebuildDots): rebuilding all point geometry
+        // on every packet starves the frame loop and stutters pan/zoom during
+        // capture. In a wide ("All") view the map shows the disk grid, so live
+        // points don't drive a rebuild at all.
+        if (this._histPoints == null) this._dotsDirty = true;
         this._scheduleMapUpdate();
     }
 
@@ -907,6 +914,17 @@ export class Signal3DMap {
         if (opts.lat == null || opts.lon == null || opts.snr == null) return;
         this._outgoingPts.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
+        if (this._histPoints == null) this._dotsDirty = true;
+    }
+
+    // Rebuild dots from a coalesced dirty flag, throttled and never mid-gesture,
+    // so live capture doesn't fight the camera. Called once per frame from tick.
+    _maybeRebuildDots() {
+        if (!this._dotsDirty || this._userDragging) return;
+        const now = performance.now();
+        if (now - this._lastDotsBuild < 200) return;
+        this._dotsDirty = false;
+        this._lastDotsBuild = now;
         this._rebuildDots();
     }
 
