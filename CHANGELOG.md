@@ -17,7 +17,9 @@
   - The 3D map downsamples the full history onto a lat/lon grid whose cell size is
     estimated up-front from the region's extent and a target dot budget, then
     clamped to the screen resolution; it re-queries a finer grid for the visible
-    region as you zoom/pan.
+    region as you zoom/pan. A Morton (Z-order) spatial index makes the
+    visible-region query a single index range scan instead of scanning all of
+    history.
   - The packet table is paginated (prev/next, newest first) over the disk history
     when viewing a wide / "All" window.
   - CSV export streams the full history from disk, not just what is in memory.
@@ -39,8 +41,6 @@
   disk history, refreshed when the Display window changes (and, for the map, on
   zoom/pan); they do not update continuously while capturing. The live narrow
   window updates in real time as before.
-- The map's full-history regrid scans the time range on each (debounced) zoom;
-  on very large histories this could be slow without a spatial index.
 - The IndexedDB storage + downsampling + pagination paths have been
   syntax-checked but need runtime validation on a device (they cannot be
   exercised in CI without a browser and a live packet stream).

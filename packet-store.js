@@ -25,7 +25,32 @@
 // rather than crashing if IndexedDB is unavailable (e.g. private mode).
 
 const PS_DB_NAME = 'meshcore-capture';
-const PS_DB_VERSION = 2;
+const PS_DB_VERSION = 3;
+
+// --- Morton (Z-order) spatial key ----------------------------------------
+// Each positioned observation gets a 32-bit Morton code interleaving a 16-bit
+// quantised longitude and latitude. Points that are near in space are near in
+// code, so a geographic bounding box maps to the 1D code range
+// [morton(SW corner), morton(NE corner)] — a single index range scan, instead
+// of scanning the whole store. The range over-covers the box (Z-order curve),
+// so callers still filter the exact lat/lon afterwards, but the scan is bounded
+// to the box's neighbourhood rather than all of history.
+const PS_QBITS = 16, PS_QMAX = (1 << PS_QBITS) - 1;
+
+function ps_part1by1(n) {
+    n &= 0xffff;
+    n = (n | (n << 8)) & 0x00ff00ff;
+    n = (n | (n << 4)) & 0x0f0f0f0f;
+    n = (n | (n << 2)) & 0x33333333;
+    n = (n | (n << 1)) & 0x55555555;
+    return n >>> 0;
+}
+
+function ps_morton(lat, lon) {
+    const qx = Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX)));
+    const qy = Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX)));
+    return (ps_part1by1(qx) | (ps_part1by1(qy) << 1)) >>> 0;
+}
 
 export class PacketStore {
     constructor() {
@@ -49,11 +74,12 @@ export class PacketStore {
                 resolve(false);
                 return;
             }
-            req.onupgradeneeded = () => {
+            req.onupgradeneeded = (ev) => {
                 const db = req.result;
                 const tx = req.transaction;            // versionchange transaction
-                // obs: per-observation facts. Indexed by time (range scans) and
-                // by hash (gather all observations of one packet for the table).
+                // obs: per-observation facts. Indexed by time (range scans),
+                // by hash (gather all observations of one packet), and by mz
+                // (Morton spatial key, for bounding-box map queries).
                 let obs;
                 if (!db.objectStoreNames.contains('obs')) {
                     obs = db.createObjectStore('obs', { keyPath: 'seq', autoIncrement: true });
@@ -62,6 +88,19 @@ export class PacketStore {
                     obs = tx.objectStore('obs');
                 }
                 if (!obs.indexNames.contains('hash')) obs.createIndex('hash', 'hash', { unique: false });
+                if (!obs.indexNames.contains('mz'))   obs.createIndex('mz', 'mz', { unique: false });
+                // Backfill the Morton key on records that predate the mz index,
+                // so spatial queries don't miss existing history.
+                if (ev.oldVersion >= 1 && ev.oldVersion < 3) {
+                    const cur = obs.openCursor();
+                    cur.onsuccess = () => {
+                        const c = cur.result;
+                        if (!c) return;
+                        const r = c.value;
+                        if (r.mz == null && r.lat != null && r.lon != null) { r.mz = ps_morton(r.lat, r.lon); c.update(r); }
+                        c.continue();
+                    };
+                }
                 // hashes: per-hash payload. Indexed by firstSeen for newest-first
                 // paginated table reads.
                 let hashes;
@@ -119,7 +158,10 @@ export class PacketStore {
         try {
             const tx = this.db.transaction('obs', 'readwrite');
             const os = tx.objectStore('obs');
-            for (const r of records) os.add(r);
+            for (const r of records) {
+                if (r.mz == null && r.lat != null && r.lon != null) r.mz = ps_morton(r.lat, r.lon);
+                os.add(r);
+            }
             await this._txComplete(tx);
             return records;
         } catch (e) {
@@ -230,6 +272,48 @@ export class PacketStore {
         });
     }
 
+    /** Iterate positioned obs, optionally restricted to a geographic bbox. With
+     *  a bbox the Morton index is used (single range scan over the box's
+     *  neighbourhood, then exact filter); without one it falls back to the time
+     *  index. Only records with lat/lon are yielded. cb may return false to stop. */
+    _eachPositioned(fromTime, toTime, bbox, cb) {
+        if (!this.db) return Promise.resolve();
+        if (bbox) return this._eachByBbox(bbox, fromTime, toTime, cb);
+        return this._eachInStore('obs', fromTime, toTime, r => {
+            if (r.lat == null || r.lon == null) return true;
+            return cb(r) !== false;
+        });
+    }
+
+    _eachByBbox(bbox, fromTime, toTime, cb) {
+        return new Promise((resolve, reject) => {
+            let tx;
+            try { tx = this.db.transaction('obs', 'readonly'); }
+            catch (e) { reject(e); return; }
+            const idx = tx.objectStore('obs').index('mz');
+            const lo = ps_morton(bbox.minLat, bbox.minLon);
+            const hi = ps_morton(bbox.maxLat, bbox.maxLon);
+            const tLo = Number.isFinite(fromTime) ? fromTime : -Infinity;
+            const tHi = Number.isFinite(toTime) ? toTime : Infinity;
+            const req = idx.openCursor(IDBKeyRange.bound(Math.min(lo, hi), Math.max(lo, hi)));
+            req.onsuccess = () => {
+                const cur = req.result;
+                if (!cur) { resolve(); return; }
+                const r = cur.value;
+                if (r.lat != null && r.lon != null &&
+                    r.lat >= bbox.minLat && r.lat <= bbox.maxLat &&
+                    r.lon >= bbox.minLon && r.lon <= bbox.maxLon &&
+                    r.time >= tLo && r.time <= tHi) {
+                    let go = true;
+                    try { go = cb(r) !== false; } catch (e) { reject(e); return; }
+                    if (!go) { resolve(); return; }
+                }
+                cur.continue();
+            };
+            req.onerror = () => reject(req.error);
+        });
+    }
+
     async countObs(fromTime, toTime) {
         if (!this.db) return 0;
         try {
@@ -334,9 +418,7 @@ export class PacketStore {
     async regionStats(fromTime, toTime, bbox = null) {
         const out = { count: 0, minLat: Infinity, maxLat: -Infinity, minLon: Infinity, maxLon: -Infinity };
         if (!this.db) return out;
-        await this.eachObs(fromTime, toTime, r => {
-            if (r.lat == null || r.lon == null) return;
-            if (bbox && (r.lat < bbox.minLat || r.lat > bbox.maxLat || r.lon < bbox.minLon || r.lon > bbox.maxLon)) return;
+        await this._eachPositioned(fromTime, toTime, bbox, r => {
             out.count++;
             if (r.lat < out.minLat) out.minLat = r.lat;
             if (r.lat > out.maxLat) out.maxLat = r.lat;
@@ -354,9 +436,7 @@ export class PacketStore {
         if (!this.db || !(cellMeters > 0)) return [];
         const latCell = cellMeters / 111320;
         const groups = new Map(); // `${rawId}|${gx}|${gy}` -> representative
-        await this.eachObs(fromTime, toTime, r => {
-            if (r.lat == null || r.lon == null) return;
-            if (bbox && (r.lat < bbox.minLat || r.lat > bbox.maxLat || r.lon < bbox.minLon || r.lon > bbox.maxLon)) return;
+        await this._eachPositioned(fromTime, toTime, bbox, r => {
             const lonCell = cellMeters / (111320 * Math.cos(r.lat * Math.PI / 180) || 1);
             const gy = Math.round(r.lat / latCell);
             const gx = Math.round(r.lon / lonCell);
