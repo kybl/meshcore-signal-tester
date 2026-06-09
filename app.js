@@ -5240,7 +5240,13 @@ class MeshCoreApp {
         await new Promise(r => setTimeout(r, 0)); // yield to let the browser repaint
 
         if (this.hashData.size > 0) {
-            if (!confirm(`There are already ${this.hashData.size} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) return;
+            if (!confirm(`There are already ${this.hashData.size} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) {
+                // Cancelled: restore the button/status that were set above.
+                if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
+                this.statusEl?.classList.remove('importing');
+                if (this.statusTextEl && prevStatus != null) this.statusTextEl.textContent = prevStatus;
+                return;
+            }
         }
 
         // Ascending time order so firstSeen and prefix resolution are correct
@@ -5262,7 +5268,23 @@ class MeshCoreApp {
             this._applyHideSelect();
         }
 
+        // Dedupe against already-persisted observations so re-importing the same
+        // file is a no-op. The in-RAM merge only knows about the recent window;
+        // older data lives on disk, so we check there too (keyed by hash, the
+        // raw repeater id and the timestamp — the same identity a row exports as).
+        const existingKeys = new Set();
+        const existingSent = new Set();
+        if (this._storeReady && this.store.available) {
+            for (const h of new Set(rows.map(r => r.hash))) {
+                for (const o of await this.store.obsForHash(h)) existingKeys.add(h + '|' + o.rawId + '|' + o.time);
+            }
+            if (sentSnrRows.length) await this.store.eachSent(-Infinity, Infinity, r => existingSent.add(r.time + '|' + r.rawId));
+        }
+
         for (const row of rows) {
+            const dedupeKey = row.hash + '|' + row.repeater + '|' + row.time;
+            if (existingKeys.has(dedupeKey)) continue;   // already captured/imported
+            existingKeys.add(dedupeKey);
             let packet = null;
             let meta = {};
             if (row.rawHex) {
@@ -5304,8 +5326,10 @@ class MeshCoreApp {
             });
         }
 
-        // Import SentSNR history rows
+        // Import SentSNR history rows (deduped against disk the same way)
         for (const r of sentSnrRows) {
+            if (existingSent.has(r.time + '|' + r.repeater)) continue;
+            existingSent.add(r.time + '|' + r.repeater);
             this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.repeater, label: r.csvText || r.repeater });
             if (this.store) this._sentWriteBuf.push({ time: r.time, snr: r.snr, rawId: r.repeater, label: r.csvText || r.repeater });
         }
