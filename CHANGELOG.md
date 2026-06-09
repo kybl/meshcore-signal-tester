@@ -53,9 +53,19 @@
   keeps a full-extent base layer and only overlays a finer grid for the visible
   region.
 - **The "my location" cone (and the device marker) no longer flicker.** Their
-  translucent ground disc sat almost coplanar with the map plane and z-fought
-  with it as the marker rescaled each frame; markers are now drawn on top with
-  depth ignored, like a map app's location pin.
+  ground disc and base caps sat almost coplanar with the map plane and z-fought
+  with it as the marker rescaled each frame; their depth is now biased slightly
+  toward the camera (polygonOffset), so they resolve above the plane while still
+  behaving as normal 3D objects.
+- **Moving around the 3D map with many points is much smoother.** Panning or
+  rotating within an already-loaded region no longer touches the disk or
+  rebuilds geometry at all; re-queries only happen after moving a quarter of
+  the view or zooming ≥25%, and disk scans now fetch records in large batches
+  instead of one round-trip per record.
+- **"Center on me" now has a dead zone.** While following, the camera only
+  glides after you once your marker leaves the central third of the view, and
+  small manual map adjustments that keep the marker inside that zone no longer
+  switch the follow mode off.
 
 ### Known limitations / to verify on-device
 

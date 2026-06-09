@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=105';
-import { PacketStore } from './packet-store.js?v=5';
+import { Signal3DMap } from './signal3d.js?v=106';
+import { PacketStore } from './packet-store.js?v=6';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -151,7 +151,9 @@ class MeshCoreApp {
         this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
         this._wideSentPoints  = null;
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
-        this._wideMapBase     = null;            // cached coarse full-extent map layer {pts, cell, at}
+        this._wideMapBase     = null;            // cached coarse full-extent map layer {pts, cell, at, dataVer}
+        this._wideMapKey      = null;            // identity of the last applied map point set
+        this._dataVer         = 0;               // bumped whenever new records land on disk
         this._wideRefreshTimer = null;
         this._wideRefreshBusy  = false;
         this._tablePageData   = null;            // disk-paged packet table (null = live RAM window)
@@ -796,6 +798,22 @@ class MeshCoreApp {
                     // grid for the now-visible region, and remember it so the
                     // live refresh keeps that zoom instead of snapping to full extent.
                     if (!this._wideChartPoints) return;
+                    // Small moves don't need a re-query: the previous detail grid
+                    // over-covers the view, so only react once the camera has
+                    // moved a quarter of the span or zoomed by ≥25%. (Skipped
+                    // moves don't update _lastMapView, so drift accumulates and
+                    // eventually crosses the threshold.)
+                    const lv = this._lastMapView;
+                    if (lv) {
+                        const spanLat = lv.bbox.maxLat - lv.bbox.minLat;
+                        const spanLon = lv.bbox.maxLon - lv.bbox.minLon;
+                        const dLat = Math.abs((bbox.minLat + bbox.maxLat) - (lv.bbox.minLat + lv.bbox.maxLat)) / 2;
+                        const dLon = Math.abs((bbox.minLon + bbox.maxLon) - (lv.bbox.minLon + lv.bbox.maxLon)) / 2;
+                        const zoomRatio = (mpp && lv.mpp)
+                            ? Math.max(mpp, lv.mpp) / Math.max(1e-9, Math.min(mpp, lv.mpp))
+                            : Infinity;
+                        if (zoomRatio < 1.25 && dLat < spanLat * 0.25 && dLon < spanLon * 0.25) return;
+                    }
                     this._lastMapView = { bbox, mpp };
                     this._refreshWideMap(bbox, mpp);
                 },
@@ -4219,6 +4237,7 @@ class MeshCoreApp {
             if (hs.length)   this.store.putHashes(hs);   // before obs: readers join obs → hashes
             if (obs.length)  this.store.putObs(obs);
             if (sent.length) this.store.putSent(sent);
+            if (obs.length || sent.length || hs.length) this._dataVer++;
             this.store.setKV('totals', { totalRxCount: this.totalRxCount });
         }, this.WRITE_FLUSH_MS);
     }
@@ -4268,12 +4287,14 @@ class MeshCoreApp {
             this._tablePageData = null;                     // back to live table window
             this._lastMapView = null;
             this._wideMapBase = null;
+            this._wideMapKey = null;
             this._refreshTablePager();
             this._renderMsgTable();
             return;
         }
         this._lastMapView = null;       // new window → start from full extent
         this._wideMapBase = null;       // window changed → recompute the base layer
+        this._wideMapKey = null;
         this._refreshWideMap();         // spatial downsample for the 3D map
         this._loadTablePage(0, true);   // paginate the packet table over disk
         await this._loadWideChartOverlay();
@@ -4310,9 +4331,11 @@ class MeshCoreApp {
     async _flushWrites() {
         if (!this._storeReady || !this.store.available) return;
         if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
+        const dirty = this._hashWriteBuf.length || this._obsWriteBuf.length || this._sentWriteBuf.length;
         if (this._hashWriteBuf.length) { const h = this._hashWriteBuf; this._hashWriteBuf = []; await this.store.putHashes(h); }
         if (this._obsWriteBuf.length)  { const o = this._obsWriteBuf;  this._obsWriteBuf  = []; await this.store.putObs(o); }
         if (this._sentWriteBuf.length) { const s = this._sentWriteBuf; this._sentWriteBuf = []; await this.store.putSent(s); }
+        if (dirty) this._dataVer++;
     }
 
     // While a wide / "All" view is on screen AND capture is live, keep it current
@@ -4355,45 +4378,61 @@ class MeshCoreApp {
         if (!this._shouldUseWideView() || !this.store.available) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         const TARGET_DOTS = 2500;
-        const cellFor = s => {
-            const midLat = (s.minLat + s.maxLat) / 2;
-            const latM = Math.max(1, (s.maxLat - s.minLat) * 111320);
-            const lonM = Math.max(1, (s.maxLon - s.minLon) * 111320 * Math.cos(midLat * Math.PI / 180));
-            // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
+        // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
+        const cellFor = (minLat, maxLat, minLon, maxLon) => {
+            const midLat = (minLat + maxLat) / 2;
+            const latM = Math.max(1, (maxLat - minLat) * 111320);
+            const lonM = Math.max(1, (maxLon - minLon) * 111320 * Math.cos(midLat * Math.PI / 180));
             return Math.max(5, Math.sqrt((latM * lonM) / TARGET_DOTS));
         };
         try {
+            // Base recompute only when data actually changed AND the cache aged
+            // out — viewing a static capture costs no disk scans at all.
             const BASE_TTL = 15000;   // live capture: new off-screen points appear within this
-            if (!this._wideMapBase || Date.now() - this._wideMapBase.at > BASE_TTL) {
+            const b = this._wideMapBase;
+            if (!b || (b.dataVer !== this._dataVer && Date.now() - b.at > BASE_TTL)) {
                 const s = await this.store.regionStats(from, Infinity, null);
                 if (!s.count) {
-                    this._wideMapBase = { pts: [], cell: 0, at: Date.now() };
+                    this._wideMapBase = { pts: [], cell: 0, at: Date.now(), dataVer: this._dataVer };
                     this.signalMap?.setHistoricalPoints?.([]);
+                    this._wideMapKey = null;
                     return;
                 }
-                const cell = cellFor(s);
-                this._wideMapBase = { pts: await this.store.gridObs(from, Infinity, cell, null), cell, at: Date.now() };
+                const cell = cellFor(s.minLat, s.maxLat, s.minLon, s.maxLon);
+                this._wideMapBase = {
+                    pts: await this.store.gridObs(from, Infinity, cell, null),
+                    cell, at: Date.now(), dataVer: this._dataVer,
+                };
             }
             const base = this._wideMapBase;
-            let merged = base.pts;
+            // Detail cell is derived from the view bbox itself (it IS the region
+            // whose dot density matters) — no extra disk scan needed for sizing.
+            let dCell = 0;
             if (bbox && base.pts.length) {
-                const sv = await this.store.regionStats(from, Infinity, bbox);
-                if (sv.count) {
-                    let cell = cellFor(sv);
-                    if (mpp) cell = Math.max(cell, mpp * 4);   // never finer than ~4 screen px
-                    if (cell < base.cell) {                    // only refine, never coarsen
-                        const fine = await this.store.gridObs(from, Infinity, cell, bbox);
-                        const inB = p => p.lat >= bbox.minLat && p.lat <= bbox.maxLat
-                                      && p.lon >= bbox.minLon && p.lon <= bbox.maxLon;
-                        merged = base.pts.filter(p => !inB(p)).concat(fine);
-                    }
-                }
+                dCell = Math.max(cellFor(bbox.minLat, bbox.maxLat, bbox.minLon, bbox.maxLon), (mpp ?? 0) * 4);
+                if (dCell >= base.cell) dCell = 0;   // would not refine — base alone suffices
+            }
+            // Skip the query AND the geometry rebuild when the same view over the
+            // same data was already applied — panning around an already-loaded
+            // region costs nothing.
+            const key = dCell
+                ? `${base.at}|${this._dataVer}|${Math.round(dCell)}|`
+                  + [bbox.minLat, bbox.maxLat, bbox.minLon, bbox.maxLon].map(v => Math.round(v * 1e4)).join(',')
+                : `${base.at}|base`;
+            if (key === this._wideMapKey) return;
+            let merged = base.pts;
+            if (dCell) {
+                const fine = await this.store.gridObs(from, Infinity, dCell, bbox);
+                const inB = p => p.lat >= bbox.minLat && p.lat <= bbox.maxLat
+                              && p.lon >= bbox.minLon && p.lon <= bbox.maxLon;
+                merged = base.pts.filter(p => !inB(p)).concat(fine);
             }
             const pts = merged.map(r => ({
                 lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time,
                 rawId: r.rawId, col: this._resolveColReadonly(r.rawId), count: r.count,
             }));
             this.signalMap?.setHistoricalPoints?.(pts);
+            this._wideMapKey = key;
         } catch (e) {
             console.warn('Wide-map load failed:', e);
         }
@@ -4602,6 +4641,7 @@ class MeshCoreApp {
         this._wideChartPoints = null;
         this._wideSentPoints = null;
         this._wideMapBase = null;
+        this._wideMapKey = null;
         this._lastMapView = null;
         this._obsWriteBuf = [];
         this._sentWriteBuf = [];

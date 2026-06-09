@@ -81,6 +81,7 @@ export class Signal3DMap {
         this._userLoc      = null;
         this._watchId      = null;
         this._followUser   = false;  // when true, camera tracks the user's GPS position
+        this._userDragging = false;  // a pointer gesture on the map is in progress
         this.onFollowChange = opts.onFollowChange || null;
         this._tileBounds   = null;   // { x0, y0, nx, ny, zoom }
         this._planeDim     = null;   // { w, h } in world units
@@ -239,9 +240,16 @@ export class Signal3DMap {
             clearTimeout(this._viewUpdateTimer);
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
         });
-        // User interaction cancels any running camera fly/turn animation and
-        // leaves "follow me" mode — the user has taken manual control.
-        this.controls.addEventListener('start', () => { this._camAnim = null; this.setFollowUser(false); });
+        // User interaction cancels any running camera fly/turn animation.
+        // Follow mode is NOT dropped immediately: small adjustments (pan a bit,
+        // zoom) that leave the user's marker within the central third of the
+        // view keep following active; only a gesture that pushes the marker out
+        // of that dead zone disengages it (checked on gesture end).
+        this.controls.addEventListener('start', () => { this._camAnim = null; this._userDragging = true; });
+        this.controls.addEventListener('end', () => {
+            this._userDragging = false;
+            if (this._followUser && !this._userInDeadZone()) this.setFollowUser(false);
+        });
 
         // Two-finger twist: rotate camera azimuth by the angular change between the
         // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
@@ -420,9 +428,11 @@ export class Signal3DMap {
                 }
                 this._scheduleMapUpdate();
                 this._updateUserMarker();
-                // In follow mode, keep the user centred as they move (shorter,
-                // smoother glide than the initial fly-to).
-                if (this._followUser) this.flyToUser(450);
+                // In follow mode, glide after the user only once their marker
+                // drifts out of the central-third dead zone — small moves don't
+                // nudge the map. Never recentre mid-gesture (it would fight the
+                // user's drag).
+                if (this._followUser && !this._userDragging && !this._userInDeadZone()) this.flyToUser(450);
             },
             err => {
                 resolved = true;
@@ -1216,9 +1226,22 @@ export class Signal3DMap {
         return true;
     }
 
-    // "Center on me" is a toggle: pressing it once centres on the user and
-    // enters follow mode (camera tracks GPS); pressing it again — or any manual
-    // map movement — leaves follow mode.
+    // True while the user's marker projects within the central third of the
+    // canvas (both axes). Follow mode uses this as its dead zone: inside it the
+    // map is left alone and manual gestures don't disengage following.
+    _userInDeadZone() {
+        if (!this._userLoc) return false;
+        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
+        if (!pos) return false;
+        const v = pos.project(this.camera);   // NDC: visible canvas is -1..1
+        return v.z < 1 && Math.abs(v.x) <= 1 / 3 && Math.abs(v.y) <= 1 / 3;
+    }
+
+    // "Center on me" is a toggle: pressing it once centres on the user exactly
+    // and enters follow mode; pressing it again leaves it. While following, the
+    // camera only glides after the user when their marker drifts out of the
+    // central-third dead zone, and manual map movement keeps follow mode active
+    // as long as the marker stays inside that zone.
     toggleFollowUser() {
         if (this._followUser) { this.setFollowUser(false); return; }
         if (this.flyToUser()) this.setFollowUser(true);
@@ -1665,19 +1688,22 @@ export class Signal3DMap {
         }
     }
 
-    // Location markers must never z-fight with the map plane: their translucent
-    // ground disc sits almost coplanar with it, and the per-frame screen-space
-    // rescale (_scaleMarkerToScreen) walks that tiny y-offset through the depth
-    // buffer's precision, which showed as flickering. Draw them in the
-    // transparent pass, last, with depth ignored — always on top, like a map
-    // app's location pin.
-    _markerAlwaysOnTop(group, order) {
+    // Marker meshes have faces lying on (or a hair above) the map plane — the
+    // translucent ground disc, and the cone/mast base caps at y≈0. The per-frame
+    // screen-space rescale walks those near-coplanar faces through the depth
+    // buffer's precision, which showed as flicker. polygonOffset biases their
+    // depth slightly toward the camera so the GPU resolves them above the plane
+    // deterministically, while keeping normal depth behaviour — the marker is
+    // still a regular 3D object that nearby dots can overlap, not an
+    // always-on-top overlay.
+    _markerNoZFight(group) {
         group.traverse(o => {
             if (!o.isMesh) return;
-            o.renderOrder = order;
-            o.material.transparent = true;
-            o.material.depthTest = false;
-            o.material.depthWrite = false;
+            const m = o.material;
+            m.polygonOffset = true;
+            m.polygonOffsetFactor = -2;
+            m.polygonOffsetUnits = -2;
+            if (m.transparent) m.depthWrite = false;   // translucent disc: don't occlude the blend
         });
     }
 
@@ -1700,7 +1726,7 @@ export class Signal3DMap {
             base.rotation.x = -Math.PI / 2;
             base.position.y = 0.05;
             group.add(base);
-            this._markerAlwaysOnTop(group, 999);
+            this._markerNoZFight(group);
             this._userMarker = group;
             this._userMarker.visible = this._showMarker;
             this.scene.add(this._userMarker);
@@ -1737,7 +1763,7 @@ export class Signal3DMap {
             base.rotation.x = -Math.PI / 2;
             base.position.y = 0.05;
             group.add(base);
-            this._markerAlwaysOnTop(group, 998);   // below the user cone (999)
+            this._markerNoZFight(group);
             this._deviceMarker = group;
             this.scene.add(this._deviceMarker);
         }

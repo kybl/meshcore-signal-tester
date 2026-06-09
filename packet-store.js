@@ -270,20 +270,89 @@ export class PacketStore {
     }
 
     _eachInStore(store, fromTime, toTime, cb) {
+        return this._chunkedScan(store, 'time', this._timeRange(fromTime, toTime), cb);
+    }
+
+    // Index range scan in getAll() batches instead of a cursor. A cursor costs
+    // one IPC round-trip per record, which stalls the main thread on large
+    // scans; getAll cuts that to one round-trip per CHUNK records while keeping
+    // memory bounded by the chunk size.
+    //
+    // Index keys are non-unique (timestamps and Morton codes collide), so a
+    // chunk boundary can fall inside a run of equal keys. Paging resumes at the
+    // boundary key inclusively and already-delivered records are skipped by
+    // primary key; if an entire chunk is one key (e.g. a stationary capture
+    // putting everything in one Morton cell), key-ranged paging cannot advance
+    // and the remainder of that key run is finished with a cursor jump
+    // (continuePrimaryKey) before chunking resumes past it.
+    _chunkedScan(store, indexName, range, cb) {
+        const CHUNK = 4096;
         return new Promise((resolve, reject) => {
             let tx;
             try { tx = this.db.transaction(store, 'readonly'); }
             catch (e) { reject(e); return; }
-            const idx = tx.objectStore(store).index('time');
-            const req = idx.openCursor(this._timeRange(fromTime, toTime));
-            req.onsuccess = () => {
-                const cur = req.result;
-                if (!cur) { resolve(); return; }
-                let keepGoing = true;
-                try { keepGoing = cb(cur.value) !== false; } catch (e) { reject(e); return; }
-                if (keepGoing) cur.continue(); else resolve();
+            const os  = tx.objectStore(store);
+            const idx = os.index(indexName);
+            const pk  = os.keyPath;
+            let lower = range ? range.lower : undefined;
+            let lowerOpen = range ? range.lowerOpen : false;
+            const upper = range ? range.upper : undefined;
+            const upperOpen = range ? range.upperOpen : false;
+            let tailKey;          // index key at the previous chunk's end
+            let tailPks = null;   // primary keys already delivered for tailKey
+            const mkRange = () => {
+                const hasL = lower !== undefined, hasU = upper !== undefined;
+                if (hasL && hasU) return IDBKeyRange.bound(lower, upper, lowerOpen, upperOpen);
+                if (hasL) return IDBKeyRange.lowerBound(lower, lowerOpen);
+                if (hasU) return IDBKeyRange.upperBound(upper, upperOpen);
+                return null;
             };
-            req.onerror = () => reject(req.error);
+            const deliver = (rec) => {
+                if (tailPks && rec[indexName] === tailKey && tailPks.has(rec[pk])) return true;
+                try { return cb(rec) !== false; } catch (e) { reject(e); return null; }
+            };
+            const finishHotKey = (key, lastPk) => {
+                const req = idx.openCursor(mkRange());
+                let jumped = false;
+                req.onsuccess = () => {
+                    const cur = req.result;
+                    if (!cur) { resolve(); return; }
+                    if (!jumped) { jumped = true; cur.continuePrimaryKey(key, lastPk); return; }
+                    if (cur.value[indexName] !== key) {   // run finished — resume chunking past it
+                        lower = key; lowerOpen = true; tailKey = undefined; tailPks = null;
+                        step();
+                        return;
+                    }
+                    tailPks.add(cur.value[pk]);
+                    const go = deliver(cur.value);
+                    if (go === null) return;
+                    if (!go) { resolve(); return; }
+                    cur.continue();
+                };
+                req.onerror = () => reject(req.error);
+            };
+            const step = () => {
+                const req = idx.getAll(mkRange(), CHUNK);
+                req.onsuccess = () => {
+                    const recs = req.result;
+                    for (const rec of recs) {
+                        const go = deliver(rec);
+                        if (go === null) return;
+                        if (!go) { resolve(); return; }
+                    }
+                    if (recs.length < CHUNK) { resolve(); return; }
+                    const newTail = recs[recs.length - 1][indexName];
+                    const stuck = recs[0][indexName] === newTail;   // whole chunk = one key run
+                    const pks = (tailKey === newTail && tailPks) ? tailPks : new Set();
+                    for (let i = recs.length - 1; i >= 0 && recs[i][indexName] === newTail; i--) pks.add(recs[i][pk]);
+                    tailKey = newTail; tailPks = pks;
+                    if (stuck) { finishHotKey(newTail, recs[recs.length - 1][pk]); return; }
+                    lower = newTail; lowerOpen = false;
+                    step();
+                };
+                req.onerror = () => reject(req.error);
+            };
+            step();
         });
     }
 
@@ -301,32 +370,19 @@ export class PacketStore {
     }
 
     _eachByBbox(bbox, fromTime, toTime, cb) {
-        return new Promise((resolve, reject) => {
-            let tx;
-            try { tx = this.db.transaction('obs', 'readonly'); }
-            catch (e) { reject(e); return; }
-            const idx = tx.objectStore('obs').index('mz');
-            const lo = ps_morton(bbox.minLat, bbox.minLon);
-            const hi = ps_morton(bbox.maxLat, bbox.maxLon);
-            const tLo = Number.isFinite(fromTime) ? fromTime : -Infinity;
-            const tHi = Number.isFinite(toTime) ? toTime : Infinity;
-            const req = idx.openCursor(IDBKeyRange.bound(Math.min(lo, hi), Math.max(lo, hi)));
-            req.onsuccess = () => {
-                const cur = req.result;
-                if (!cur) { resolve(); return; }
-                const r = cur.value;
-                if (r.lat != null && r.lon != null &&
-                    r.lat >= bbox.minLat && r.lat <= bbox.maxLat &&
-                    r.lon >= bbox.minLon && r.lon <= bbox.maxLon &&
-                    r.time >= tLo && r.time <= tHi) {
-                    let go = true;
-                    try { go = cb(r) !== false; } catch (e) { reject(e); return; }
-                    if (!go) { resolve(); return; }
-                }
-                cur.continue();
-            };
-            req.onerror = () => reject(req.error);
-        });
+        const lo = ps_morton(bbox.minLat, bbox.minLon);
+        const hi = ps_morton(bbox.maxLat, bbox.maxLon);
+        const tLo = Number.isFinite(fromTime) ? fromTime : -Infinity;
+        const tHi = Number.isFinite(toTime) ? toTime : Infinity;
+        return this._chunkedScan('obs', 'mz',
+            IDBKeyRange.bound(Math.min(lo, hi), Math.max(lo, hi)),
+            r => {
+                if (r.lat == null || r.lon == null) return true;
+                if (r.lat < bbox.minLat || r.lat > bbox.maxLat ||
+                    r.lon < bbox.minLon || r.lon > bbox.maxLon ||
+                    r.time < tLo || r.time > tHi) return true;
+                return cb(r) !== false;
+            });
     }
 
     async countObs(fromTime, toTime) {
