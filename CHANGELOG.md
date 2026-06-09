@@ -23,6 +23,10 @@
   - The packet table is paginated (prev/next, newest first) over the disk history
     when viewing a wide / "All" window.
   - CSV export streams the full history from disk, not just what is in memory.
+  - While capturing, a wide / "All" view refreshes itself every few seconds so
+    newly captured packets appear without changing the Display window. The
+    refresh keeps the current map zoom and does not flip the table page you are
+    reading (only the newest page updates in place).
 
 ### Fixed
 
@@ -37,10 +41,6 @@
 
 ### Known limitations / to verify on-device
 
-- Wide / "All" views (charts, map, table) are a point-in-time snapshot of the
-  disk history, refreshed when the Display window changes (and, for the map, on
-  zoom/pan); they do not update continuously while capturing. The live narrow
-  window updates in real time as before.
 - The IndexedDB storage + downsampling + pagination paths have been
   syntax-checked but need runtime validation on a device (they cannot be
   exercised in CI without a browser and a live packet stream).

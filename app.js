@@ -148,6 +148,9 @@ class MeshCoreApp {
         this._writeFlushTimer = null;
         this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
         this._wideSentPoints  = null;
+        this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
+        this._wideRefreshTimer = null;
+        this._wideRefreshBusy  = false;
         this._tablePageData   = null;            // disk-paged packet table (null = live RAM window)
         this._tablePage       = 0;
         this._tablePageSize   = 100;
@@ -787,8 +790,11 @@ class MeshCoreApp {
                 },
                 onViewChange:  (bbox, mpp) => {
                     // Zoom/pan in a wide ("All") view → re-query a finer disk
-                    // grid for the now-visible region.
-                    if (this._wideChartPoints) this._refreshWideMap(bbox, mpp);
+                    // grid for the now-visible region, and remember it so the
+                    // live refresh keeps that zoom instead of snapping to full extent.
+                    if (!this._wideChartPoints) return;
+                    this._lastMapView = { bbox, mpp };
+                    this._refreshWideMap(bbox, mpp);
                 },
                 onFilter:      col => {
                     if (!col) return;
@@ -4053,6 +4059,8 @@ class MeshCoreApp {
         this._renderRepTable();
         this._updateStats();
         this._refreshWideView();
+        // Keep a wide / "All" view live while capturing (no-op otherwise).
+        this._wideRefreshTimer = setInterval(() => this._tickWideRefresh(), 5000);
     }
 
     // Rebuild the in-RAM render window from disk by replaying the most recent
@@ -4153,7 +4161,8 @@ class MeshCoreApp {
         return rawId;
     }
 
-    // Build (or clear) the downsampled chart overlay for wide / "All" windows.
+    // Enter (or leave) the downsampled wide / "All" view: charts overlay, map
+    // grid (full extent) and paginated table. Called on Display-window change.
     async _refreshWideView() {
         if (!this._shouldUseWideView()) {
             if (this._wideChartPoints) {
@@ -4162,12 +4171,21 @@ class MeshCoreApp {
             }
             this.signalMap?.setHistoricalPoints?.(null);   // back to live map points
             this._tablePageData = null;                     // back to live table window
+            this._lastMapView = null;
             this._refreshTablePager();
             this._renderMsgTable();
             return;
         }
-        this._refreshWideMap();        // spatial downsample for the 3D map
-        this._loadTablePage(0, true);  // paginate the packet table over disk
+        this._lastMapView = null;       // new window → start from full extent
+        this._refreshWideMap();         // spatial downsample for the 3D map
+        this._loadTablePage(0, true);   // paginate the packet table over disk
+        await this._loadWideChartOverlay();
+    }
+
+    // (Re)build just the downsampled 2D-chart overlay from disk. Shared by the
+    // Display-change path and the live-capture refresh tick.
+    async _loadWideChartOverlay() {
+        if (!this._shouldUseWideView() || !this.store.available) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         try {
             const buckets = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
@@ -4187,6 +4205,35 @@ class MeshCoreApp {
         } catch (e) {
             console.warn('Wide-view load failed:', e);
             this._wideChartPoints = null; this._wideSentPoints = null;
+        }
+    }
+
+    // Flush buffered writes to disk immediately (so a following query sees the
+    // newest packets). Used before export and before each live wide-view refresh.
+    async _flushWrites() {
+        if (!this._storeReady || !this.store.available) return;
+        if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
+        if (this._obsWriteBuf.length)  { const o = this._obsWriteBuf;  this._obsWriteBuf  = []; await this.store.putObs(o); }
+        if (this._sentWriteBuf.length) { const s = this._sentWriteBuf; this._sentWriteBuf = []; await this.store.putSent(s); }
+    }
+
+    // While a wide / "All" view is on screen AND capture is live, keep it current
+    // by periodically re-querying disk. Preserves the user's current map zoom and
+    // does not flip the table page out from under them (only refreshes page 0).
+    async _tickWideRefresh() {
+        if (this._wideRefreshBusy) return;
+        if (!this._wideChartPoints || !this._collecting) return;
+        if (typeof document !== 'undefined' && document.hidden) return;
+        this._wideRefreshBusy = true;
+        try {
+            await this._flushWrites();
+            await this._loadWideChartOverlay();
+            await this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null);
+            if (this._tablePageData && this._tablePage === 0) await this._loadTablePage(0);
+        } catch (e) {
+            console.warn('Live wide-view refresh failed:', e);
+        } finally {
+            this._wideRefreshBusy = false;
         }
     }
 
@@ -4954,11 +5001,7 @@ class MeshCoreApp {
         this._unsavedRxCount = 0;
 
         // Flush any buffered writes so the export reflects everything captured.
-        if (useDisk) {
-            if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
-            if (this._obsWriteBuf.length)  { await this.store.putObs(this._obsWriteBuf);  this._obsWriteBuf  = []; }
-            if (this._sentWriteBuf.length) { await this.store.putSent(this._sentWriteBuf); this._sentWriteBuf = []; }
-        }
+        if (useDisk) await this._flushWrites();
 
         const msgFilter = this._msgFilter.toLowerCase().trim();
 
@@ -5274,9 +5317,7 @@ class MeshCoreApp {
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.
         if (this._storeReady && this.store.available) {
-            if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
-            if (this._obsWriteBuf.length)  { await this.store.putObs(this._obsWriteBuf);  this._obsWriteBuf  = []; }
-            if (this._sentWriteBuf.length) { await this.store.putSent(this._sentWriteBuf); this._sentWriteBuf = []; }
+            await this._flushWrites();
             await this._refreshWideView();
         }
 
