@@ -4,12 +4,17 @@
 
 ### Added
 
-- **3D map dark styles:**
-  - a dark map style (CARTO Dark Matter) in the map style list;
-  - a **None (no map)** option that drops the map imagery and shows a plain floor;
-  - when the page is in dark mode the map background is now black (separate from
-    the chosen map style — a dark *page* and a dark *basemap* are two different
-    things).
+- **More 3D map styles** (none of them need an API key):
+  - CARTO basemaps — Dark Matter, Positron (light) and Voyager, each also in a
+    no-labels variant that keeps the floor clean under the signal beads;
+  - Esri basemaps — Dark Gray Canvas, Light Gray Canvas and World Imagery
+    (satellite);
+  - more OpenStreetMap flavours — CyclOSM (cycling), Humanitarian (HOT),
+    German and French styles;
+  - a **None (no map)** option that drops the map imagery and shows a plain floor.
+- **Dark page = dark map background** — when the page is in dark mode the 3D map
+  background is now black (separate from the chosen map style — a dark *page*
+  and a dark *basemap* are two different things).
 
 ## [1.1.0] - 2026-06-07
 
