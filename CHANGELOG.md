@@ -47,6 +47,15 @@
   file is a no-op.
 - **Cancelling the CSV import "data already loaded" prompt** no longer leaves the
   Import button stuck showing "Importing…".
+- **3D map no longer loses off-screen points in wide / "All" views.** Zoom/pan
+  used to replace the whole point set with only the visible region's points, so
+  rotating back to a previously visible area showed missing dots. The map now
+  keeps a full-extent base layer and only overlays a finer grid for the visible
+  region.
+- **The "my location" cone (and the device marker) no longer flicker.** Their
+  translucent ground disc sat almost coplanar with the map plane and z-fought
+  with it as the marker rescaled each frame; markers are now drawn on top with
+  depth ignored, like a map app's location pin.
 
 ### Known limitations / to verify on-device
 

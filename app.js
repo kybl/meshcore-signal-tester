@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=104';
+import { Signal3DMap } from './signal3d.js?v=105';
 import { PacketStore } from './packet-store.js?v=5';
 
 // Single source of truth for the released app version, shown in the header (and
@@ -151,6 +151,7 @@ class MeshCoreApp {
         this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
         this._wideSentPoints  = null;
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
+        this._wideMapBase     = null;            // cached coarse full-extent map layer {pts, cell, at}
         this._wideRefreshTimer = null;
         this._wideRefreshBusy  = false;
         this._tablePageData   = null;            // disk-paged packet table (null = live RAM window)
@@ -4266,11 +4267,13 @@ class MeshCoreApp {
             this.signalMap?.setHistoricalPoints?.(null);   // back to live map points
             this._tablePageData = null;                     // back to live table window
             this._lastMapView = null;
+            this._wideMapBase = null;
             this._refreshTablePager();
             this._renderMsgTable();
             return;
         }
         this._lastMapView = null;       // new window → start from full extent
+        this._wideMapBase = null;       // window changed → recompute the base layer
         this._refreshWideMap();         // spatial downsample for the 3D map
         this._loadTablePage(0, true);   // paginate the packet table over disk
         await this._loadWideChartOverlay();
@@ -4332,28 +4335,61 @@ class MeshCoreApp {
         }
     }
 
-    // Spatially downsample the disk history onto the 3D map. The grid cell size
-    // is estimated up-front from the region's bounding box and a target dot
-    // budget (so the cluster granularity is chosen BEFORE touching individual
-    // points), then clamped to the screen resolution at the current zoom.
-    // `bbox`/`mpp` come from the map on zoom/pan; without them the whole extent
-    // is used. Output is bounded regardless of how many packets the span holds.
+    // Spatially downsample the disk history onto the 3D map, in two layers:
+    //
+    //  - BASE: a coarse grid over the FULL extent, never clipped to the camera.
+    //    Guarantees points exist everywhere the user may pan/rotate to. It needs
+    //    a full time-range scan, so it is cached and only recomputed when stale.
+    //  - DETAIL: when zoomed into a sub-region, a finer grid for the visible
+    //    bbox only (cheap — Morton-indexed). Base points inside the bbox are
+    //    replaced by the finer ones; outside it the base remains.
+    //
+    // Replacing the whole point set with a bbox-clipped query (the previous
+    // behaviour) dropped everything off-screen — rotating back to those areas
+    // showed missing dots until the next Display change.
+    //
+    // Cell size is estimated up-front from extent area and a target dot budget,
+    // clamped to ~4 screen px at the current zoom; output stays bounded
+    // (≤ ~2× target) regardless of how many packets the span holds.
     async _refreshWideMap(bbox = null, mpp = null) {
         if (!this._shouldUseWideView() || !this.store.available) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
-        try {
-            const s = await this.store.regionStats(from, Infinity, bbox);
-            if (!s.count) { this.signalMap?.setHistoricalPoints?.([]); return; }
+        const TARGET_DOTS = 2500;
+        const cellFor = s => {
             const midLat = (s.minLat + s.maxLat) / 2;
             const latM = Math.max(1, (s.maxLat - s.minLat) * 111320);
             const lonM = Math.max(1, (s.maxLon - s.minLon) * 111320 * Math.cos(midLat * Math.PI / 180));
-            const TARGET_DOTS = 2500;
             // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
-            let cell = Math.sqrt((latM * lonM) / TARGET_DOTS);
-            if (mpp) cell = Math.max(cell, mpp * 4);   // never finer than ~4 screen px
-            cell = Math.max(cell, 5);                  // and never below 5 m
-            const reps = await this.store.gridObs(from, Infinity, cell, bbox);
-            const pts = reps.map(r => ({
+            return Math.max(5, Math.sqrt((latM * lonM) / TARGET_DOTS));
+        };
+        try {
+            const BASE_TTL = 15000;   // live capture: new off-screen points appear within this
+            if (!this._wideMapBase || Date.now() - this._wideMapBase.at > BASE_TTL) {
+                const s = await this.store.regionStats(from, Infinity, null);
+                if (!s.count) {
+                    this._wideMapBase = { pts: [], cell: 0, at: Date.now() };
+                    this.signalMap?.setHistoricalPoints?.([]);
+                    return;
+                }
+                const cell = cellFor(s);
+                this._wideMapBase = { pts: await this.store.gridObs(from, Infinity, cell, null), cell, at: Date.now() };
+            }
+            const base = this._wideMapBase;
+            let merged = base.pts;
+            if (bbox && base.pts.length) {
+                const sv = await this.store.regionStats(from, Infinity, bbox);
+                if (sv.count) {
+                    let cell = cellFor(sv);
+                    if (mpp) cell = Math.max(cell, mpp * 4);   // never finer than ~4 screen px
+                    if (cell < base.cell) {                    // only refine, never coarsen
+                        const fine = await this.store.gridObs(from, Infinity, cell, bbox);
+                        const inB = p => p.lat >= bbox.minLat && p.lat <= bbox.maxLat
+                                      && p.lon >= bbox.minLon && p.lon <= bbox.maxLon;
+                        merged = base.pts.filter(p => !inB(p)).concat(fine);
+                    }
+                }
+            }
+            const pts = merged.map(r => ({
                 lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time,
                 rawId: r.rawId, col: this._resolveColReadonly(r.rawId), count: r.count,
             }));
@@ -4565,6 +4601,8 @@ class MeshCoreApp {
         this._sentSnrHistory = [];
         this._wideChartPoints = null;
         this._wideSentPoints = null;
+        this._wideMapBase = null;
+        this._lastMapView = null;
         this._obsWriteBuf = [];
         this._sentWriteBuf = [];
         this._hashWriteBuf = [];

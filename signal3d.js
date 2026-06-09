@@ -1665,6 +1665,22 @@ export class Signal3DMap {
         }
     }
 
+    // Location markers must never z-fight with the map plane: their translucent
+    // ground disc sits almost coplanar with it, and the per-frame screen-space
+    // rescale (_scaleMarkerToScreen) walks that tiny y-offset through the depth
+    // buffer's precision, which showed as flickering. Draw them in the
+    // transparent pass, last, with depth ignored — always on top, like a map
+    // app's location pin.
+    _markerAlwaysOnTop(group, order) {
+        group.traverse(o => {
+            if (!o.isMesh) return;
+            o.renderOrder = order;
+            o.material.transparent = true;
+            o.material.depthTest = false;
+            o.material.depthWrite = false;
+        });
+    }
+
     _updateUserMarker() {
         if (!this._userLoc || !this._tileBounds) return;
         const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
@@ -1684,6 +1700,7 @@ export class Signal3DMap {
             base.rotation.x = -Math.PI / 2;
             base.position.y = 0.05;
             group.add(base);
+            this._markerAlwaysOnTop(group, 999);
             this._userMarker = group;
             this._userMarker.visible = this._showMarker;
             this.scene.add(this._userMarker);
@@ -1720,6 +1737,7 @@ export class Signal3DMap {
             base.rotation.x = -Math.PI / 2;
             base.position.y = 0.05;
             group.add(base);
+            this._markerAlwaysOnTop(group, 998);   // below the user cone (999)
             this._deviceMarker = group;
             this.scene.add(this._deviceMarker);
         }
