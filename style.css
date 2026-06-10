@@ -779,16 +779,16 @@ html:not(.light-theme) .btn-connect:disabled {
     right: 4px;
     z-index: 4;
     font-size: 11px;
-    padding: 2px 8px;
-    border: 1px solid var(--border, #ccc);
+    font-weight: 600;
+    padding: 3px 10px;
+    border: 1px solid var(--btn-primary-border, var(--border));
     border-radius: 6px;
-    background: var(--bg-box, #fff);
-    color: var(--text, #333);
+    background: var(--btn-primary-bg);
+    color: #fff;
     cursor: pointer;
-    opacity: 0.9;
-    box-shadow: 0 1px 3px var(--shadow, rgba(0,0,0,0.2));
+    box-shadow: 0 1px 3px var(--shadow);
 }
-.chart-zoom-reset:hover { opacity: 1; }
+.chart-zoom-reset:hover { filter: brightness(1.15); }
 
 .chart-resize-handle {
     height: 14px;
