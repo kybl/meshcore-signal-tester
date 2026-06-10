@@ -789,6 +789,8 @@ html:not(.light-theme) .btn-connect:disabled {
     box-shadow: 0 1px 3px var(--shadow);
 }
 .chart-zoom-reset:hover { filter: brightness(1.15); }
+/* No global .hidden rule exists in this stylesheet — each component opts in. */
+.chart-zoom-reset.hidden { display: none; }
 
 .chart-resize-handle {
     height: 14px;

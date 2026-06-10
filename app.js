@@ -3752,8 +3752,10 @@ class MeshCoreApp {
             tMin = Math.max(full.tMin, mid - MIN_SPAN / 2);
             tMax = Math.min(full.tMax, mid + MIN_SPAN / 2);
         }
-        // Covers (almost) the whole range ⇒ drop the zoom and resume auto/live.
-        if (tMin <= full.tMin + 1 && tMax >= full.tMax - 1) { this._clearChartZoom(); return; }
+        // Covers (almost) the whole range ⇒ drop the zoom and resume auto/live —
+        // a ≥99%-of-full window isn't a meaningful zoom, so don't keep zoom state
+        // (and the Reset button) around for it.
+        if (tMax - tMin >= (full.tMax - full.tMin) * 0.99) { this._clearChartZoom(); return; }
         this._chartZoom = { tMin, tMax };
         this._updateZoomResetBtns();
         this._scheduleChartRender();        // instant: rescale the current cache
