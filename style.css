@@ -1759,6 +1759,11 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     font-size: 12px;
     color: #444;
     cursor: pointer;
+    /* The longest option must not dictate the width — fill the row and let the
+       closed select truncate; the dropdown list itself still opens full-width. */
+    flex: 1;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .map-source-select:hover {
