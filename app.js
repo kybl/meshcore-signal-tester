@@ -150,6 +150,7 @@ class MeshCoreApp {
         this._writeFlushTimer = null;
         this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
         this._wideSentPoints  = null;
+        this._renderCacheAt   = 0;               // time the disk render-caches reflect; newer RAM data is the "tail"
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this._wideMapBase     = null;            // cached coarse full-extent map layer {pts, cell, at, dataVer}
         this._wideMapKey      = null;            // identity of the last applied map point set
@@ -385,7 +386,7 @@ class MeshCoreApp {
                 const row = rxCell.closest('tr[id^="row-"]');
                 if (!row) return;
                 const hash = row.id.slice(4);
-                const data = this._tableSource().get(hash);
+                const data = this._tableSource().get(hash) || this.hashData.get(hash);
                 if (!data) return;
                 const firstCol = this.repeaterColumns.find(col => data.repeaters.has(col));
                 if (firstCol) this.toggleDetailRow(hash, firstCol);
@@ -3065,7 +3066,13 @@ class MeshCoreApp {
             // When importing, skip (hash, repeater) pairs that already exist — existing data wins
             if (opts.importing && data.repeaters.has(canonicalKey)) return;
             data.lastSeen = now;
-            data.repeaters.set(canonicalKey, repEntry);
+            // Keep the strongest-RSSI observation per (packet, repeater), matching
+            // the disk grid/page representative so the table cell reads the same
+            // value in every Display window.
+            const prevRep = data.repeaters.get(canonicalKey);
+            if (!prevRep || (rssi != null && (prevRep.rssi == null || rssi > prevRep.rssi))) {
+                data.repeaters.set(canonicalKey, repEntry);
+            }
         }
 
         const rawPrec  = this.idPrecision(repeater);
@@ -3236,7 +3243,19 @@ class MeshCoreApp {
         // the window, so the display cutoff is not re-applied.
         const paginating = this._tablePageData != null;
         const displayCutoff = paginating ? 0 : this._displayCutoffNow();
-        const allRows = Array.from(this._tableSource().entries())
+        let entries;
+        if (paginating) {
+            // Disk page snapshot, with the live tail (packets newer than the
+            // cache) overlaid on page 0 so new rows show instantly.
+            const m = new Map(this._tablePageData);
+            if (this._tablePage === 0) {
+                for (const [h, d] of this.hashData) if (d.lastSeen > this._renderCacheAt) m.set(h, d);
+            }
+            entries = [...m.entries()];
+        } else {
+            entries = [...this.hashData.entries()];
+        }
+        const allRows = entries
             .filter(([, data]) => !data._stub && (!displayCutoff || data.lastSeen >= displayCutoff))
             .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
 
@@ -3309,7 +3328,7 @@ class MeshCoreApp {
         ).join('');
 
         for (const [hash, col] of openDetails) {
-            if (!this._tableSource().has(hash)) continue;
+            if (!this._tableSource().has(hash) && !this.hashData.has(hash)) continue;
             // Drop detail for a column that is now filtered out
             if (col && !this._colMatchesRepFilter(col)) continue;
             const row = document.getElementById(`row-${hash}`);
@@ -3442,7 +3461,7 @@ class MeshCoreApp {
     }
 
     _buildDetailRow(hash, col = null) {
-        const data = this._tableSource().get(hash);
+        const data = this._tableSource().get(hash) || this.hashData.get(hash);
         if (!data) return '';
         const colspan = 1 + this.repeaterColumns.length * 2;
 
@@ -4277,14 +4296,16 @@ class MeshCoreApp {
             .finally(() => { this._quotaPruning = false; });
     }
 
-    // Should wide windows be served from disk (downsampled) rather than RAM?
-    // Only when Auto-remove is "Never" (so deep history exists) and the display
-    // window is wider than what we keep materialised in RAM.
-    _shouldUseWideView() {
-        if (!this._storeReady || !this.store.available) return false;
-        if (isFinite(this.HASH_LIFETIME)) return false;        // finite retention ⇒ RAM already holds it all
-        return !isFinite(this.DISPLAY_LIFETIME) || this.DISPLAY_LIFETIME > this.RENDER_BUDGET_MS;
+    // Whether rendering is served from the store (disk) rather than the live RAM
+    // arrays. This is the single render path whenever IndexedDB is available
+    // (i.e. essentially always) — every view (charts, map, table) then draws from
+    // a disk query cache plus a short RAM "tail" of packets newer than the cache,
+    // so behaviour is identical for every Display window. The RAM render path
+    // remains only as a fallback when IndexedDB can't be opened.
+    _storeRenders() {
+        return this._storeReady && this.store.available;
     }
+    _shouldUseWideView() { return this._storeRenders(); }
 
     // Resolve a rawId to an existing column WITHOUT mutating the column model
     // (used to colour downsampled overlay points; live ingest uses
@@ -4321,6 +4342,8 @@ class MeshCoreApp {
         this._lastMapView = null;       // new window → start from full extent
         this._wideMapBase = null;       // window changed → recompute the base layer
         this._wideMapKey = null;
+        await this._flushWrites();
+        this._renderCacheAt = Date.now();
         this._refreshWideMap();         // spatial downsample for the 3D map
         this._loadTablePage(0, true);   // paginate the packet table over disk
         await this._loadWideChartOverlay();
@@ -4336,9 +4359,13 @@ class MeshCoreApp {
             const cps = [];
             for (const b of buckets) {
                 const col = this._resolveColReadonly(b.rawId);
-                if (b.snrMin != null)  cps.push({ time: b.time, snr: b.snrMin,  rssi: b.rssiMin,  col, rawId: b.rawId, _bucket: true });
                 cps.push({ time: b.time, snr: b.snrAvg, rssi: b.rssiAvg, col, rawId: b.rawId, _bucket: true, count: b.count });
-                if (b.snrMax != null)  cps.push({ time: b.time, snr: b.snrMax,  rssi: b.rssiMax,  col, rawId: b.rawId, _bucket: true });
+                // Spread (min/max) only matters once a bucket aggregates >1 packet;
+                // for sparse/short windows each bucket is one packet (min=avg=max).
+                if (b.count > 1) {
+                    if (b.snrMin != null) cps.push({ time: b.time, snr: b.snrMin, rssi: b.rssiMin, col, rawId: b.rawId, _bucket: true });
+                    if (b.snrMax != null) cps.push({ time: b.time, snr: b.snrMax, rssi: b.rssiMax, col, rawId: b.rawId, _bucket: true });
+                }
             }
             this._wideChartPoints = cps;
             const sent = [];
@@ -4389,6 +4416,7 @@ class MeshCoreApp {
         this._wideDirty = false;
         try {
             await this._flushWrites();
+            this._renderCacheAt = Date.now();   // caches now reflect disk up to here; newer RAM = tail
             await this._loadWideChartOverlay();
             await this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null);
             if (this._tablePageData && this._tablePage === 0) await this._loadTablePage(0);
@@ -4524,8 +4552,10 @@ class MeshCoreApp {
         const scroll = this.msgTableHead?.closest('.msg-table-scroll');
         if (!scroll) return;
         let pager = document.getElementById('msgTablePager');
-        const paginating = this._tablePageData != null;
-        if (!paginating) { pager?.remove(); return; }
+        // Only show the pager when there is more than one page — a single page
+        // (the common live case) reads like the old scrollable table.
+        const showPager = this._tablePageData != null && this._tablePageCount > 1;
+        if (!showPager) { pager?.remove(); return; }
         if (!pager) {
             pager = document.createElement('div');
             pager.id = 'msgTablePager';
@@ -4957,7 +4987,7 @@ class MeshCoreApp {
         document.querySelectorAll('#msgTableBody tr[id^="row-"]').forEach(tr => {
             if (!sel) { tr.style.display = ''; return; }
             const hash = tr.id.slice(4);
-            const data = this._tableSource().get(hash);
+            const data = this._tableSource().get(hash) || this.hashData.get(hash);
             tr.style.display = data?.repeaters.has(sel) ? '' : 'none';
         });
         // Keep detail rows in sync with their parent row
@@ -5169,12 +5199,13 @@ class MeshCoreApp {
     }
 
     _visibleChartPoints() {
-        // Wide / "All" windows are served by a downsampled disk overlay so the
-        // chart can span the full history without materialising it in RAM.
+        // Served from the downsampled disk cache plus a RAM tail (packets newer
+        // than the cache) so new data shows instantly without a per-packet disk
+        // re-query. Falls back to the live RAM window only without a store.
         if (this._wideChartPoints) {
-            return this._repFilterTerms.length
-                ? this._wideChartPoints.filter(p => this._colMatchesRepFilter(p.col))
-                : this._wideChartPoints;
+            const tail = this.chartPoints.filter(p => p.time > this._renderCacheAt);
+            const pts = tail.length ? this._wideChartPoints.concat(tail) : this._wideChartPoints;
+            return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
         }
         const cutoff = this._displayCutoffNow();
         let pts = cutoff ? this.chartPoints.filter(p => p.time >= cutoff) : this.chartPoints;
@@ -5185,9 +5216,9 @@ class MeshCoreApp {
 
     _visibleSentSnrPts() {
         if (this._wideSentPoints) {
-            return this._repFilterTerms.length
-                ? this._wideSentPoints.filter(p => this._colMatchesRepFilter(p.col))
-                : this._wideSentPoints;
+            const tail = this._sentSnrHistory.filter(p => p.time > this._renderCacheAt);
+            const pts = tail.length ? this._wideSentPoints.concat(tail) : this._wideSentPoints;
+            return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
         }
         const cutoff = this._displayCutoffNow();
         let pts = cutoff ? this._sentSnrHistory.filter(p => p.time >= cutoff) : this._sentSnrHistory;

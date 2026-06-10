@@ -4,6 +4,16 @@
 
 ### Added
 
+- **All views now render the same way regardless of the Display window.** Every
+  view (charts, 3D map, packet table) draws from the on-disk store plus a short
+  in-memory "tail" of just-arrived packets, instead of switching between a
+  separate live (RAM) path for short windows and a disk path for "All". This
+  removes the behavioural differences between windows (downsampling, point
+  merging, and a packet cell now consistently shows the strongest-RSSI
+  observation everywhere). New packets still appear immediately via the tail; the
+  disk caches refresh in the background. The old RAM-only render path remains
+  solely as a fallback when IndexedDB cannot be opened.
+
 - **Captured data is now stored on disk (IndexedDB) instead of only in memory.**
   The full session history is persisted as it is captured; only a bounded recent
   window is kept in RAM for rendering. This means:
