@@ -3269,7 +3269,7 @@ class MeshCoreApp {
             if (msgFilterBar) msgFilterBar.classList.add('hidden');
             if (msgTableScroll) msgTableScroll.style.display = 'none';
             if (msgTableEmpty) {
-                msgTableEmpty.textContent = displayCutoff
+                msgTableEmpty.textContent = cutoff
                     ? 'No packets in the current display window.'
                     : 'Waiting for data…';
                 msgTableEmpty.classList.remove('hidden');
