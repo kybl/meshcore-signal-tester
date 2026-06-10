@@ -57,6 +57,11 @@ html.light-theme {
     --btn-primary-border: #0D47A1;
 }
 
+/* Global utility: anything with .hidden is removed from layout. !important so
+   it wins over component display rules of any specificity (and matches how the
+   per-component .foo.hidden rules used to beat e.g. .map-controls .btn-primary). */
+.hidden { display: none !important; }
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: var(--bg-gutter);
@@ -367,10 +372,6 @@ html:not(.light-theme) .btn-connect:disabled {
     color: #cfe0f0;
 }
 
-.btn-primary.hidden {
-    display: none;
-}
-
 .btn-pause {
     -webkit-appearance: none;
     appearance: none;
@@ -548,10 +549,6 @@ html:not(.light-theme) .btn-connect:disabled {
     margin-bottom: 8px;
 }
 
-.section-wrap.hidden {
-    display: none;
-}
-
 .section-body {
     display: grid;
     grid-template-rows: 1fr;
@@ -621,8 +618,6 @@ html:not(.light-theme) .btn-connect:disabled {
     color: var(--text-muted);
     font-style: italic;
 }
-.rep-table-empty.hidden { display: none; }
-
 .rep-expand-bar {
     padding: 5px 10px 6px;
 }
@@ -789,8 +784,6 @@ html:not(.light-theme) .btn-connect:disabled {
     box-shadow: 0 1px 3px var(--shadow);
 }
 .chart-zoom-reset:hover { filter: brightness(1.15); }
-/* No global .hidden rule exists in this stylesheet — each component opts in. */
-.chart-zoom-reset.hidden { display: none; }
 
 .chart-resize-handle {
     height: 14px;
@@ -842,8 +835,6 @@ html:not(.light-theme) .btn-connect:disabled {
     color: var(--text-muted);
     font-style: italic;
 }
-.msg-table-empty.hidden { display: none; }
-
 .msg-table-scroll {
     background: var(--bg-box);
     border-radius: 8px;
@@ -940,19 +931,11 @@ html:not(.light-theme) .btn-connect:disabled {
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
-.empty-state.hidden {
-    display: none;
-}
-
 .saved-devices {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-}
-
-.saved-devices.hidden {
-    display: none;
 }
 
 .saved-label {
@@ -1306,10 +1289,6 @@ html.light-theme .ct-colname {
     white-space: nowrap;
 }
 
-.battery-status.hidden {
-    display: none;
-}
-
 .battery-status.battery-low {
     color: #c33;
 }
@@ -1448,10 +1427,6 @@ header .help-icon.active {
     box-sizing: border-box;
 }
 
-.help-modal-overlay.hidden {
-    display: none;
-}
-
 /* ---- WiFi connect modal ---- */
 .wifi-modal-overlay {
     position: fixed;
@@ -1464,7 +1439,6 @@ header .help-icon.active {
     padding: 16px;
     box-sizing: border-box;
 }
-.wifi-modal-overlay.hidden { display: none; }
 .wifi-modal {
     background: #fff;
     color: #333;
@@ -1496,7 +1470,6 @@ header .help-icon.active {
 .wifi-modal-error {
     color: #c0392b; font-size: 12px; margin: -4px 0 12px; line-height: 1.4;
 }
-.wifi-modal-error.hidden { display: none; }
 .wifi-modal-actions {
     display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px;
 }
@@ -1632,10 +1605,6 @@ html.light-theme .help-modal a { color: #1565C0; }
     padding: 4px 0 5px;
 }
 
-.msg-filter-bar.hidden {
-    display: none;
-}
-
 .msg-filter-input {
     flex: 1;
     min-width: 0;
@@ -1668,10 +1637,6 @@ html.light-theme .help-modal a { color: #1565C0; }
     color: white;
 }
 
-.msg-filter-clear.hidden {
-    display: none;
-}
-
 html.light-theme .msg-filter-clear {
     background: rgba(0, 0, 0, 0.08);
     border: 1px solid rgba(0, 0, 0, 0.25);
@@ -1689,10 +1654,6 @@ html.light-theme .msg-filter-clear:hover {
     color: var(--text-secondary);
     white-space: nowrap;
     flex-shrink: 0;
-}
-
-.msg-filter-count.hidden {
-    display: none;
 }
 
 .rep-filter-bar {
@@ -1727,10 +1688,6 @@ html.light-theme .msg-filter-clear:hover {
     animation: filterAppliedPulse 1.6s ease-in-out infinite;
 }
 
-.filter-applied-indicator.hidden {
-    display: none;
-}
-
 @keyframes filterAppliedPulse {
     0%, 100% { box-shadow: 0 0 0 1px rgba(255, 80, 80, 0.4), 0 2px 6px rgba(255, 60, 60, 0.35); }
     50%      { box-shadow: 0 0 0 2px rgba(255, 80, 80, 0.6), 0 2px 10px rgba(255, 60, 60, 0.6); }
@@ -1756,10 +1713,6 @@ html.light-theme .msg-filter-clear:hover {
     padding: 8px 4px;
     font-size: 12px;
     color: rgba(255,255,255,0.8);
-}
-
-.map-controls .btn-primary.hidden {
-    display: none;
 }
 
 .btn-show-all-repeaters {
@@ -1809,9 +1762,6 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     font-style: italic;
     opacity: 0.8;
 }
-.map-location-status.hidden,
-.map-controls .btn-show-all-repeaters.hidden { display: none; }
-
 .map-source-label {
     display: inline-flex;
     align-items: center;
@@ -1946,10 +1896,6 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     padding: 20px;
 }
 
-.map-empty.hidden {
-    display: none;
-}
-
 /* WebGL unavailable: collapse the map area to just an inline notice */
 .map-offline .map-controls,
 .map-offline .map-canvas,
@@ -1992,10 +1938,6 @@ html.light-theme .map-offline .map-empty {
     backdrop-filter: blur(4px);
     min-width: 0;
     pointer-events: auto;
-}
-
-.map-info.hidden {
-    display: none;
 }
 
 .smi-close {
@@ -2219,8 +2161,6 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
     word-break: break-word;
     color: var(--text-primary);
 }
-.map-settings-panel.hidden { display: none; }
-
 .map-setting-toggle {
     display: flex;
     align-items: center;
@@ -2265,8 +2205,6 @@ td.col-dim { opacity: 0.25; }
     font-size: 12px;
     color: var(--text-primary);
 }
-.corner-notice.hidden { display: none; }
-
 .corner-notice-line1 {
     display: flex;
     align-items: center;
@@ -2479,7 +2417,6 @@ html.light-theme .theme-toggle-btn:hover {
 }
 
 /* Repeater stock-firmware caveat banner */
-.repeater-notice.hidden { display: none; }
 .repeater-notice {
     position: relative;
     margin: 0 0 14px;
@@ -2530,7 +2467,6 @@ html.light-theme .theme-toggle-btn:hover {
     padding: 20px;
     background: rgba(180, 30, 30, 0.22);
 }
-.disconnect-alarm.hidden { display: none; }
 .disconnect-alarm-box {
     background: var(--bg-box);
     border: 2px solid #c0392b;
