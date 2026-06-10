@@ -741,7 +741,6 @@ class MeshCoreApp {
         try {
             this.signalMap = new Signal3DMap({
                 canvas,
-                statusEl:      document.getElementById('locationStatus'),
                 btnEl:         document.getElementById('enableLocationBtn'),
                 emptyEl:       document.getElementById('mapEmpty'),
                 infoEl:        document.getElementById('mapInfo'),
