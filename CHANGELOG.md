@@ -66,6 +66,11 @@
   the map geometry rebuild is throttled and skipped entirely while you are
   panning/rotating, and the tables refresh a few times a second instead of on
   every packet. (Movement was smooth with capture stopped, janky while capturing.)
+- **Newly ingested packets now show in a wide / "All" view even when not
+  capturing** (e.g. the debug "Inject a fake RX" tool). The wide view renders a
+  disk snapshot that previously only refreshed during live capture, so an
+  injected packet appeared to do nothing; it now refreshes whenever new data is
+  ingested.
 - **"Center on me" now has a dead zone.** While following, the camera only
   glides after you once your marker leaves the central third of the view, and
   small manual map adjustments that keep the marker inside that zone no longer

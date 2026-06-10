@@ -3097,6 +3097,9 @@ class MeshCoreApp {
         (this._flashPending ??= new Set()).add(hash + '|' + canonicalKey);
         this._scheduleLiveRender(wasAtBottom);
         this._scheduleChartRender();
+        // In a wide / "All" view the visible data is a disk snapshot — tell it to
+        // refresh so this packet shows even when not capturing (e.g. debug inject).
+        if (this._wideChartPoints) this._markWideDirty();
 
         // Sound stays immediate (cheap, and its timing matters).
         const data = this.hashData.get(hash);
@@ -4361,14 +4364,29 @@ class MeshCoreApp {
         if (dirty) this._dataVer++;
     }
 
-    // While a wide / "All" view is on screen AND capture is live, keep it current
-    // by periodically re-querying disk. Preserves the user's current map zoom and
-    // does not flip the table page out from under them (only refreshes page 0).
+    // Mark the wide / "All" view as needing a refresh because new data was just
+    // ingested (live capture, or an out-of-band injection like the debug tool
+    // while not capturing). When not capturing, kick a prompt refresh so the
+    // disk-snapshot views (charts/map/table) actually reflect the new packet
+    // instead of waiting for the next periodic tick.
+    _markWideDirty() {
+        this._wideDirty = true;
+        if (!this._collecting) {
+            clearTimeout(this._wideKick);
+            this._wideKick = setTimeout(() => this._tickWideRefresh(), 400);
+        }
+    }
+
+    // Keep a wide / "All" view current by re-querying disk. Runs while capturing
+    // (periodic tick) and whenever new data was ingested out of band (_wideDirty),
+    // so debug injections and the like show up even when not connected. Preserves
+    // the current map zoom and only refreshes table page 0 (no page flip).
     async _tickWideRefresh() {
-        if (this._wideRefreshBusy) return;
-        if (!this._wideChartPoints || !this._collecting) return;
+        if (this._wideRefreshBusy || !this._wideChartPoints) return;
         if (typeof document !== 'undefined' && document.hidden) return;
+        if (!this._collecting && !this._wideDirty) return;   // nothing new to show
         this._wideRefreshBusy = true;
+        this._wideDirty = false;
         try {
             await this._flushWrites();
             await this._loadWideChartOverlay();
