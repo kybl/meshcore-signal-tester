@@ -2205,6 +2205,31 @@ td.col-dim { opacity: 0.25; }
     font-size: 12px;
     color: var(--text-primary);
 }
+/* Modifier: the repeater-FILTER notice is a full-width bar pinned to the very
+   top of the screen (the selection notice stays a floating corner box). */
+.corner-notice.notice-topbar {
+    top: 0;
+    left: 0;
+    right: 0;
+    min-width: 0;
+    max-width: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 12px;
+    border-radius: 0;
+    border-width: 0 0 1px 0;
+    padding: 8px 14px;
+    box-shadow: 0 2px 12px var(--shadow);
+}
+.notice-topbar .corner-notice-extra { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 10px; }
+.notice-topbar .corner-notice-btn { flex: 0 0 auto; }
+/* "Show more" stats flow horizontally in the bar instead of stacking */
+.notice-topbar .cn-stats { flex-direction: row; flex-wrap: wrap; gap: 2px 14px; }
+/* Keep the selection corner box clear of the bar when both are visible */
+.notice-topbar:not(.hidden) ~ #selNotice { top: 60px; }
+
 .corner-notice-line1 {
     display: flex;
     align-items: center;
