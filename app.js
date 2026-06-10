@@ -3753,14 +3753,22 @@ class MeshCoreApp {
         if (tMin <= full.tMin + 1 && tMax >= full.tMax - 1) { this._clearChartZoom(); return; }
         this._chartZoom = { tMin, tMax };
         this._updateZoomResetBtns();
-        this._scheduleChartRender();
+        this._scheduleChartRender();        // instant: rescale the current cache
+        this._scheduleChartCacheRefresh();  // then refine resolution for the new window
     }
 
     _clearChartZoom() {
         const had = !!this._chartZoom;
         this._chartZoom = null;
         this._updateZoomResetBtns();
-        if (had) this._scheduleChartRender();
+        if (had) { this._scheduleChartRender(); this._scheduleChartCacheRefresh(); }
+    }
+
+    // Re-query the disk overlay for the current (zoom or full) window, debounced
+    // so a wheel/pinch gesture coalesces into a single query once it settles.
+    _scheduleChartCacheRefresh() {
+        clearTimeout(this._chartCacheTimer);
+        this._chartCacheTimer = setTimeout(() => { this._loadWideChartOverlay(); }, 140);
     }
 
     _updateZoomResetBtns() {
@@ -3918,13 +3926,20 @@ class MeshCoreApp {
         }
         // X-axis zoom: both charts share one window so they stay aligned. The full
         // (un-zoomed) window is [autoTMin, now]; an active zoom narrows it, clamped
-        // to the data extent. A degenerate window collapses back to live auto-follow.
-        this._chartFullWindow = { tMin: autoTMin, tMax: now };
-        let tMin = autoTMin, tMax = now;
+        // to the data extent. While zoomed the data fed in is only the zoom window,
+        // so it can't reveal the true extent — keep the previously measured full
+        // tMin and only let the right edge track live time, so zoom-out still works.
+        if (this._chartZoom && this._chartFullWindow) {
+            this._chartFullWindow = { tMin: this._chartFullWindow.tMin, tMax: now };
+        } else {
+            this._chartFullWindow = { tMin: autoTMin, tMax: now };
+        }
+        const full = this._chartFullWindow;
+        let tMin = full.tMin, tMax = full.tMax;
         if (this._chartZoom) {
-            tMin = Math.max(autoTMin, this._chartZoom.tMin);
-            tMax = Math.min(now, this._chartZoom.tMax);
-            if (tMax - tMin < 1) { tMin = autoTMin; tMax = now; }
+            tMin = Math.max(full.tMin, this._chartZoom.tMin);
+            tMax = Math.min(full.tMax, this._chartZoom.tMax);
+            if (tMax - tMin < 1) { tMin = full.tMin; tMax = full.tMax; }
         }
         this._lastChartWindow = { tMin, tMax };
 
@@ -4514,12 +4529,17 @@ class MeshCoreApp {
     }
 
     // (Re)build just the downsampled 2D-chart overlay from disk. Shared by the
-    // Display-change path and the live-capture refresh tick.
+    // Display-change path and the live-capture refresh tick. When an X-zoom is
+    // active it queries the *zoom* window, so the on-disk bucketing matches the
+    // visible range (otherwise zooming would just magnify the coarse, regularly
+    // spaced buckets of the whole Display window).
     async _loadWideChartOverlay() {
         if (!this.store.available) return;
-        const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
+        const z = this._chartZoom;
+        const from = z ? z.tMin : (isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity);
+        const to   = z ? z.tMax : Infinity;
         try {
-            const buckets = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
+            const buckets = await this.store.bucketObs(from, to, this.DOWNSAMPLE_BUCKETS);
             const cps = [];
             for (const b of buckets) {
                 const col = this._resolveColReadonly(b.rawId);
@@ -4533,7 +4553,7 @@ class MeshCoreApp {
             }
             this._wideChartPoints = cps;
             const sent = [];
-            await this.store.eachSent(from, Infinity, r =>
+            await this.store.eachSent(from, to, r =>
                 sent.push({ time: r.time, snr: r.snr, col: this._resolveColReadonly(r.rawId), label: r.label }));
             this._wideSentPoints = sent;
             this._scheduleChartRender();
@@ -5383,15 +5403,19 @@ class MeshCoreApp {
     // When the cache is empty (store not open yet, or unavailable) the cutoff-
     // filtered tail alone is the full live RAM window — one path, no fallback.
     _visibleChartPoints() {
+        // While X-zoomed the cache is re-queried for the exact zoom window, so the
+        // live RAM tail isn't needed (and would double-draw points already in it).
+        const zoomed = this._chartZoom && this.store.available;
         const cutoff = this._displayCutoffNow();
-        const tail = this.chartPoints.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
+        const tail = zoomed ? [] : this.chartPoints.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
         const pts = tail.length ? this._wideChartPoints.concat(tail) : this._wideChartPoints;
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
 
     _visibleSentSnrPts() {
+        const zoomed = this._chartZoom && this.store.available;
         const cutoff = this._displayCutoffNow();
-        const tail = this._sentSnrHistory.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
+        const tail = zoomed ? [] : this._sentSnrHistory.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
         const pts = tail.length ? this._wideSentPoints.concat(tail) : this._wideSentPoints;
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
