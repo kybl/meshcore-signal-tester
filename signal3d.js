@@ -173,6 +173,7 @@ export class Signal3DMap {
         // When non-null these replace _rxPoints as the render source (they are
         // already spatially gridded, so no further clustering is applied).
         this._histPoints      = null;
+        this._histOutgoingPts = null;    // disk-loaded outgoing-SNR points (null = use live _outgoingPts)
         this._dotsDirty       = false;   // a live packet changed _rxPoints; rebuild is coalesced in the frame loop
         this._lastDotsBuild   = 0;
         this._viewChangeTimer = null;
@@ -675,7 +676,7 @@ export class Signal3DMap {
         // Consider both received (sphere) and sent (star) points so a repeater
         // we've only ever transmitted to still shows a panel when clicked.
         const pts = this._rxPoints.filter(p => p.col === col)
-            .concat(this._outgoingPts.filter(p => p.col === col));
+            .concat((this._histOutgoingPts ?? this._outgoingPts).filter(p => p.col === col));
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const isPseudo = col === 'direct' || col === 'unknown';
         const dotStyle = isPseudo
@@ -886,6 +887,8 @@ export class Signal3DMap {
     clearPoints() {
         this._rxPoints = [];
         this._outgoingPts = [];
+        this._histPoints = null;
+        this._histOutgoingPts = null;
         this._selectedCol = null;
         this._disposeDots();
         this._removeOverlay();
@@ -1016,6 +1019,48 @@ export class Signal3DMap {
         if (this.emptyEl && this._histPoints && this._histPoints.length) this.emptyEl.classList.add('hidden');
         this._rebuildDots();
         this._scheduleMapUpdate();
+    }
+
+    // Disk-loaded outgoing-SNR points for wide / "All" views (parallel to
+    // setHistoricalPoints for incoming). Pass null to use the live _outgoingPts.
+    // Each point: { lat, lon, snr, col, time, rawId }.
+    setHistoricalSentPoints(arr) {
+        this._histOutgoingPts = (arr && arr.length) ? arr : (arr ? [] : null);
+        this._rebuildDots();
+    }
+
+    // Merge points within _clusterRadius metres, per repeater column, keeping the
+    // strongest sample (RSSI if present, else SNR). A no-op when clustering is off.
+    _clusterByCol(pts) {
+        if (!(this._clusterRadius > 0) || pts.length < 2) return pts;
+        const latDeg = this._clusterRadius / 111320;
+        const byCols = new Map();
+        for (const p of pts) {
+            if (!byCols.has(p.col)) byCols.set(p.col, []);
+            byCols.get(p.col).push(p);
+        }
+        const strength = p => (p.rssi ?? p.snr ?? -Infinity);
+        const clustered = [];
+        for (const cpts of byCols.values()) {
+            const used = new Uint8Array(cpts.length);
+            const refLat = cpts[0].lat;
+            const lonDeg = this._clusterRadius / (111320 * Math.cos(refLat * Math.PI / 180) || 1);
+            for (let i = 0; i < cpts.length; i++) {
+                if (used[i]) continue;
+                let best = cpts[i];
+                used[i] = 1;
+                for (let j = i + 1; j < cpts.length; j++) {
+                    if (used[j]) continue;
+                    if (Math.abs(cpts[j].lat - cpts[i].lat) < latDeg &&
+                        Math.abs(cpts[j].lon - cpts[i].lon) < lonDeg) {
+                        used[j] = 1;
+                        if (strength(cpts[j]) > strength(best)) best = cpts[j];
+                    }
+                }
+                clustered.push(best);
+            }
+        }
+        return clustered;
     }
 
     // Fire onViewChange (debounced) so the host can re-query a finer disk grid
@@ -1596,37 +1641,9 @@ export class Signal3DMap {
         );
         if (!visible.length) return;
 
-        // Clustering: for each repeater, merge points within _clusterRadius metres
-        if (this._clusterRadius > 0 && !histMode) {
-            // 1° latitude ≈ 111 320 m; 1° longitude ≈ 111 320 * cos(lat) m
-            const latDeg = this._clusterRadius / 111320;
-            const byCols = new Map();
-            for (const p of visible) {
-                if (!byCols.has(p.col)) byCols.set(p.col, []);
-                byCols.get(p.col).push(p);
-            }
-            const clustered = [];
-            for (const pts of byCols.values()) {
-                const used = new Uint8Array(pts.length);
-                const refLat = pts[0].lat;
-                const lonDeg = this._clusterRadius / (111320 * Math.cos(refLat * Math.PI / 180) || 1);
-                for (let i = 0; i < pts.length; i++) {
-                    if (used[i]) continue;
-                    let best = pts[i];
-                    used[i] = 1;
-                    for (let j = i + 1; j < pts.length; j++) {
-                        if (used[j]) continue;
-                        if (Math.abs(pts[j].lat - pts[i].lat) < latDeg &&
-                            Math.abs(pts[j].lon - pts[i].lon) < lonDeg) {
-                            used[j] = 1;
-                            if (pts[j].rssi > best.rssi) best = pts[j];
-                        }
-                    }
-                    clustered.push(best);
-                }
-            }
-            visible = clustered;
-        }
+        // Clustering: merge nearby points per repeater. In histMode the disk grid
+        // already spatially downsampled, so skip it; in live mode apply it here.
+        if (!histMode) visible = this._clusterByCol(visible);
 
         const litPts = sel ? visible.filter(p => p.col === sel) : visible;
         const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
@@ -1768,12 +1785,16 @@ export class Signal3DMap {
             this._lineSegs.geometry.setAttribute('color', new THREE.BufferAttribute(litCol, 3));
         this._lineSegsDim = makeLines(dimPts, dimMat);
 
-        // Sent SNR squares — outgoing signal quality (how well the repeater heard us)
+        // Sent SNR stars — outgoing signal quality (how well the repeater heard
+        // us). Same source model as incoming: disk-loaded historical points when
+        // present, else the live in-RAM set; clustered the same way.
         const sentCutoff = this._displayCutoff;
-        const sentAll = this._outgoingPts.filter(p =>
+        const sentSrc = this._histOutgoingPts ?? this._outgoingPts;
+        let sentAll = sentSrc.filter(p =>
             (!this._filterFn || this._filterFn(p.col)) &&
             (!sentCutoff || p.time >= sentCutoff)
         );
+        sentAll = this._clusterByCol(sentAll);
         const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
         const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
         addPoints(sentLit, 1.0,  3.2, this._starTex);

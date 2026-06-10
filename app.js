@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=108';
+import { Signal3DMap } from './signal3d.js?v=109';
 import { PacketStore } from './packet-store.js?v=6';
 
 // Single source of truth for the released app version, shown in the header (and
@@ -157,6 +157,7 @@ class MeshCoreApp {
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this._wideMapBase     = null;            // cached coarse full-extent map layer {pts, cell, at, dataVer}
         this._wideMapKey      = null;            // identity of the last applied map point set
+        this._wideMapSentVer  = -1;              // dataVer the outgoing-SNR map layer was loaded for
         this._dataVer         = 0;               // bumped whenever new records land on disk
         this._wideRefreshTimer = null;
         this._wideRefreshBusy  = false;
@@ -2575,12 +2576,14 @@ class MeshCoreApp {
             tagKnown,
         };
 
-        // Record uplink SNR in the Sent SNR History chart and 3D map
+        // Record uplink SNR in the Sent SNR History chart and 3D map. Persist the
+        // capture position too, so the map can show outgoing SNR from disk
+        // (clustered, surviving reload/export) the same way it shows incoming.
         const now = Date.now();
-        this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex });
-        if (this.store) { this._sentWriteBuf.push({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex }); this._scheduleWriteFlush(); }
-        this._scheduleChartRender();
         const sentLoc = this.signalMap?.currentLocation() ?? null;
+        this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
+        if (this.store) { this._sentWriteBuf.push({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null }); this._scheduleWriteFlush(); }
+        this._scheduleChartRender();
         if (sentLoc && remoteSnr != null) {
             this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: pubKeyHex, time: now, rawId: pubKeyHex });
         }
@@ -4438,7 +4441,7 @@ class MeshCoreApp {
             this.totalRxCount = savedTotal; this._unsavedRxCount = savedUnsaved;
         }
         await this.store.eachSent(from, Infinity, r => {
-            this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label });
+            this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label, lat: r.lat ?? null, lon: r.lon ?? null });
         });
     }
 
@@ -4646,6 +4649,19 @@ class MeshCoreApp {
             return Math.max(5, Math.sqrt((latM * lonM) / TARGET_DOTS));
         };
         try {
+            // Outgoing (sent) SNR is low-volume and has no spatial index, so load
+            // the whole window once per data change and hand it to the map as
+            // historical points — same source as incoming, just not gridded.
+            if (this._wideMapSentVer !== this._dataVer) {
+                const sentPts = [];
+                await this.store.eachSent(from, Infinity, r => {
+                    if (r.lat == null || r.lon == null) return;
+                    sentPts.push({ lat: r.lat, lon: r.lon, snr: r.snr, time: r.time,
+                                   rawId: r.rawId, col: this._resolveColReadonly(r.rawId) });
+                });
+                this.signalMap?.setHistoricalSentPoints?.(sentPts);
+                this._wideMapSentVer = this._dataVer;
+            }
             // Base recompute only when data actually changed AND the cache aged
             // out — viewing a static capture costs no disk scans at all.
             const BASE_TTL = 15000;   // live capture: new off-screen points appear within this
@@ -4910,6 +4926,7 @@ class MeshCoreApp {
         this._renderCacheAt = 0;
         this._wideMapBase = null;
         this._wideMapKey = null;
+        this._wideMapSentVer = -1;
         this._lastMapView = null;
         this._obsWriteBuf = [];
         this._sentWriteBuf = [];
@@ -5483,7 +5500,7 @@ class MeshCoreApp {
             }
             const sent = [];
             await this.store.eachSent(-Infinity, Infinity, r =>
-                sent.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label }));
+                sent.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label, lat: r.lat, lon: r.lon }));
             sentSource = sent;
         } else {
             for (const [hash, data] of this.hashData) {
@@ -5538,7 +5555,8 @@ class MeshCoreApp {
                 p.snr.toFixed(2),
                 '',
                 '',
-                '',
+                p.lat ?? '',
+                p.lon ?? '',
                 p.label || '',
                 '',
             ].map(esc).join(','));
@@ -5768,12 +5786,16 @@ class MeshCoreApp {
             });
         }
 
-        // Import SentSNR history rows (deduped against disk the same way)
+        // Import SentSNR history rows (deduped against disk the same way).
+        // The SNR value is exported in the uplink_snr column (the snr column is
+        // left empty for these rows), so read it from there.
         for (const r of sentSnrRows) {
             if (existingSent.has(r.time + '|' + r.repeater)) continue;
             existingSent.add(r.time + '|' + r.repeater);
-            this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.repeater, label: r.csvText || r.repeater });
-            if (this.store) this._sentWriteBuf.push({ time: r.time, snr: r.snr, rawId: r.repeater, label: r.csvText || r.repeater });
+            const snr = r.uplinkSnr ?? r.snr;
+            const lat = r.lat, lon = r.lon;
+            this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater });
+            if (this.store) this._sentWriteBuf.push({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
         }
         if (sentSnrRows.length) {
             this._sentSnrHistory.sort((a, b) => a.time - b.time);
