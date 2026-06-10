@@ -4213,28 +4213,50 @@ class MeshCoreApp {
         // (possibly zoomed) visible window, so the time each column spans shrinks
         // automatically as you zoom in — revealing finer detail at the same
         // on-screen density. Each column keeps its min- and max-value point.
+        //
+        // colPts is sorted by time. When zoomed in, also keep the nearest point
+        // just OUTSIDE each edge so the connecting line is drawn across the plot
+        // border (the SVG clip trims the overshoot) instead of stopping at the
+        // last visible point and leaving a gap at the sides.
         const CLUSTER_PX = 5;
         const buckets = Math.max(1, Math.round(pixelWidth / CLUSTER_PX));
-        if (colPts.length <= buckets * 2) return colPts;
-        const span = Math.max(1, tMax - tMin);
-        const bucketMs = span / buckets;
         const valOf = p => type === 'rssi' ? p.rssi : p.snr;
-        const bkts = new Array(buckets);
+
+        let leftN = null, rightN = null;
+        const inWin = [];
         for (const p of colPts) {
-            const i = Math.min(buckets - 1, Math.floor((p.time - tMin) / bucketMs));
-            if (!bkts[i]) { bkts[i] = { min: p, max: p }; }
-            else {
-                if (valOf(p) < valOf(bkts[i].min)) bkts[i].min = p;
-                if (valOf(p) > valOf(bkts[i].max)) bkts[i].max = p;
+            if (p.time < tMin) leftN = p;                 // sorted ⇒ last one < tMin
+            else if (p.time > tMax) { rightN = p; break; } // first one > tMax
+            else inWin.push(p);
+        }
+
+        let body = inWin;
+        if (inWin.length > buckets * 2) {
+            const span = Math.max(1, tMax - tMin);
+            const bucketMs = span / buckets;
+            const bkts = new Array(buckets);
+            for (const p of inWin) {
+                const i = Math.min(buckets - 1, Math.max(0, Math.floor((p.time - tMin) / bucketMs)));
+                if (!bkts[i]) { bkts[i] = { min: p, max: p }; }
+                else {
+                    if (valOf(p) < valOf(bkts[i].min)) bkts[i].min = p;
+                    if (valOf(p) > valOf(bkts[i].max)) bkts[i].max = p;
+                }
             }
+            body = [];
+            for (const b of bkts) {
+                if (!b) continue;
+                body.push(b.min);
+                if (b.max !== b.min) body.push(b.max);
+            }
+            body.sort((a, b) => a.time - b.time);
         }
-        const result = [];
-        for (const b of bkts) {
-            if (!b) continue;
-            result.push(b.min);
-            if (b.max !== b.min) result.push(b.max);
-        }
-        return result.sort((a, b) => a.time - b.time);
+        if (!leftN && !rightN) return body;
+        const out = [];
+        if (leftN) out.push(leftN);
+        out.push(...body);
+        if (rightN) out.push(rightN);
+        return out;
     }
 
     showChartTooltip(e, type, pin = false) {
@@ -4605,8 +4627,12 @@ class MeshCoreApp {
     async _loadWideChartOverlay() {
         if (!this.store.available) return;
         const z = this._chartZoom;
-        const from = z ? z.tMin : (isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity);
-        const to   = z ? z.tMax : Infinity;
+        // When zoomed, pad the query one span beyond each edge so the chart has a
+        // neighbour point just outside the window to draw the edge-crossing line
+        // to (see _decimateChartPts); the clip trims the overshoot.
+        const zspan = z ? (z.tMax - z.tMin) : 0;
+        const from = z ? z.tMin - zspan : (isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity);
+        const to   = z ? z.tMax + zspan : Infinity;
         try {
             const buckets = await this.store.bucketObs(from, to, this.DOWNSAMPLE_BUCKETS);
             const cps = [];
