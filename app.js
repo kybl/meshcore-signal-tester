@@ -148,16 +148,16 @@ class MeshCoreApp {
         this._hashWriteBuf = [];                 // pending per-hash payload records
         this.WRITE_FLUSH_MS = 4000;              // debounce for batching disk writes
         this._writeFlushTimer = null;
-        this._wideChartPoints = null;            // downsampled chart overlay (null = use live RAM)
-        this._wideSentPoints  = null;
-        this._renderCacheAt   = 0;               // time the disk render-caches reflect; newer RAM data is the "tail"
+        this._wideChartPoints = [];              // downsampled chart cache (empty ⇒ tail alone, i.e. live RAM)
+        this._wideSentPoints  = [];
+        this._renderCacheAt   = 0;               // time the disk caches reflect; newer RAM data is the "tail"
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this._wideMapBase     = null;            // cached coarse full-extent map layer {pts, cell, at, dataVer}
         this._wideMapKey      = null;            // identity of the last applied map point set
         this._dataVer         = 0;               // bumped whenever new records land on disk
         this._wideRefreshTimer = null;
         this._wideRefreshBusy  = false;
-        this._tablePageData   = null;            // disk-paged packet table (null = live RAM window)
+        this._tablePageData   = new Map();       // disk-paged packet table snapshot (empty ⇒ tail alone)
         this._tablePage       = 0;
         this._tablePageSize   = 100;
         this._tablePageCount  = 1;
@@ -795,10 +795,10 @@ class MeshCoreApp {
                     this._selectRepeater(col);
                 },
                 onViewChange:  (bbox, mpp) => {
-                    // Zoom/pan in a wide ("All") view → re-query a finer disk
-                    // grid for the now-visible region, and remember it so the
-                    // live refresh keeps that zoom instead of snapping to full extent.
-                    if (!this._wideChartPoints) return;
+                    // Zoom/pan → re-query a finer disk grid for the now-visible
+                    // region, and remember it so the live refresh keeps that zoom
+                    // instead of snapping to full extent.
+                    if (!this.store.available) return;
                     // Small moves don't need a re-query: the previous detail grid
                     // over-covers the view, so only react once the camera has
                     // moved a quarter of the span or zoomed by ≥25%. (Skipped
@@ -3104,9 +3104,10 @@ class MeshCoreApp {
         (this._flashPending ??= new Set()).add(hash + '|' + canonicalKey);
         this._scheduleLiveRender(wasAtBottom);
         this._scheduleChartRender();
-        // In a wide / "All" view the visible data is a disk snapshot — tell it to
-        // refresh so this packet shows even when not capturing (e.g. debug inject).
-        if (this._wideChartPoints) this._markWideDirty();
+        // The visible data is a disk snapshot + tail — mark it dirty so the disk
+        // caches refresh and this packet shows even when not capturing (e.g. a
+        // debug inject), not just on the periodic tick.
+        this._markWideDirty();
 
         // Sound stays immediate (cheap, and its timing matters).
         const data = this.hashData.get(hash);
@@ -3238,30 +3239,26 @@ class MeshCoreApp {
         const msgFilterBar = document.getElementById('msgFilterBar');
 
         const filter = this._msgFilter.toLowerCase().trim();
-        // Source is the live RAM window, or — in a wide / "All" view — the
-        // current disk page (see _loadTablePage). When paginating, the page IS
-        // the window, so the display cutoff is not re-applied.
-        const paginating = this._tablePageData != null;
-        const displayCutoff = paginating ? 0 : this._displayCutoffNow();
-        let entries;
-        if (paginating) {
-            // Disk page snapshot, with the live tail (packets newer than the
-            // cache) overlaid on page 0 so new rows show instantly.
-            const m = new Map(this._tablePageData);
-            if (this._tablePage === 0) {
-                for (const [h, d] of this.hashData) if (d.lastSeen > this._renderCacheAt) m.set(h, d);
+        // Rows = the current disk page snapshot (see _loadTablePage) plus, on
+        // page 0, a live tail of packets newer than the cache so new rows show
+        // instantly. When the page is empty (store not open / unavailable) the
+        // cutoff-filtered tail alone is the full live RAM window — one path.
+        const cutoff = this._displayCutoffNow();
+        const m = new Map(this._tablePageData);
+        if (this._tablePage === 0) {
+            for (const [h, d] of this.hashData) {
+                if (d.lastSeen > this._renderCacheAt && (!cutoff || d.lastSeen >= cutoff)) m.set(h, d);
             }
-            entries = [...m.entries()];
-        } else {
-            entries = [...this.hashData.entries()];
         }
-        const allRows = entries
-            .filter(([, data]) => !data._stub && (!displayCutoff || data.lastSeen >= displayCutoff))
+        const allRows = [...m.entries()]
+            .filter(([, data]) => !data._stub)
             .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
 
-        // Only include columns that actually appear in the visible rows (respects display cutoff)
+        // Only include columns that actually appear in the visible rows (respects
+        // display cutoff). The disk snapshot can surface a historical column that
+        // isn't in the live model, so union it with repeaterColumns.
         const activeColsInRows = new Set(allRows.flatMap(([, data]) => [...data.repeaters.keys()]));
-        const colList = paginating ? [...new Set([...this.repeaterColumns, ...activeColsInRows])] : this.repeaterColumns;
+        const colList = [...new Set([...this.repeaterColumns, ...activeColsInRows])];
         const visibleCols = colList
             .filter(c => this._colMatchesRepFilter(c) && activeColsInRows.has(c));
 
@@ -4192,8 +4189,11 @@ class MeshCoreApp {
     async _initStore() {
         const ok = await this.store.open(await this._chooseSession());
         if (!ok) {
-            // IndexedDB unavailable → RAM-only, as before. Stop buffering writes
-            // (nothing will drain them) so the buffer can't grow without bound.
+            // IndexedDB couldn't be opened (rare: <1% of browsers, e.g. some
+            // private-mode configs). No special render path is needed — with an
+            // empty disk cache every view already renders from the RAM tail. We
+            // only stop buffering writes (nothing would ever drain them) so the
+            // buffer can't grow without bound, and skip the disk-backed features.
             this._storeDead = true;
             this._obsWriteBuf = [];
             this._sentWriteBuf = [];
@@ -4296,17 +4296,6 @@ class MeshCoreApp {
             .finally(() => { this._quotaPruning = false; });
     }
 
-    // Whether rendering is served from the store (disk) rather than the live RAM
-    // arrays. This is the single render path whenever IndexedDB is available
-    // (i.e. essentially always) — every view (charts, map, table) then draws from
-    // a disk query cache plus a short RAM "tail" of packets newer than the cache,
-    // so behaviour is identical for every Display window. The RAM render path
-    // remains only as a fallback when IndexedDB can't be opened.
-    _storeRenders() {
-        return this._storeReady && this.store.available;
-    }
-    _shouldUseWideView() { return this._storeRenders(); }
-
     // Resolve a rawId to an existing column WITHOUT mutating the column model
     // (used to colour downsampled overlay points; live ingest uses
     // findOrCreateColumn, which may promote/merge).
@@ -4322,37 +4311,33 @@ class MeshCoreApp {
         return rawId;
     }
 
-    // Enter (or leave) the downsampled wide / "All" view: charts overlay, map
-    // grid (full extent) and paginated table. Called on Display-window change.
+    // (Re)build the disk render caches (chart overlay, map grid, paginated table)
+    // for the current Display window. Called on Display-window change. If the
+    // store isn't open the caches stay empty and the views render from the RAM
+    // tail alone (same code path, no separate branch).
     async _refreshWideView() {
-        if (!this._shouldUseWideView()) {
-            if (this._wideChartPoints) {
-                this._wideChartPoints = null; this._wideSentPoints = null;
-                this._scheduleChartRender();
-            }
-            this.signalMap?.setHistoricalPoints?.(null);   // back to live map points
-            this._tablePageData = null;                     // back to live table window
-            this._lastMapView = null;
-            this._wideMapBase = null;
-            this._wideMapKey = null;
-            this._refreshTablePager();
-            this._renderMsgTable();
-            return;
-        }
+        if (!this.store.available) return;
         this._lastMapView = null;       // new window → start from full extent
         this._wideMapBase = null;       // window changed → recompute the base layer
         this._wideMapKey = null;
         await this._flushWrites();
-        this._renderCacheAt = Date.now();
-        this._refreshWideMap();         // spatial downsample for the 3D map
-        this._loadTablePage(0, true);   // paginate the packet table over disk
-        await this._loadWideChartOverlay();
+        const boundary = Date.now();    // set _renderCacheAt only after caches land
+        try {
+            await Promise.all([
+                this._refreshWideMap(),       // spatial downsample for the 3D map
+                this._loadTablePage(0, true), // paginate the packet table over disk
+                this._loadWideChartOverlay(),
+            ]);
+            this._renderCacheAt = boundary;
+        } catch (e) {
+            console.warn('Wide-view rebuild failed:', e);
+        }
     }
 
     // (Re)build just the downsampled 2D-chart overlay from disk. Shared by the
     // Display-change path and the live-capture refresh tick.
     async _loadWideChartOverlay() {
-        if (!this._shouldUseWideView() || !this.store.available) return;
+        if (!this.store.available) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         try {
             const buckets = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
@@ -4375,7 +4360,9 @@ class MeshCoreApp {
             this._scheduleChartRender();
         } catch (e) {
             console.warn('Wide-view load failed:', e);
-            this._wideChartPoints = null; this._wideSentPoints = null;
+            // Keep the caches as empty arrays (never null) so the render path —
+            // cache.concat(tail) — stays valid and falls back to the RAM tail.
+            this._wideChartPoints = []; this._wideSentPoints = [];
         }
     }
 
@@ -4409,17 +4396,22 @@ class MeshCoreApp {
     // so debug injections and the like show up even when not connected. Preserves
     // the current map zoom and only refreshes table page 0 (no page flip).
     async _tickWideRefresh() {
-        if (this._wideRefreshBusy || !this._wideChartPoints) return;
+        if (this._wideRefreshBusy || !this.store.available) return;
         if (typeof document !== 'undefined' && document.hidden) return;
         if (!this._collecting && !this._wideDirty) return;   // nothing new to show
         this._wideRefreshBusy = true;
         this._wideDirty = false;
         try {
             await this._flushWrites();
-            this._renderCacheAt = Date.now();   // caches now reflect disk up to here; newer RAM = tail
+            // Boundary = the flush point the rebuilt caches will reflect. Set
+            // _renderCacheAt only AFTER the caches are swapped in, so during the
+            // async rebuild the still-old cache keeps its wider tail and no recent
+            // points momentarily vanish.
+            const boundary = Date.now();
             await this._loadWideChartOverlay();
             await this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null);
-            if (this._tablePageData && this._tablePage === 0) await this._loadTablePage(0);
+            if (this._tablePage === 0) await this._loadTablePage(0);
+            this._renderCacheAt = boundary;
         } catch (e) {
             console.warn('Live wide-view refresh failed:', e);
         } finally {
@@ -4444,7 +4436,7 @@ class MeshCoreApp {
     // clamped to ~4 screen px at the current zoom; output stays bounded
     // (≤ ~2× target) regardless of how many packets the span holds.
     async _refreshWideMap(bbox = null, mpp = null) {
-        if (!this._shouldUseWideView() || !this.store.available) return;
+        if (!this.store.available) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         const TARGET_DOTS = 2500;
         // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
@@ -4509,15 +4501,17 @@ class MeshCoreApp {
 
     // --- Packet table pagination over disk history (wide / "All" view) ---
 
+    // The current disk page snapshot. Callers fall back to live hashData for
+    // tail rows (packets newer than the snapshot) via `?? this.hashData.get(h)`.
     _tableSource() {
-        return this._tablePageData ?? this.hashData;
+        return this._tablePageData;
     }
 
     // Build one page of the table from disk: the newest `_tablePageSize` hashes
     // (by firstSeen) and all their observations, assembled into hashData-shaped
     // entries so _renderMsgTable can render them unchanged.
     async _loadTablePage(page, reset = false) {
-        if (!this._shouldUseWideView() || !this.store.available) { this._tablePageData = null; return; }
+        if (!this.store.available) return;
         if (reset) this._tablePage = 0;
         const size = this._tablePageSize;
         this._tablePageCount = Math.max(1, Math.ceil((await this.store.countHashes()) / size));
@@ -4554,7 +4548,7 @@ class MeshCoreApp {
         let pager = document.getElementById('msgTablePager');
         // Only show the pager when there is more than one page — a single page
         // (the common live case) reads like the old scrollable table.
-        const showPager = this._tablePageData != null && this._tablePageCount > 1;
+        const showPager = this._tablePageCount > 1;
         if (!showPager) { pager?.remove(); return; }
         if (!pager) {
             pager = document.createElement('div');
@@ -4709,8 +4703,12 @@ class MeshCoreApp {
         this.hashData.clear();
         this.chartPoints = [];
         this._sentSnrHistory = [];
-        this._wideChartPoints = null;
-        this._wideSentPoints = null;
+        this._wideChartPoints = [];
+        this._wideSentPoints = [];
+        this._tablePageData = new Map();
+        this._tablePage = 0;
+        this._tablePageCount = 1;
+        this._renderCacheAt = 0;
         this._wideMapBase = null;
         this._wideMapKey = null;
         this._lastMapView = null;
@@ -5198,30 +5196,21 @@ class MeshCoreApp {
         });
     }
 
+    // Visible points = downsampled disk cache + a RAM "tail" of packets newer than
+    // the cache, so new data shows instantly without a per-packet disk re-query.
+    // When the cache is empty (store not open yet, or unavailable) the cutoff-
+    // filtered tail alone is the full live RAM window — one path, no fallback.
     _visibleChartPoints() {
-        // Served from the downsampled disk cache plus a RAM tail (packets newer
-        // than the cache) so new data shows instantly without a per-packet disk
-        // re-query. Falls back to the live RAM window only without a store.
-        if (this._wideChartPoints) {
-            const tail = this.chartPoints.filter(p => p.time > this._renderCacheAt);
-            const pts = tail.length ? this._wideChartPoints.concat(tail) : this._wideChartPoints;
-            return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
-        }
         const cutoff = this._displayCutoffNow();
-        let pts = cutoff ? this.chartPoints.filter(p => p.time >= cutoff) : this.chartPoints;
-        return this._repFilterTerms.length
-            ? pts.filter(p => this._colMatchesRepFilter(p.col))
-            : pts;
+        const tail = this.chartPoints.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
+        const pts = tail.length ? this._wideChartPoints.concat(tail) : this._wideChartPoints;
+        return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
 
     _visibleSentSnrPts() {
-        if (this._wideSentPoints) {
-            const tail = this._sentSnrHistory.filter(p => p.time > this._renderCacheAt);
-            const pts = tail.length ? this._wideSentPoints.concat(tail) : this._wideSentPoints;
-            return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
-        }
         const cutoff = this._displayCutoffNow();
-        let pts = cutoff ? this._sentSnrHistory.filter(p => p.time >= cutoff) : this._sentSnrHistory;
+        const tail = this._sentSnrHistory.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
+        const pts = tail.length ? this._wideSentPoints.concat(tail) : this._wideSentPoints;
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
 

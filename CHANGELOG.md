@@ -11,8 +11,11 @@
   removes the behavioural differences between windows (downsampling, point
   merging, and a packet cell now consistently shows the strongest-RSSI
   observation everywhere). New packets still appear immediately via the tail; the
-  disk caches refresh in the background. The old RAM-only render path remains
-  solely as a fallback when IndexedDB cannot be opened.
+  disk caches refresh in the background. There is now a **single** render path:
+  when the disk cache is empty (store still opening, or — for the <1% of browsers
+  without usable IndexedDB — unavailable) the cutoff-filtered tail alone is the
+  full live RAM window, so the no-store case is handled by the same code rather
+  than a separate, hard-to-test fallback branch.
 
 - **Captured data is now stored on disk (IndexedDB) instead of only in memory.**
   The full session history is persisted as it is captured; only a bounded recent
