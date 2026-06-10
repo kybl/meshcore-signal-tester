@@ -4125,7 +4125,12 @@ class MeshCoreApp {
     }
 
     _decimateChartPts(colPts, tMin, tMax, pixelWidth, type) {
-        const buckets = Math.max(1, Math.floor(pixelWidth));
+        // Cluster into one column per ~5 px of chart width. tMin..tMax is the
+        // (possibly zoomed) visible window, so the time each column spans shrinks
+        // automatically as you zoom in — revealing finer detail at the same
+        // on-screen density. Each column keeps its min- and max-value point.
+        const CLUSTER_PX = 5;
+        const buckets = Math.max(1, Math.round(pixelWidth / CLUSTER_PX));
         if (colPts.length <= buckets * 2) return colPts;
         const span = Math.max(1, tMax - tMin);
         const bucketMs = span / buckets;
