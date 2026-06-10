@@ -131,6 +131,9 @@ class MeshCoreApp {
         this._keepScreenOn = Store.bool('keepScreenOn', true);
         this._unsavedRxCount = 0; // packets received since last CSV export
         this._chartFrozenAt = Date.now();
+        this._chartZoom = null;          // {tMin,tMax} X-axis zoom window (null = auto/live)
+        this._lastChartWindow = null;    // [tMin,tMax] the charts were last drawn with
+        this._chartFullWindow = null;    // [tMin,tMax] un-zoomed extent (for clamping)
 
         // --- Durable storage (IndexedDB) ---------------------------------
         // The full session history lives on disk; RAM holds only a bounded
@@ -347,6 +350,7 @@ class MeshCoreApp {
             svg.addEventListener('mousemove', e => this.showChartTooltip(e, type));
             svg.addEventListener('mouseleave', () => this.hideChartTooltip());
             svg.addEventListener('click', e => this._onChartClick(e, type));
+            this._bindChartZoom(svg, type);
         };
         bindChartTooltip(this.rssiChartSvg, 'rssi');
         bindChartTooltip(this.snrChartSvg,  'snr');
@@ -3669,6 +3673,8 @@ class MeshCoreApp {
     }
 
     _onChartClick(e, type) {
+        // A drag-to-zoom gesture ends with a click event we must not treat as a tap.
+        if (this._suppressChartClick) { this._suppressChartClick = false; return; }
         const incomingPts = (type === 'snr' && !this._snrShowIncoming) ? [] : this._visibleChartPoints();
         const sentPts = type === 'snr' ? (this._snrShowOutgoing ? this._visibleSentSnrPts() : []) : [];
         const pts = type === 'snr' ? [...incomingPts, ...sentPts] : incomingPts;
@@ -3683,18 +3689,13 @@ class MeshCoreApp {
         const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
+        // Use the exact window the chart was last rendered with, so hit-testing
+        // stays aligned with the dots even when the X axis is zoomed.
         const now = this._chartFrozenAt ?? Date.now();
-        let tMin;
-        if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
-        else {
-            const allIn  = type === 'snr' ? this._visibleChartPoints()  : incomingPts;
-            const allOut = type === 'snr' ? this._visibleSentSnrPts()   : [];
-            tMin = allIn.length  ? this._earliestTime(allIn)  : Infinity;
-            if (allOut.length) tMin = Math.min(tMin, this._earliestTime(allOut));
-            if (!isFinite(tMin)) tMin = now - 5 * 60000;
-        }
+        const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
+        const tMin = win.tMin, tMax = win.tMax;
         const { yMin, yMax } = this._chartYBounds(type);
-        const tRange = Math.max(1, now - tMin);
+        const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
         const xOf = t => pl + (t - tMin) / tRange * cw;
         const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
@@ -3716,6 +3717,161 @@ class MeshCoreApp {
         this._selectRepeater(deselect ? null : nearest.col);
         if (deselect) this.hideChartTooltip(true);
         else this.showChartTooltip(e, type, true);
+    }
+
+    // ----- 2D-chart X-axis zoom ------------------------------------------
+    // Both charts share one zoom window (this._chartZoom) so the SNR and RSSI
+    // time axes stay aligned. Gestures: mouse wheel (zoom about the cursor),
+    // drag a region with the mouse, two-finger pinch on touch. Double-click or
+    // the "Reset zoom" button returns to the full auto/live window.
+
+    // Map a clientX over `svg` to a time, using the window the chart was last
+    // drawn with (so it matches what's on screen).
+    _chartTimeAtClientX(svg, clientX) {
+        const win = this._lastChartWindow ?? this._chartFullWindow;
+        if (!win) return null;
+        const rect = svg.getBoundingClientRect();
+        const { l: pl, r: pr } = CHART_PAD;
+        const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
+        const frac = Math.max(0, Math.min(1, (clientX - rect.left - pl) / cw));
+        return win.tMin + frac * (win.tMax - win.tMin);
+    }
+
+    _setChartZoom(tMin, tMax) {
+        const full = this._chartFullWindow;
+        if (!full || !(tMax > tMin)) return;
+        // Clamp to the available data extent.
+        tMin = Math.max(full.tMin, tMin);
+        tMax = Math.min(full.tMax, tMax);
+        const MIN_SPAN = 1000;   // don't zoom tighter than 1 s
+        if (tMax - tMin < MIN_SPAN) {
+            const mid = (tMin + tMax) / 2;
+            tMin = Math.max(full.tMin, mid - MIN_SPAN / 2);
+            tMax = Math.min(full.tMax, mid + MIN_SPAN / 2);
+        }
+        // Covers (almost) the whole range ⇒ drop the zoom and resume auto/live.
+        if (tMin <= full.tMin + 1 && tMax >= full.tMax - 1) { this._clearChartZoom(); return; }
+        this._chartZoom = { tMin, tMax };
+        this._updateZoomResetBtns();
+        this._scheduleChartRender();
+    }
+
+    _clearChartZoom() {
+        const had = !!this._chartZoom;
+        this._chartZoom = null;
+        this._updateZoomResetBtns();
+        if (had) this._scheduleChartRender();
+    }
+
+    _updateZoomResetBtns() {
+        const zoomed = !!this._chartZoom;
+        for (const b of (this._zoomResetBtns ?? [])) b.classList.toggle('hidden', !zoomed);
+    }
+
+    _showZoomSel(svg, xa, xb) {
+        const wrap = svg.parentElement;
+        if (!wrap) return;
+        let band = this._zoomSelBand;
+        if (!band || band.parentElement !== wrap) {
+            band = document.createElement('div');
+            band.className = 'chart-zoom-sel';
+            wrap.appendChild(band);
+            this._zoomSelBand = band;
+        }
+        const rect = svg.getBoundingClientRect();
+        const { l: pl, r: pr } = CHART_PAD;
+        const left  = Math.max(pl, Math.min(xa, xb) - rect.left);
+        const right = Math.min((rect.width || svg.clientWidth) - pr, Math.max(xa, xb) - rect.left);
+        band.style.left = left + 'px';
+        band.style.width = Math.max(0, right - left) + 'px';
+        band.style.display = 'block';
+    }
+
+    _hideZoomSel() {
+        if (this._zoomSelBand) this._zoomSelBand.style.display = 'none';
+    }
+
+    _bindChartZoom(svg, type) {
+        // Lazily add a per-chart "Reset zoom" button (shown only while zoomed).
+        const wrap = svg.parentElement;
+        if (wrap && !wrap.querySelector('.chart-zoom-reset')) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'chart-zoom-reset hidden';
+            btn.textContent = '⤢ Reset zoom';
+            btn.title = 'Reset X-axis zoom (or double-click the chart)';
+            btn.addEventListener('click', ev => { ev.stopPropagation(); this._clearChartZoom(); });
+            wrap.appendChild(btn);
+            (this._zoomResetBtns ??= []).push(btn);
+        }
+
+        // Wheel: zoom about the cursor (wheel up = zoom in).
+        svg.addEventListener('wheel', e => {
+            const win = this._lastChartWindow ?? this._chartFullWindow;
+            if (!win) return;
+            const tAt = this._chartTimeAtClientX(svg, e.clientX);
+            if (tAt == null) return;
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1 / 1.2 : 1.2;
+            this._setChartZoom(tAt - (tAt - win.tMin) * factor, tAt + (win.tMax - tAt) * factor);
+        }, { passive: false });
+
+        // Mouse drag → select an X region to zoom into. Distinguish from a click
+        // by a small movement threshold; a real drag suppresses the click.
+        let drag = null;
+        svg.addEventListener('mousedown', e => {
+            if (e.button !== 0) return;
+            e.preventDefault();   // don't start a text/SVG selection while dragging
+            drag = { startX: e.clientX, moved: false };
+        });
+        window.addEventListener('mousemove', e => {
+            if (!drag) return;
+            if (!drag.moved && Math.abs(e.clientX - drag.startX) > 4) drag.moved = true;
+            if (drag.moved) { this._showZoomSel(svg, drag.startX, e.clientX); this.hideChartTooltip(); }
+        });
+        window.addEventListener('mouseup', e => {
+            if (!drag) return;
+            const d = drag; drag = null;
+            this._hideZoomSel();
+            if (!d.moved) return;                 // it was a click → leave to _onChartClick
+            this._suppressChartClick = true;
+            const t1 = this._chartTimeAtClientX(svg, d.startX);
+            const t2 = this._chartTimeAtClientX(svg, e.clientX);
+            if (t1 != null && t2 != null) this._setChartZoom(Math.min(t1, t2), Math.max(t1, t2));
+        });
+
+        // Two-finger pinch on touch. Each finger stays pinned to the time it
+        // grabbed; we solve for the window that keeps both anchors under them.
+        let pinch = null;
+        svg.addEventListener('touchstart', e => {
+            if (e.touches.length !== 2) return;
+            const t0 = this._chartTimeAtClientX(svg, e.touches[0].clientX);
+            const t1 = this._chartTimeAtClientX(svg, e.touches[1].clientX);
+            if (t0 == null || t1 == null) return;
+            pinch = { t0, t1 };
+            this.hideChartTooltip();
+            e.preventDefault();
+        }, { passive: false });
+        svg.addEventListener('touchmove', e => {
+            if (!pinch || e.touches.length !== 2) return;
+            e.preventDefault();
+            const rect = svg.getBoundingClientRect();
+            const { l: pl, r: pr } = CHART_PAD;
+            const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
+            const x0 = e.touches[0].clientX - rect.left - pl;
+            const x1 = e.touches[1].clientX - rect.left - pl;
+            if (Math.abs(x0 - x1) < 1) return;
+            const span = (pinch.t0 - pinch.t1) * cw / (x0 - x1);
+            if (!isFinite(span) || span <= 0) return;
+            const tMin = pinch.t0 - (x0 / cw) * span;
+            this._setChartZoom(tMin, tMin + span);
+        }, { passive: false });
+        const endPinch = e => { if (e.touches.length < 2) pinch = null; };
+        svg.addEventListener('touchend', endPinch);
+        svg.addEventListener('touchcancel', endPinch);
+
+        // Double-click anywhere on the chart resets the zoom.
+        svg.addEventListener('dblclick', e => { e.preventDefault(); this._clearChartZoom(); });
     }
 
     _xLabelStepMs(rangeMs, chartWidthPx) {
@@ -3752,14 +3908,25 @@ class MeshCoreApp {
 
         const now = this._chartFrozenAt ?? Date.now();
         const defaultWindow = 5 * 60000;
-        let tMin;
-        if (!hasAnyData) tMin = now - defaultWindow;
-        else if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
+        let autoTMin;
+        if (!hasAnyData) autoTMin = now - defaultWindow;
+        else if (isFinite(this.HASH_LIFETIME)) autoTMin = now - this.HASH_LIFETIME;
         else {
-            tMin = allInPts.length ? this._earliestTime(allInPts) : Infinity;
-            if (allOutPts.length) tMin = Math.min(tMin, this._earliestTime(allOutPts));
-            if (!isFinite(tMin)) tMin = now - defaultWindow;
+            autoTMin = allInPts.length ? this._earliestTime(allInPts) : Infinity;
+            if (allOutPts.length) autoTMin = Math.min(autoTMin, this._earliestTime(allOutPts));
+            if (!isFinite(autoTMin)) autoTMin = now - defaultWindow;
         }
+        // X-axis zoom: both charts share one window so they stay aligned. The full
+        // (un-zoomed) window is [autoTMin, now]; an active zoom narrows it, clamped
+        // to the data extent. A degenerate window collapses back to live auto-follow.
+        this._chartFullWindow = { tMin: autoTMin, tMax: now };
+        let tMin = autoTMin, tMax = now;
+        if (this._chartZoom) {
+            tMin = Math.max(autoTMin, this._chartZoom.tMin);
+            tMax = Math.min(now, this._chartZoom.tMax);
+            if (tMax - tMin < 1) { tMin = autoTMin; tMax = now; }
+        }
+        this._lastChartWindow = { tMin, tMax };
 
         let yMin, yMax, yStep;
         if (!hasAnyData) {
@@ -3774,7 +3941,7 @@ class MeshCoreApp {
         const minYStep = (yMax - yMin) / maxMajorLines;
         const adaptedStep = niceYSteps.find(s => s >= minYStep);
         if (adaptedStep && adaptedStep > yStep) yStep = adaptedStep;
-        const tRange = Math.max(1, now - tMin);
+        const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
         const xOf = t => (pl + (t - tMin) / tRange * cw).toFixed(1);
@@ -3817,12 +3984,12 @@ class MeshCoreApp {
             : (labelStep < 60000
                 ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
                 : { hour: '2-digit', minute: '2-digit' });
-        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= now; t += minorStep) {
+        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= tMax; t += minorStep) {
             if (t % labelStep === 0) continue;
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMinor}" stroke-width="1"/>`);
         }
-        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= now; t += labelStep) {
+        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= tMax; t += labelStep) {
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMajor}" stroke-width="1"/>`);
             const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
@@ -3833,6 +4000,13 @@ class MeshCoreApp {
         parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
         parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
 
+        // Clip the data layer (noise floor, lines, dots, stars) to the plot rect so
+        // that when zoomed in, points outside the X window don't spill over the
+        // axes/labels. Grid, axes and labels stay outside the clip.
+        const clipId = `chartClip-${type}`;
+        parts.push(`<defs><clipPath id="${clipId}"><rect x="${pl}" y="${pt}" width="${cw}" height="${ch}"/></clipPath></defs>`);
+        parts.push(`<g clip-path="url(#${clipId})">`);
+
         // Noise floor area (RSSI chart only) — drawn behind repeater lines/dots
         if (type === 'rssi' && hasData) {
             const sorted = [...pts].filter(p => p.rssi != null && p.snr != null).sort((a, b) => a.time - b.time);
@@ -3840,10 +4014,10 @@ class MeshCoreApp {
                 const bottom = (pt + ch).toFixed(1);
                 const lastP = sorted[sorted.length - 1];
                 const nfPts = sorted.map(p => `${xOf(p.time)},${yOf(p.rssi - p.snr)}`);
-                nfPts.push(`${xOf(now)},${yOf(lastP.rssi - lastP.snr)}`);
+                nfPts.push(`${xOf(tMax)},${yOf(lastP.rssi - lastP.snr)}`);
                 const topEdge = nfPts.join(' ');
                 const firstX = xOf(sorted[0].time);
-                const lastX  = xOf(now);
+                const lastX  = xOf(tMax);
                 parts.push(
                     `<polygon points="${topEdge} ${lastX},${bottom} ${firstX},${bottom}" ` +
                     `fill="rgba(140,140,140,0.15)"/>`,
@@ -3864,7 +4038,7 @@ class MeshCoreApp {
         const decimGroups = new Map();
         for (const [col, colPts] of groups) {
             colPts.sort((a, b) => a.time - b.time);
-            decimGroups.set(col, this._decimateChartPts(colPts, tMin, now, cw, type));
+            decimGroups.set(col, this._decimateChartPts(colPts, tMin, tMax, cw, type));
         }
 
         for (const [col, dPts] of decimGroups) {
@@ -3922,6 +4096,8 @@ class MeshCoreApp {
                 }
             }
         }
+
+        parts.push(`</g>`);   // close the clipped data layer
 
         if (!hasData) {
             const msg = noneSelected ? 'Select Incoming or Outgoing above' : 'Waiting for data…';
@@ -3992,18 +4168,13 @@ class MeshCoreApp {
         const cw = W - pl - pr;
         const ch = H - pt - pb;
 
+        // Use the exact window the chart was last rendered with, so hit-testing
+        // stays aligned with the dots even when the X axis is zoomed.
         const now = this._chartFrozenAt ?? Date.now();
-        let tMin;
-        if (isFinite(this.HASH_LIFETIME)) tMin = now - this.HASH_LIFETIME;
-        else {
-            const allIn  = type === 'snr' ? this._visibleChartPoints()  : incomingPts;
-            const allOut = type === 'snr' ? this._visibleSentSnrPts()   : [];
-            tMin = allIn.length  ? this._earliestTime(allIn)  : Infinity;
-            if (allOut.length) tMin = Math.min(tMin, this._earliestTime(allOut));
-            if (!isFinite(tMin)) tMin = now - 5 * 60000;
-        }
+        const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
+        const tMin = win.tMin, tMax = win.tMax;
         const { yMin, yMax } = this._chartYBounds(type);
-        const tRange = Math.max(1, now - tMin);
+        const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
         const xOf = t => pl + (t - tMin) / tRange * cw;
@@ -4745,6 +4916,9 @@ class MeshCoreApp {
         if (!hideSelect) return;
         const v = hideSelect.value;
         this.DISPLAY_LIFETIME = (v === 'all' || v === 'Infinity') ? Infinity : +v * 1000;
+        // The displayed time range changed, so any X-zoom window no longer matches.
+        this._chartZoom = null;
+        this._updateZoomResetBtns();
         const cutoff = this._displayCutoffNow();
         this.signalMap?.setDisplayCutoff?.(cutoff);
         this._scheduleChartRender();

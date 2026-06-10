@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Zoom the 2D signal charts on the time (X) axis.** Scroll the mouse wheel to
+  zoom about the cursor, drag across a region to zoom into it, or pinch with two
+  fingers on touch. Both charts (SNR and RSSI) share one time window so they stay
+  aligned. Double-click the chart or use the **Reset zoom** button to return to
+  the full view.
+
 - **More 3D map styles** (none of them need an API key):
   - CARTO basemaps — Dark Matter, Positron (light) and Voyager, each also in a
     no-labels variant that keeps the floor clean under the signal beads;

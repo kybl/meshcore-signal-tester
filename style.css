@@ -743,11 +743,46 @@ html:not(.light-theme) .btn-connect:disabled {
 }
 
 .chart-svg-wrap {
+    position: relative;
     overflow: hidden;
     height: 180px;
     min-height: 80px;
     max-height: calc(100vh - 80px);
 }
+/* Let one finger scroll the page over a chart; two-finger pinch is handled in JS
+   to zoom the X axis (and the wheel zooms on desktop). */
+.chart-svg-wrap svg { touch-action: pan-y; }
+
+/* Drag-to-zoom selection band */
+.chart-zoom-sel {
+    position: absolute;
+    top: 6px;
+    bottom: 24px;
+    display: none;
+    background: rgba(90, 150, 255, 0.18);
+    border-left: 1px solid rgba(90, 150, 255, 0.7);
+    border-right: 1px solid rgba(90, 150, 255, 0.7);
+    pointer-events: none;
+    z-index: 3;
+}
+
+/* "Reset zoom" button, shown only while a chart zoom is active */
+.chart-zoom-reset {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 4;
+    font-size: 11px;
+    padding: 2px 8px;
+    border: 1px solid var(--border, #ccc);
+    border-radius: 6px;
+    background: var(--bg-box, #fff);
+    color: var(--text, #333);
+    cursor: pointer;
+    opacity: 0.9;
+    box-shadow: 0 1px 3px var(--shadow, rgba(0,0,0,0.2));
+}
+.chart-zoom-reset:hover { opacity: 1; }
 
 .chart-resize-handle {
     height: 14px;
