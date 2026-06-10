@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=142">
+    <link rel="stylesheet" href="style.css?v=143">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -175,7 +175,8 @@
                     <div class="map-inner">
                         <div class="map-controls">
                             <button id="enableLocationBtn" class="btn-primary">Enable location</button>
-                            <button id="centerOnMeBtn" class="btn-show-all-repeaters" title="Move the camera to my current location">📍 Center on me</button>
+                            <button id="centerOnMeBtn" class="btn-show-all-repeaters hidden" title="Move the camera to my current location">📍 Center on me</button>
+                            <span id="locationStatus" class="map-location-status">Location not enabled.</span>
                             <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
                             <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
                             <div class="map-settings-wrap">
@@ -192,6 +193,26 @@
                                             <optgroup label="OpenStreetMap">
                                                 <option value="osm">OSM Standard</option>
                                                 <option value="opentopo">OpenTopoMap</option>
+                                                <option value="cyclosm">CyclOSM (cycling)</option>
+                                                <option value="osm-hot">OSM Humanitarian</option>
+                                                <option value="osm-de">OSM German style</option>
+                                                <option value="osm-fr">OSM French style</option>
+                                            </optgroup>
+                                            <optgroup label="CARTO">
+                                                <option value="cartodark">Dark Matter</option>
+                                                <option value="cartodark-nolabels">Dark Matter (no labels)</option>
+                                                <option value="cartolight">Positron (light)</option>
+                                                <option value="cartolight-nolabels">Positron (no labels)</option>
+                                                <option value="cartovoyager">Voyager</option>
+                                                <option value="cartovoyager-nolabels">Voyager (no labels)</option>
+                                            </optgroup>
+                                            <optgroup label="Esri">
+                                                <option value="esri-darkgray">Dark Gray Canvas</option>
+                                                <option value="esri-lightgray">Light Gray Canvas</option>
+                                                <option value="esri-imagery">Imagery (satellite)</option>
+                                            </optgroup>
+                                            <optgroup label="Other">
+                                                <option value="none">None (no map)</option>
                                             </optgroup>
                                         </select>
                                     </label>
@@ -210,7 +231,6 @@
                                             <option value="100">100 m</option>
                                         </select>
                                     </label>
-                                    <span id="locationStatus" class="location-status-settings">Location not enabled.</span>
                                 </div>
                             </div>
                         </div>
@@ -399,6 +419,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=251"></script>
+    <script type="module" src="app.js?v=252"></script>
 </body>
 </html>

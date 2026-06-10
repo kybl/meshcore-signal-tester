@@ -1719,17 +1719,6 @@ html.light-theme .msg-filter-clear:hover {
     display: none;
 }
 
-.location-status {
-    font-weight: 400;
-    opacity: 0.65;
-}
-
-.location-status-settings {
-    font-size: 11px;
-    color: #aaa;
-    font-style: italic;
-}
-
 .btn-show-all-repeaters {
     font-size: 12px;
     padding: 3px 10px;
@@ -1770,26 +1759,41 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     opacity: 0.65;
 }
 
+/* Shown in the controls row in place of "Center on me" while location is
+   unavailable (not enabled, requesting, error, …). */
+.map-location-status {
+    font-size: 12px;
+    font-style: italic;
+    opacity: 0.8;
+}
+.map-location-status.hidden,
+.map-controls .btn-show-all-repeaters.hidden { display: none; }
+
 .map-source-label {
     display: inline-flex;
     align-items: center;
     gap: 5px;
     font-size: 12px;
-    color: #c0c0c0;
+    color: var(--text-primary);
 }
 
 .map-source-select {
-    border: 1px solid #ddd;
-    background: #fff;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
     border-radius: 4px;
     padding: 2px 6px;
     font-size: 12px;
-    color: #444;
+    color: var(--text-primary);
     cursor: pointer;
+    /* The longest option must not dictate the width — fill the row and let the
+       closed select truncate; the dropdown list itself still opens full-width. */
+    flex: 1;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .map-source-select:hover {
-    border-color: #bbb;
+    border-color: var(--text-muted);
 }
 
 .map-container {
@@ -2158,10 +2162,10 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
     right: 0;
     top: calc(100% + 4px);
     z-index: 50;
-    background: #fff;
-    border: 1px solid #ddd;
+    background: var(--bg-box);
+    border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.13);
+    box-shadow: 0 4px 16px var(--shadow);
     padding: 12px 14px;
     display: flex;
     flex-direction: column;
@@ -2170,7 +2174,7 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
     max-width: min(320px, calc(100vw - 24px));
     white-space: normal;
     word-break: break-word;
-    color: #444;
+    color: var(--text-primary);
 }
 .map-settings-panel.hidden { display: none; }
 
@@ -2180,13 +2184,10 @@ html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-
     gap: 7px;
     font-size: 12px;
     cursor: pointer;
-    color: #444;
+    color: var(--text-primary);
     white-space: normal;
 }
 .map-setting-toggle input[type="checkbox"] { cursor: pointer; }
-
-.map-settings-panel .size-label,
-.map-settings-panel .size-val { color: #444; }
 
 /* ---- Repeater table selection ---- */
 .rl-id-clickable { cursor: pointer; }

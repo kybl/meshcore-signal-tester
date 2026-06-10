@@ -2,7 +2,8 @@
 // each captured packet is a colored bead floating above its GPS location at a
 // height proportional to RSSI.
 //
-// Two tile sources: Mapy.com (default, requires API key) and OpenStreetMap.
+// Several tile sources: Mapy.com (default, requires API key), OpenStreetMap
+// flavours, CARTO and Esri basemaps, and "none" (a plain floor, no imagery).
 
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js';
@@ -25,6 +26,12 @@ const CAMERA_REF_DIST = PLANE_SIZE * Math.sqrt(0.4*0.4 + 0.55*0.55 + 0.6*0.6); /
 const MAPYCOM_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
 const mapycomUrl = type => (z, x, y) =>
     `https://api.mapy.cz/v1/maptiles/${type}/256/${z}/${x}/${y}?apikey=${MAPYCOM_KEY}`;
+const cartoUrl = style => (z, x, y) =>
+    `https://a.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`;
+const CARTO_ATTRIB = '© OpenStreetMap contributors, © CARTO';
+// Esri tile services take {z}/{y}/{x} — y before x, unlike every other source.
+const esriUrl = service => (z, x, y) =>
+    `https://server.arcgisonline.com/ArcGIS/rest/services/${service}/MapServer/tile/${z}/${y}/${x}`;
 const TILE_SOURCES = {
     'mapycom-basic':   { label: 'Mapy.com — Basic',             url: mapycomUrl('basic'),   attrib: '© Mapy.com' },
     'mapycom-outdoor': { label: 'Mapy.com — Outdoor (hiking)',   url: mapycomUrl('outdoor'), attrib: '© Mapy.com' },
@@ -39,7 +46,43 @@ const TILE_SOURCES = {
         label:  'OpenTopoMap',
         url:    (z, x, y) => `https://tile.opentopomap.org/${z}/${x}/${y}.png`,
         attrib: '© OpenTopoMap (CC-BY-SA), © OpenStreetMap contributors',
+        maxZoom: 17,
     },
+    'cyclosm':         {
+        label:  'CyclOSM (cycling)',
+        url:    (z, x, y) => `https://a.tile-cyclosm.openstreetmap.fr/cyclosm/${z}/${x}/${y}.png`,
+        attrib: '© CyclOSM, © OpenStreetMap contributors',
+    },
+    'osm-hot':         {
+        label:  'Humanitarian (HOT)',
+        url:    (z, x, y) => `https://a.tile.openstreetmap.fr/hot/${z}/${x}/${y}.png`,
+        attrib: '© OpenStreetMap contributors, tiles: HOT / OSM France',
+    },
+    'osm-de':          {
+        label:  'OSM German style',
+        url:    (z, x, y) => `https://tile.openstreetmap.de/${z}/${x}/${y}.png`,
+        attrib: '© OpenStreetMap contributors',
+        maxZoom: 18,
+    },
+    'osm-fr':          {
+        label:  'OSM French style',
+        url:    (z, x, y) => `https://a.tile.openstreetmap.fr/osmfr/${z}/${x}/${y}.png`,
+        attrib: '© OpenStreetMap contributors, tiles: OSM France',
+    },
+    // CARTO basemaps (no API key required): dark/light/coloured, each also in a
+    // no-labels variant — a label-free floor keeps the signal beads readable.
+    'cartodark':              { label: 'CARTO Dark Matter',             url: cartoUrl('dark_all'),                      attrib: CARTO_ATTRIB },
+    'cartodark-nolabels':     { label: 'CARTO Dark Matter (no labels)', url: cartoUrl('dark_nolabels'),                 attrib: CARTO_ATTRIB },
+    'cartolight':             { label: 'CARTO Positron (light)',        url: cartoUrl('light_all'),                     attrib: CARTO_ATTRIB },
+    'cartolight-nolabels':    { label: 'CARTO Positron (no labels)',    url: cartoUrl('light_nolabels'),                attrib: CARTO_ATTRIB },
+    'cartovoyager':           { label: 'CARTO Voyager',                 url: cartoUrl('rastertiles/voyager'),           attrib: CARTO_ATTRIB },
+    'cartovoyager-nolabels':  { label: 'CARTO Voyager (no labels)',     url: cartoUrl('rastertiles/voyager_nolabels'), attrib: CARTO_ATTRIB },
+    // Esri basemaps (no key). The Gray Canvas styles only serve tiles up to z16.
+    'esri-darkgray':   { label: 'Esri Dark Gray Canvas',  url: esriUrl('Canvas/World_Dark_Gray_Base'),  attrib: '© Esri', maxZoom: 16 },
+    'esri-lightgray':  { label: 'Esri Light Gray Canvas', url: esriUrl('Canvas/World_Light_Gray_Base'), attrib: '© Esri', maxZoom: 16 },
+    'esri-imagery':    { label: 'Esri World Imagery',     url: esriUrl('World_Imagery'),                attrib: '© Esri, Maxar, Earthstar Geographics' },
+    // No map tiles at all — the floor is rendered as a plain colour (theme-aware).
+    'none':            { label: 'None (no map)', url: null, attrib: '' },
 };
 const DEFAULT_SOURCE = 'mapycom-basic';
 
@@ -64,6 +107,7 @@ export class Signal3DMap {
         this.canvas    = opts.canvas;
         this.statusEl  = opts.statusEl;
         this.btnEl     = opts.btnEl;
+        this.centerBtnEl = opts.centerBtnEl;   // "Center on me" — only useful with a fix
         this.emptyEl   = opts.emptyEl;
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
@@ -74,6 +118,10 @@ export class Signal3DMap {
         // map. When just viewing an imported dataset this is false, so a far-away
         // current position never drags the tiles away from the data.
         this.isLiveCapture = opts.isLiveCapture || (() => false);
+        // True when the page is in dark mode. Used to paint the map background
+        // (the area around the tiled floor) black, independent of the chosen
+        // tile source — a dark *basemap* and a dark *page* are two separate things.
+        this.isDarkMode = opts.isDarkMode || (() => false);
 
         this._rxPoints       = [];     // { lat, lon, rssi, snr, col, time }
         this._pins     = [];   // { lat, lon, name, color }
@@ -211,7 +259,7 @@ export class Signal3DMap {
         const canvas = this.canvas;
         this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
         this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-        this.renderer.setClearColor(0xeef2f7);
+        this.renderer.setClearColor(this._bgColor());
 
         const w = Math.max(1, canvas.clientWidth);
         const h = Math.max(1, canvas.clientHeight);
@@ -295,7 +343,7 @@ export class Signal3DMap {
 
         // Placeholder floor until tiles arrive
         const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
-        const phMat = new THREE.MeshBasicMaterial({ color: 0xdcdcdc });
+        const phMat = new THREE.MeshBasicMaterial({ color: this._floorColor() });
         this._mapMesh = new THREE.Mesh(phGeo, phMat);
         this._mapMesh.rotation.x = -Math.PI / 2;
         this.scene.add(this._mapMesh);
@@ -398,8 +446,20 @@ export class Signal3DMap {
         this.btnEl.addEventListener('click', () => this.startWatching());
     }
 
+    // Every status message means "location isn't available (yet)". Show the
+    // message where the "Center on me" button normally sits and hide that button
+    // — it only makes sense once we have a fix. _locationReady() does the inverse.
     _setStatus(text) {
-        if (this.statusEl) this.statusEl.textContent = text;
+        if (this.statusEl) {
+            this.statusEl.textContent = text;
+            this.statusEl.classList.remove('hidden');
+        }
+        if (this.centerBtnEl) this.centerBtnEl.classList.add('hidden');
+    }
+
+    _locationReady() {
+        if (this.statusEl) this.statusEl.classList.add('hidden');
+        if (this.centerBtnEl) this.centerBtnEl.classList.remove('hidden');
     }
 
     startWatching() {
@@ -425,7 +485,7 @@ export class Signal3DMap {
                 if (this.btnEl) this.btnEl.classList.add('hidden');
                 const { latitude, longitude, accuracy } = pos.coords;
                 this._userLoc = { lat: latitude, lon: longitude, accuracy };
-                this._setStatus(`📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}  (±${Math.round(accuracy)} m)`);
+                this._locationReady();   // swap the status text for the "Center on me" button
                 if (this.emptyEl && !this._rxPoints.length) {
                     this.emptyEl.textContent = 'Waiting for data…';
                 }
@@ -895,6 +955,26 @@ export class Signal3DMap {
         this._scheduleMapUpdate();
     }
 
+    // Map background (clear colour) and plain-floor colour, both theme-aware.
+    // Dark page → black background so the scene reads as dark regardless of the
+    // chosen tile source.
+    _bgColor()    { return this.isDarkMode() ? 0x000000 : 0xeef2f7; }
+    _floorColor() { return this.isDarkMode() ? 0x000000 : 0xdcdcdc; }
+
+    // Called by the host app when the page theme (light/dark) toggles.
+    applyTheme() {
+        this.renderer.setClearColor(this._bgColor());
+        // When no tiles are drawn (placeholder floor, or "none" source) the floor
+        // colour comes from the theme — refresh it. With real tiles the floor is
+        // the imagery itself, so only the background needed updating above.
+        if (!this._tileBounds) {
+            this._mapMesh?.material.color.set(this._floorColor());
+        } else if (this._mapSource === 'none') {
+            this._lastMapKey = null;
+            this._scheduleMapUpdate();
+        }
+    }
+
     // ---- Packet ingestion ----
 
     addPacket(opts) {
@@ -1003,6 +1083,18 @@ export class Signal3DMap {
         ctx.fillStyle = '#dfdfdf';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+        // "None" source: no imagery, just a plain theme-aware floor (no fetches,
+        // no attribution).
+        if (!src.url) {
+            ctx.fillStyle = this.isDarkMode() ? '#000000' : '#eef2f7';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.colorSpace  = THREE.SRGBColorSpace;
+            tex.minFilter   = THREE.LinearFilter;
+            tex.needsUpdate = true;
+            return tex;
+        }
+
         const tasks = [];
         for (let dx = 0; dx < nx; dx++) {
             for (let dy = 0; dy < ny; dy++) {
@@ -1089,8 +1181,10 @@ export class Signal3DMap {
         // Start from the current zoom so the world scale never changes unless
         // the bbox genuinely can't fit within MAX_TILES_AXIS tiles at that level.
         // Starting from 19 (the old approach) would eagerly drop zoom for any
-        // bbox that the current level can already accommodate.
-        let zoom = this._tileBounds ? this._tileBounds.zoom : 19;
+        // bbox that the current level can already accommodate. Sources that
+        // don't serve tiles all the way to z19 cap the starting level.
+        const srcMaxZoom = TILE_SOURCES[this._mapSource].maxZoom ?? 19;
+        let zoom = Math.min(srcMaxZoom, this._tileBounds ? this._tileBounds.zoom : 19);
         let tl, br;
         while (zoom > 1) {
             tl = lonLatToTile(minLon, maxLat, zoom);
@@ -1391,11 +1485,13 @@ export class Signal3DMap {
 
     async _updateOverlay() {
         if (!this._tileBounds || this._overlayBusy) return;
+        if (this._mapSource === 'none') { this._removeOverlay(); return; }  // nothing to detail
         const camBb = this._cameraViewBbox();
         if (!camBb) { this._removeOverlay(); return; }
 
         // Find highest zoom where camera view fits in MAX_TILES_AXIS × MAX_TILES_AXIS
-        let overlayZoom = 19, oTl, oBr;
+        // (capped at the source's own maximum tile level)
+        let overlayZoom = TILE_SOURCES[this._mapSource].maxZoom ?? 19, oTl, oBr;
         while (overlayZoom > 1) {
             oTl = lonLatToTile(camBb.minLon, camBb.maxLat, overlayZoom);
             oBr = lonLatToTile(camBb.maxLon, camBb.minLat, overlayZoom);

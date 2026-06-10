@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=107';
+import { Signal3DMap } from './signal3d.js?v=108';
 import { PacketStore } from './packet-store.js?v=6';
 
 // Single source of truth for the released app version, shown in the header (and
@@ -498,6 +498,7 @@ class MeshCoreApp {
                 applyTheme(isLight);
                 Store.set('theme', isLight ? 'light' : 'dark');
                 this._renderCharts();
+                this.signalMap?.applyTheme();
             });
         }
 
@@ -772,8 +773,9 @@ class MeshCoreApp {
         try {
             this.signalMap = new Signal3DMap({
                 canvas,
-                statusEl:      document.getElementById('locationStatus'),
                 btnEl:         document.getElementById('enableLocationBtn'),
+                statusEl:      document.getElementById('locationStatus'),
+                centerBtnEl:   document.getElementById('centerOnMeBtn'),
                 emptyEl:       document.getElementById('mapEmpty'),
                 infoEl:        document.getElementById('mapInfo'),
                 colorFor:      col => this.getRepeaterColor(col),
@@ -786,6 +788,7 @@ class MeshCoreApp {
                 },
                 nameForCol:    col => this._contactNameForCol(col),
                 isLiveCapture: () => this._collecting,   // tiles follow the user only while live
+                isDarkMode:    () => !document.documentElement.classList.contains('light-theme'),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
                 initialClusterRadius: Store.num('clusterRadius', 0),

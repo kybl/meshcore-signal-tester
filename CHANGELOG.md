@@ -4,6 +4,18 @@
 
 ### Added
 
+- **More 3D map styles** (none of them need an API key):
+  - CARTO basemaps — Dark Matter, Positron (light) and Voyager, each also in a
+    no-labels variant that keeps the floor clean under the signal beads;
+  - Esri basemaps — Dark Gray Canvas, Light Gray Canvas and World Imagery
+    (satellite);
+  - more OpenStreetMap flavours — CyclOSM (cycling), Humanitarian (HOT),
+    German and French styles;
+  - a **None (no map)** option that drops the map imagery and shows a plain floor.
+- **Dark page = dark map background** — when the page is in dark mode the 3D map
+  background is now black (separate from the chosen map style — a dark *page*
+  and a dark *basemap* are two different things).
+
 - **All views now render the same way regardless of the Display window.** Every
   view (charts, 3D map, packet table) draws from the on-disk store plus a short
   in-memory "tail" of just-arrived packets, instead of switching between a
