@@ -752,6 +752,12 @@ html:not(.light-theme) .btn-connect:disabled {
 /* Let one finger scroll the page over a chart; two-finger pinch is handled in JS
    to zoom the X axis (and the wheel zooms on desktop). */
 .chart-svg-wrap svg { touch-action: pan-y; }
+/* The SVG content is rebuilt on every render. Make the drawn elements ignore
+   pointer/touch events so gestures always target the persistent <svg> itself —
+   otherwise a touch that starts on a dot gets cancelled when that node is
+   replaced mid-gesture (pinch then fails on a densely filled chart). Hit-testing
+   for tooltips/selection is done in JS from coordinates, not the event target. */
+.chart-svg-wrap svg * { pointer-events: none; }
 
 /* Drag-to-zoom selection band */
 .chart-zoom-sel {

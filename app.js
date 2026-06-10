@@ -1004,7 +1004,7 @@ class MeshCoreApp {
             'snr':
                 'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
             'chart-snr':
-                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, SNR/RSSI and time in a small box; click the box to dismiss it. Circles (●) = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover.',
+                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, SNR/RSSI and time in a small box; click the box to dismiss it. Circles (●) = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover. Zoom the time axis with the mouse wheel, by dragging across a region, or by pinching with two fingers; once zoomed, pan with a one-finger drag, a horizontal/Shift+wheel, or scroll on. Double-click or Reset zoom to return to the full view.',
             'chart-interact':
                 'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, RSSI/SNR and time in a small box; click the box to dismiss it. The shaded area shows the estimated noise floor (RSSI − SNR).',
             'rate':
@@ -3767,6 +3767,31 @@ class MeshCoreApp {
         if (had) { this._scheduleChartRender(); this._scheduleChartCacheRefresh(); }
     }
 
+    // Swallow the click that may trail a drag/pan gesture, but auto-expire so a
+    // later genuine tap is never lost (touch pan preventDefaults, so the click
+    // sometimes never arrives to consume the flag).
+    _suppressClickBriefly() {
+        this._suppressChartClick = true;
+        clearTimeout(this._suppressClickTimer);
+        this._suppressClickTimer = setTimeout(() => { this._suppressChartClick = false; }, 400);
+    }
+
+    // Slide the zoom window along the X axis by dtMs (keeping its span), clamped
+    // to the data extent. No-op unless currently zoomed.
+    _panChartZoom(dtMs) {
+        if (!this._chartZoom || !this._chartFullWindow || !dtMs) return;
+        const full = this._chartFullWindow;
+        const span = this._chartZoom.tMax - this._chartZoom.tMin;
+        let nMin = this._chartZoom.tMin + dtMs;
+        let nMax = this._chartZoom.tMax + dtMs;
+        if (nMin < full.tMin) { nMin = full.tMin; nMax = nMin + span; }
+        if (nMax > full.tMax) { nMax = full.tMax; nMin = nMax - span; }
+        this._chartZoom = { tMin: nMin, tMax: nMax };
+        this._updateZoomResetBtns();
+        this._scheduleChartRender();
+        this._scheduleChartCacheRefresh();
+    }
+
     // Re-query the disk overlay for the current (zoom or full) window, debounced
     // so a wheel/pinch gesture coalesces into a single query once it settles.
     _scheduleChartCacheRefresh() {
@@ -3816,10 +3841,18 @@ class MeshCoreApp {
             (this._zoomResetBtns ??= []).push(btn);
         }
 
-        // Wheel: zoom about the cursor (wheel up = zoom in).
+        // Wheel: zoom about the cursor (wheel up = zoom in). While zoomed,
+        // Shift+wheel or a horizontal wheel/trackpad gesture pans along X.
         svg.addEventListener('wheel', e => {
             const win = this._lastChartWindow ?? this._chartFullWindow;
             if (!win) return;
+            const span = win.tMax - win.tMin;
+            if (this._chartZoom && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
+                e.preventDefault();
+                const d = e.shiftKey ? e.deltaY : e.deltaX;
+                this._panChartZoom(Math.sign(d) * span * 0.2);
+                return;
+            }
             const tAt = this._chartTimeAtClientX(svg, e.clientX);
             if (tAt == null) return;
             e.preventDefault();
@@ -3845,7 +3878,7 @@ class MeshCoreApp {
             const d = drag; drag = null;
             this._hideZoomSel();
             if (!d.moved) return;                 // it was a click → leave to _onChartClick
-            this._suppressChartClick = true;
+            this._suppressClickBriefly();
             const t1 = this._chartTimeAtClientX(svg, d.startX);
             const t2 = this._chartTimeAtClientX(svg, e.clientX);
             if (t1 != null && t2 != null) this._setChartZoom(Math.min(t1, t2), Math.max(t1, t2));
@@ -3853,9 +3886,10 @@ class MeshCoreApp {
 
         // Two-finger pinch on touch. Each finger stays pinned to the time it
         // grabbed; we solve for the window that keeps both anchors under them.
-        let pinch = null;
+        let pinch = null, pan = null;
         svg.addEventListener('touchstart', e => {
             if (e.touches.length !== 2) return;
+            pan = null;   // a second finger landed → switch from pan to pinch
             const t0 = this._chartTimeAtClientX(svg, e.touches[0].clientX);
             const t1 = this._chartTimeAtClientX(svg, e.touches[1].clientX);
             if (t0 == null || t1 == null) return;
@@ -3880,6 +3914,38 @@ class MeshCoreApp {
         const endPinch = e => { if (e.touches.length < 2) pinch = null; };
         svg.addEventListener('touchend', endPinch);
         svg.addEventListener('touchcancel', endPinch);
+
+        // One-finger drag pans along X while zoomed. A predominantly horizontal
+        // move pans (we own it — touch-action:pan-y leaves horizontal to us); a
+        // vertical move falls through to normal page scrolling. A tap still
+        // selects a point (no movement ⇒ no pan, click proceeds).
+        svg.addEventListener('touchstart', e => {
+            pan = (e.touches.length === 1 && this._chartZoom)
+                ? { x: e.touches[0].clientX, y: e.touches[0].clientY, mode: null, moved: false }
+                : null;
+        }, { passive: true });
+        svg.addEventListener('touchmove', e => {
+            if (!pan || e.touches.length !== 1) return;
+            const t = e.touches[0];
+            const dx = t.clientX - pan.x, dy = t.clientY - pan.y;
+            if (pan.mode === null) {
+                if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;   // wait for a clear direction
+                pan.mode = Math.abs(dx) > Math.abs(dy) ? 'pan' : 'scroll';
+            }
+            if (pan.mode !== 'pan') return;        // vertical ⇒ let the page scroll
+            e.preventDefault();
+            const rect = svg.getBoundingClientRect();
+            const { l: pl, r: pr } = CHART_PAD;
+            const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
+            const span = this._chartZoom.tMax - this._chartZoom.tMin;
+            this._panChartZoom(-dx / cw * span);   // drag right → reveal earlier times
+            pan.x = t.clientX; pan.y = t.clientY;  // incremental delta
+            pan.moved = true;
+            this.hideChartTooltip();
+        }, { passive: false });
+        const endPan = () => { if (pan && pan.moved) this._suppressClickBriefly(); pan = null; };
+        svg.addEventListener('touchend', endPan);
+        svg.addEventListener('touchcancel', endPan);
 
         // Double-click anywhere on the chart resets the zoom.
         svg.addEventListener('dblclick', e => { e.preventDefault(); this._clearChartZoom(); });
