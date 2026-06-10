@@ -742,6 +742,8 @@ class MeshCoreApp {
             this.signalMap = new Signal3DMap({
                 canvas,
                 btnEl:         document.getElementById('enableLocationBtn'),
+                statusEl:      document.getElementById('locationStatus'),
+                centerBtnEl:   document.getElementById('centerOnMeBtn'),
                 emptyEl:       document.getElementById('mapEmpty'),
                 infoEl:        document.getElementById('mapInfo'),
                 colorFor:      col => this.getRepeaterColor(col),

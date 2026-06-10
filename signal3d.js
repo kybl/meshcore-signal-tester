@@ -107,6 +107,7 @@ export class Signal3DMap {
         this.canvas    = opts.canvas;
         this.statusEl  = opts.statusEl;
         this.btnEl     = opts.btnEl;
+        this.centerBtnEl = opts.centerBtnEl;   // "Center on me" — only useful with a fix
         this.emptyEl   = opts.emptyEl;
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
@@ -427,8 +428,20 @@ export class Signal3DMap {
         this.btnEl.addEventListener('click', () => this.startWatching());
     }
 
+    // Every status message means "location isn't available (yet)". Show the
+    // message where the "Center on me" button normally sits and hide that button
+    // — it only makes sense once we have a fix. _locationReady() does the inverse.
     _setStatus(text) {
-        if (this.statusEl) this.statusEl.textContent = text;
+        if (this.statusEl) {
+            this.statusEl.textContent = text;
+            this.statusEl.classList.remove('hidden');
+        }
+        if (this.centerBtnEl) this.centerBtnEl.classList.add('hidden');
+    }
+
+    _locationReady() {
+        if (this.statusEl) this.statusEl.classList.add('hidden');
+        if (this.centerBtnEl) this.centerBtnEl.classList.remove('hidden');
     }
 
     startWatching() {
@@ -454,7 +467,7 @@ export class Signal3DMap {
                 if (this.btnEl) this.btnEl.classList.add('hidden');
                 const { latitude, longitude, accuracy } = pos.coords;
                 this._userLoc = { lat: latitude, lon: longitude, accuracy };
-                this._setStatus(`📍 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}  (±${Math.round(accuracy)} m)`);
+                this._locationReady();   // swap the status text for the "Center on me" button
                 if (this.emptyEl && !this._rxPoints.length) {
                     this.emptyEl.textContent = 'Waiting for data…';
                 }
