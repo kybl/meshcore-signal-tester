@@ -401,21 +401,24 @@ export class PacketStore {
 
     /**
      * Downsampled query for wide windows. Buckets obs in [fromTime, toTime] into
-     * at most `buckets` equal time slots, grouped by rawId, and returns an array
-     * of summaries:
-     *   { rawId, time, count,
-     *     snrMin, snrMax, snrAvg, rssiMin, rssiMax, rssiAvg,
-     *     lat, lon }          // lat/lon = last seen position in the bucket
+     * at most `buckets` equal time slots, grouped by rawId. Returns
+     *   { buckets: [{ rawId, bIdx, time, count,
+     *                 snrMin, snrMax, snrAvg, snrSum, snrN,
+     *                 rssiMin, rssiMax, rssiAvg, rssiSum, rssiN,
+     *                 lat, lon }],   // lat/lon = last seen position in the bucket
+     *     width, lo }
      *
      * Memory is bounded by (distinct rawIds × buckets), independent of how many
      * raw packets the span contains. The caller derives the display column from
-     * rawId via its column model. `time` is the bucket midpoint.
+     * rawId via its column model. `time` is the bucket midpoint; bIdx/width/lo
+     * (plus the sums) let the caller fold further observations into the same
+     * bucket space incrementally.
      */
     async bucketObs(fromTime, toTime, buckets) {
-        if (!this.db) return [];
+        if (!this.db) return { buckets: [], width: 1, lo: 0 };
         // Resolve the real span first so bucket width is sane even for "All".
         const span = await this._obsSpan(fromTime, toTime);
-        if (!span) return [];
+        if (!span) return { buckets: [], width: 1, lo: 0 };
         const lo = Number.isFinite(fromTime) ? fromTime : span.min;
         const hi = Number.isFinite(toTime) ? toTime : span.max;
         const width = Math.max(1, Math.ceil((hi - lo + 1) / Math.max(1, buckets)));
@@ -440,19 +443,26 @@ export class PacketStore {
         for (const g of groups.values()) {
             out.push({
                 rawId: g.rawId,
+                bIdx: g.bIdx,
                 time: lo + g.bIdx * width + Math.floor(width / 2),
                 count: g.count,
                 snrMin: g.snrN ? g.snrMin : null,
                 snrMax: g.snrN ? g.snrMax : null,
                 snrAvg: g.snrN ? g.snrSum / g.snrN : null,
+                // Sums are included so callers can MERGE further observations into
+                // a bucket incrementally (avg alone can't be combined).
+                snrSum: g.snrSum, snrN: g.snrN,
                 rssiMin: g.rssiN ? g.rssiMin : null,
                 rssiMax: g.rssiN ? g.rssiMax : null,
                 rssiAvg: g.rssiN ? g.rssiSum / g.rssiN : null,
+                rssiSum: g.rssiSum, rssiN: g.rssiN,
                 lat: g.lat, lon: g.lon,
             });
         }
         out.sort((a, b) => a.time - b.time);
-        return out;
+        // width/lo let the caller key further (live) observations into the same
+        // bucket space: bIdx = floor((t - lo) / width).
+        return { buckets: out, width, lo };
     }
 
     /** min/max time present in obs within an optional range, or null if empty. */

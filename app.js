@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=111';
-import { PacketStore } from './packet-store.js?v=7';
+import { PacketStore } from './packet-store.js?v=8';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -151,9 +151,13 @@ class MeshCoreApp {
         this._hashWriteBuf = [];                 // pending per-hash payload records
         this.WRITE_FLUSH_MS = 4000;              // debounce for batching disk writes
         this._writeFlushTimer = null;
-        this._wideChartPoints = [];              // downsampled chart cache (empty ⇒ tail alone, i.e. live RAM)
-        this._wideSentPoints  = [];
-        this._renderCacheAt   = 0;               // time the disk caches reflect; newer RAM data is the "tail"
+        this._wideChartPoints = [];              // chart render array, derived from the bucket cache
+        this._wideSentPoints  = [];              // outgoing-SNR layer (disk) — live tail via _sentChartAt
+        this._chartBase       = null;            // incremental time-bucket cache {cells: Map, width, lo}
+        this._chartZoomLayer  = null;            // finer buckets over the zoom window {cells, width, lo, from, to}
+        this._sentChartAt     = 0;               // time the sent layer reflects
+        this._chartArrTimer   = null;            // coalesces bucket upserts into one array rebuild
+        this._renderCacheAt   = 0;               // time the table's disk page reflects; newer rows are the tail
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this.MAP_TARGET_DOTS  = 2500;            // dot budget for the map grid layers
         this._wideMapBase     = null;            // RAM cell cache: full-extent map layer {cells: Map, cell, at}
@@ -3125,6 +3129,12 @@ class MeshCoreApp {
         });
         if (snr != null || rssi != null) {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
+            // Fold it into the chart bucket cache so the charts show it without a
+            // disk re-query. Replay/import skip this — they end with a full disk
+            // rebuild of the layers anyway.
+            if (!opts.replaying && !opts.importing && this.store.available) {
+                this._upsertChartCell(now, snr, rssi, repeater);
+            }
         }
         if (loc) {
             this.signalMap?.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
@@ -3834,11 +3844,20 @@ class MeshCoreApp {
         this._scheduleChartCacheRefresh();
     }
 
-    // Re-query the disk overlay for the current (zoom or full) window, debounced
-    // so a wheel/pinch gesture coalesces into a single query once it settles.
+    // React to a zoom change, debounced so a wheel/pinch gesture coalesces into
+    // one action once it settles. Zooming IN (or moving the zoom window) builds
+    // a finer disk layer for it; zooming OUT just drops the layer and re-derives
+    // from the always-current base — no disk read.
     _scheduleChartCacheRefresh() {
         clearTimeout(this._chartCacheTimer);
-        this._chartCacheTimer = setTimeout(() => { this._loadWideChartOverlay(); }, 140);
+        this._chartCacheTimer = setTimeout(() => {
+            if (this._chartZoom) {
+                this._rebuildChartZoomLayer();
+            } else {
+                this._chartZoomLayer = null;
+                this._rebuildChartArrays();
+            }
+        }, 140);
     }
 
     _updateZoomResetBtns() {
@@ -4676,13 +4695,15 @@ class MeshCoreApp {
         this._wideMapBase = null;       // window changed → recompute the base layer
         this._wideMapDetail = null;
         this._wideMapKey = null;
+        this._chartBase = null;         // window changed → rebuild the bucket cache
+        this._chartZoomLayer = null;
         await this._flushWrites();
         const boundary = Date.now();    // set _renderCacheAt only after caches land
         try {
             await Promise.all([
                 this._refreshWideMap(),       // spatial downsample for the 3D map
                 this._loadTablePage(0, true), // paginate the packet table over disk
-                this._loadWideChartOverlay(),
+                this._rebuildChartBase(),     // time-bucket cache for the 2D charts
             ]);
             this._renderCacheAt = boundary;
         } catch (e) {
@@ -4690,45 +4711,136 @@ class MeshCoreApp {
         }
     }
 
-    // (Re)build just the downsampled 2D-chart overlay from disk. Shared by the
-    // Display-change path and the live-capture refresh tick. When an X-zoom is
-    // active it queries the *zoom* window, so the on-disk bucketing matches the
-    // visible range (otherwise zooming would just magnify the coarse, regularly
-    // spaced buckets of the whole Display window).
-    async _loadWideChartOverlay() {
+    // --- 2D-chart bucket cache -------------------------------------------
+    // Same model as the 3D map's cell cache: an in-RAM Map of time buckets
+    // (key `rawId|bIdx`), kept current by folding each live packet into its bucket
+    // (_upsertChartCell). Time buckets expire exactly — a bucket covers a fixed
+    // time range, so once its end leaves a finite Display window it is provably
+    // empty and is dropped. Disk is read only to BUILD a layer:
+    //   - base:  once per Display window (and a growth escape valve for "All"),
+    //   - zoom:  on zoom-in / zoom-window change (finer buckets over the window).
+    // Zooming OUT needs no disk at all — the base stays maintained by upserts.
+
+    async _rebuildChartBase() {
         if (!this.store.available) return;
-        const z = this._chartZoom;
-        // When zoomed, pad the query one span beyond each edge so the chart has a
-        // neighbour point just outside the window to draw the edge-crossing line
-        // to (see _decimateChartPts); the clip trims the overshoot.
-        const zspan = z ? (z.tMax - z.tMin) : 0;
-        const from = z ? z.tMin - zspan : (isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity);
-        const to   = z ? z.tMax + zspan : Infinity;
+        const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         try {
-            const buckets = await this.store.bucketObs(from, to, this.DOWNSAMPLE_BUCKETS);
-            const cps = [];
-            for (const b of buckets) {
-                const col = this._resolveColReadonly(b.rawId);
-                cps.push({ time: b.time, snr: b.snrAvg, rssi: b.rssiAvg, col, rawId: b.rawId, _bucket: true, count: b.count });
-                // Spread (min/max) only matters once a bucket aggregates >1 packet;
-                // for sparse/short windows each bucket is one packet (min=avg=max).
-                if (b.count > 1) {
-                    if (b.snrMin != null) cps.push({ time: b.time, snr: b.snrMin, rssi: b.rssiMin, col, rawId: b.rawId, _bucket: true });
-                    if (b.snrMax != null) cps.push({ time: b.time, snr: b.snrMax, rssi: b.rssiMax, col, rawId: b.rawId, _bucket: true });
-                }
-            }
-            this._wideChartPoints = cps;
+            const { buckets, width, lo } = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
+            const cells = new Map();
+            for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
+            this._chartBase = { cells, width, lo };
             const sent = [];
-            await this.store.eachSent(from, to, r =>
+            await this.store.eachSent(from, Infinity, r =>
                 sent.push({ time: r.time, snr: r.snr, col: this._resolveColReadonly(r.rawId), label: r.label }));
             this._wideSentPoints = sent;
-            this._scheduleChartRender();
+            this._sentChartAt = Date.now();   // live sent points after this are the tail
+            this._rebuildChartArrays();
         } catch (e) {
-            console.warn('Wide-view load failed:', e);
-            // Keep the caches as empty arrays (never null) so the render path —
-            // cache.concat(tail) — stays valid and falls back to the RAM tail.
-            this._wideChartPoints = []; this._wideSentPoints = [];
+            console.warn('Chart base build failed:', e);
         }
+    }
+
+    // Finer buckets over the (padded) zoom window, so zooming in reveals real
+    // detail instead of magnifying the base's coarse buckets. The ±1-span pad
+    // gives _decimateChartPts a neighbour point outside each edge for the
+    // edge-crossing connecting lines (the clip trims the overshoot).
+    async _rebuildChartZoomLayer() {
+        const z = this._chartZoom;
+        if (!z || !this.store.available) return;
+        const zspan = z.tMax - z.tMin;
+        try {
+            const { buckets, width, lo } = await this.store.bucketObs(z.tMin - zspan, z.tMax + zspan, this.DOWNSAMPLE_BUCKETS);
+            const cells = new Map();
+            for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
+            this._chartZoomLayer = { cells, width, lo, from: z.tMin - zspan, to: z.tMax + zspan };
+            this._rebuildChartArrays();
+        } catch (e) {
+            console.warn('Chart zoom-layer build failed:', e);
+        }
+    }
+
+    // Fold one live observation into the chart bucket layers (base always, the
+    // zoom layer when the time falls inside it).
+    _upsertChartCell(time, snr, rssi, rawId) {
+        const fold = layer => {
+            const bIdx = Math.floor((time - layer.lo) / layer.width);
+            const key = rawId + '|' + bIdx;
+            let g = layer.cells.get(key);
+            if (!g) {
+                g = { rawId, bIdx, time: layer.lo + bIdx * layer.width + Math.floor(layer.width / 2),
+                      count: 0, snrMin: null, snrMax: null, snrSum: 0, snrN: 0,
+                      rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0 };
+                layer.cells.set(key, g);
+            }
+            g.count++;
+            if (snr != null) {
+                g.snrSum += snr; g.snrN++;
+                if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
+                if (g.snrMax == null || snr > g.snrMax) g.snrMax = snr;
+            }
+            if (rssi != null) {
+                g.rssiSum += rssi; g.rssiN++;
+                if (g.rssiMin == null || rssi < g.rssiMin) g.rssiMin = rssi;
+                if (g.rssiMax == null || rssi > g.rssiMax) g.rssiMax = rssi;
+            }
+            return bIdx;
+        };
+        const base = this._chartBase;
+        if (!base) return;   // built shortly by _refreshWideView; the point is on disk
+        const bIdx = fold(base);
+        // "All" keeps a fixed bucket width from its build, so a long session can
+        // outgrow the bucket budget — rebuild once with a wider bucket when the
+        // index runs 3x past it. (Finite windows slide: the index grows but the
+        // live bucket count stays ~constant via expiry, so no rebuild is needed.)
+        if (!isFinite(this.DISPLAY_LIFETIME) && bIdx > this.DOWNSAMPLE_BUCKETS * 3) {
+            this._chartBase = null;
+            this._rebuildChartBase();
+            return;
+        }
+        const zl = this._chartZoomLayer;
+        if (zl && time >= zl.from && time <= zl.to) fold(zl);
+        this._scheduleChartArrays();
+    }
+
+    _scheduleChartArrays() {
+        if (this._chartArrTimer) return;
+        this._chartArrTimer = setTimeout(() => { this._chartArrTimer = null; this._rebuildChartArrays(); }, 200);
+    }
+
+    // Derive the render array (_wideChartPoints) from the active bucket layer:
+    // avg point per bucket, plus min/max spread once a bucket holds >1 packet.
+    // Also purges base buckets that expired from a finite Display window (exact —
+    // the bucket's whole time range is past the cutoff).
+    _rebuildChartArrays() {
+        const base = this._chartBase;
+        if (!base) return;
+        const cutoff = this._displayCutoffNow();
+        if (cutoff) {
+            for (const [k, b] of base.cells) {
+                if (base.lo + (b.bIdx + 1) * base.width < cutoff) base.cells.delete(k);
+            }
+        }
+        // Use the zoom layer only while it actually covers the current zoom
+        // window — after a pan/zoom change the stale layer would be missing the
+        // newly exposed range, so fall back to the (complete, coarser) base
+        // until the rebuilt layer lands.
+        const zl = this._chartZoomLayer;
+        const z = this._chartZoom;
+        const layer = (z && zl && zl.from <= z.tMin && zl.to >= z.tMax) ? zl : base;
+        const cps = [];
+        for (const b of layer.cells.values()) {
+            const col = this._resolveColReadonly(b.rawId);
+            const snrAvg  = b.snrN  ? b.snrSum  / b.snrN  : null;
+            const rssiAvg = b.rssiN ? b.rssiSum / b.rssiN : null;
+            cps.push({ time: b.time, snr: snrAvg, rssi: rssiAvg, col, rawId: b.rawId, _bucket: true, count: b.count });
+            if (b.count > 1) {
+                if (b.snrMin != null) cps.push({ time: b.time, snr: b.snrMin, rssi: b.rssiMin, col, rawId: b.rawId, _bucket: true });
+                if (b.snrMax != null) cps.push({ time: b.time, snr: b.snrMax, rssi: b.rssiMax, col, rawId: b.rawId, _bucket: true });
+            }
+        }
+        cps.sort((a, b) => a.time - b.time);
+        this._wideChartPoints = cps;
+        this._scheduleChartRender();
     }
 
     // Flush buffered writes to disk immediately (so a following query sees the
@@ -4756,10 +4868,12 @@ class MeshCoreApp {
         }
     }
 
-    // Keep a wide / "All" view current by re-querying disk. Runs while capturing
-    // (periodic tick) and whenever new data was ingested out of band (_wideDirty),
-    // so debug injections and the like show up even when not connected. Preserves
-    // the current map zoom and only refreshes table page 0 (no page flip).
+    // Keep the packet TABLE current while capturing (periodic tick, plus an
+    // out-of-band kick via _wideDirty for e.g. debug injections while not
+    // connected). The 2D charts and the 3D map are NOT refreshed here any more:
+    // live packets fold into their RAM caches directly (_upsertChartCell /
+    // _upsertMapCell), so they need no disk rescan. Only page 0 is refreshed —
+    // no page flip under the reader.
     async _tickWideRefresh() {
         if (this._wideRefreshBusy || !this.store.available) return;
         if (typeof document !== 'undefined' && document.hidden) return;
@@ -4768,14 +4882,11 @@ class MeshCoreApp {
         this._wideDirty = false;
         try {
             await this._flushWrites();
-            // Boundary = the flush point the rebuilt caches will reflect. Set
-            // _renderCacheAt only AFTER the caches are swapped in, so during the
-            // async rebuild the still-old cache keeps its wider tail and no recent
-            // points momentarily vanish.
+            // Boundary = the flush point the rebuilt page reflects. Set
+            // _renderCacheAt only AFTER the page is swapped in, so during the
+            // async rebuild the old page keeps its wider tail and no recent rows
+            // momentarily vanish.
             const boundary = Date.now();
-            await this._loadWideChartOverlay();
-            // (The 3D map is NOT refreshed here: live packets upsert its RAM cell
-            // cache directly — see _upsertMapCell — so it needs no disk rescan.)
             if (this._tablePage === 0) await this._loadTablePage(0);
             this._renderCacheAt = boundary;
         } catch (e) {
@@ -5146,6 +5257,10 @@ class MeshCoreApp {
         for (const col of [...this.repeaterColumns]) {
             this._recomputeRepeaterStats(col);
         }
+
+        // Column keys changed (demotions/dissolves) — re-derive the chart render
+        // array so its cached col fields match the new column model.
+        this._scheduleChartArrays();
     }
 
     _clearAllData() {
@@ -5154,6 +5269,10 @@ class MeshCoreApp {
         this._sentSnrHistory = [];
         this._wideChartPoints = [];
         this._wideSentPoints = [];
+        this._chartBase = null;
+        this._chartZoomLayer = null;
+        this._sentChartAt = 0;
+        clearTimeout(this._chartArrTimer); this._chartArrTimer = null;
         this._tablePageData = new Map();
         this._tablePage = 0;
         this._tablePageCount = 1;
@@ -5191,6 +5310,9 @@ class MeshCoreApp {
         this._updateContactsCount();
         this._updateMapPins();
         if (this.emptyState) this.emptyState.classList.remove('hidden');
+        // Re-create the (now empty) chart/map cache layers so live upserts have
+        // somewhere to land — nothing else rebuilds them outside Display changes.
+        this._refreshWideView();
     }
 
     _displayCutoffNow() {
@@ -5666,25 +5788,33 @@ class MeshCoreApp {
         });
     }
 
-    // Visible points = downsampled disk cache + a RAM "tail" of packets newer than
-    // the cache, so new data shows instantly without a per-packet disk re-query.
-    // When the cache is empty (store not open yet, or unavailable) the cutoff-
-    // filtered tail alone is the full live RAM window — one path, no fallback.
+    // Visible points come from the incrementally maintained bucket cache
+    // (_wideChartPoints, see _rebuildChartArrays) — live packets are already
+    // folded in, so there is no separate tail. Without a store (IndexedDB
+    // unavailable) the cache is empty and the cutoff-filtered live RAM points
+    // serve directly — same path, no fallback branch.
     _visibleChartPoints() {
-        // While X-zoomed the cache is re-queried for the exact zoom window, so the
-        // live RAM tail isn't needed (and would double-draw points already in it).
-        const zoomed = this._chartZoom && this.store.available;
-        const cutoff = this._displayCutoffNow();
-        const tail = zoomed ? [] : this.chartPoints.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
-        const pts = tail.length ? this._wideChartPoints.concat(tail) : this._wideChartPoints;
+        let pts = this._wideChartPoints;
+        if (!pts.length && this.chartPoints.length) {
+            const cutoff = this._displayCutoffNow();
+            pts = cutoff ? this.chartPoints.filter(p => p.time >= cutoff) : this.chartPoints;
+        }
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
 
     _visibleSentSnrPts() {
-        const zoomed = this._chartZoom && this.store.available;
+        // Sent points are few, so the disk layer plus a plain live tail (points
+        // newer than the layer) suffices. While zoomed, clamp the tail to the
+        // zoom window so out-of-window stars don't skew the Y bounds.
         const cutoff = this._displayCutoffNow();
-        const tail = zoomed ? [] : this._sentSnrHistory.filter(p => p.time > this._renderCacheAt && (!cutoff || p.time >= cutoff));
-        const pts = tail.length ? this._wideSentPoints.concat(tail) : this._wideSentPoints;
+        const z = this._chartZoom;
+        const tail = this._sentSnrHistory.filter(p =>
+            p.time > this._sentChartAt &&
+            (!cutoff || p.time >= cutoff) &&
+            (!z || (p.time >= z.tMin && p.time <= z.tMax)));
+        let pts = tail.length ? this._wideSentPoints.concat(tail) : this._wideSentPoints;
+        if (cutoff) pts = pts.filter(p => p.time >= cutoff);
+        if (z) pts = pts.filter(p => p.time >= z.tMin && p.time <= z.tMax);
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
 
