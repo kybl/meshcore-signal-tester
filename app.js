@@ -5071,6 +5071,11 @@ class MeshCoreApp {
         this.allRepeaters.clear();
         this._selectedCol = null;
         this._mapPins.clear();
+        // Contacts are data too — wipe them from RAM now and cancel any pending
+        // persist so it can't re-write them after store.clearAll() empties the DB.
+        this._contacts.clear();
+        this._contactsLastmod = 0;
+        clearTimeout(this._contactsPersistTimer);
         this.signalMap?.selectColumn(null);
         this.signalMap?.clearPoints?.();
         if (this.msgTableBody) this.msgTableBody.innerHTML = '';
@@ -5079,6 +5084,8 @@ class MeshCoreApp {
         this._scheduleChartRender();
         this._renderRepTable();
         this._updateStats();
+        this._updateContactsCount();
+        this._updateMapPins();
         if (this.emptyState) this.emptyState.classList.remove('hidden');
     }
 
