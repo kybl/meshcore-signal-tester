@@ -5095,7 +5095,9 @@ class MeshCoreApp {
         if (key === this._tableNarrowKeyApplied) return;
         this._tableNarrowKeyApplied = key;
         if (this._storeReady && this.store.available) this._loadTablePage(0, true);
-    }
+        // No store ⇒ no pager; but the live tail still skips narrowed-out rows,
+        // so widening the narrowing must re-render to bring them back into the DOM.
+        else this._renderMsgTable();
 
     async _loadTablePage(page, reset = false) {
         if (!this.store.available) return;
