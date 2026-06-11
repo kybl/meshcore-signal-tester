@@ -2189,6 +2189,9 @@ td.col-dim { opacity: 0.25; }
 /* ---- Corner notices (filter / selection) ---- */
 .corner-notice {
     position: fixed;
+    /* Re-parented to <html> (to escape the body text-size transform), so it no
+       longer inherits the body font — set it explicitly. */
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     top: 16px;
     right: 16px;
     z-index: 200;

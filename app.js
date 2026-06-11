@@ -3278,6 +3278,8 @@ class MeshCoreApp {
         const colList = [...new Set([...this.repeaterColumns, ...activeColsInRows])];
         const visibleCols = colList
             .filter(c => this._colMatchesRepFilter(c) && activeColsInRows.has(c));
+        this._visibleCols = visibleCols;   // columns actually rendered (used by the
+                                           // detail colspan and the filter notice)
 
         const msgTableEmpty = document.getElementById('msgTableEmpty');
         const msgTableScroll = this.msgTableHead?.closest('.msg-table-scroll');
@@ -3477,7 +3479,10 @@ class MeshCoreApp {
     _buildDetailRow(hash, col = null) {
         const data = this._tableSource().get(hash) || this.hashData.get(hash);
         if (!data) return '';
-        const colspan = 1 + this.repeaterColumns.length * 2;
+        // Span every rendered column (the table shows the union of live + disk
+        // columns, which can exceed repeaterColumns).
+        const colCount = this._visibleCols?.length ?? this.repeaterColumns.length;
+        const colspan = 1 + colCount * 2;
 
         // Use per-repeater packet/rawHex when available (each repeater receives a different path)
         const repEntry = col ? data.repeaters.get(col) : null;
@@ -5246,7 +5251,7 @@ class MeshCoreApp {
             filterNotice.classList.toggle('hidden', !hasFilter);
             if (hasFilter) {
                 document.getElementById('filterNoticeRep').textContent = this._repFilterTerms.join(', ');
-                const matchingCols = this.repeaterColumns.filter(c => this._colMatchesRepFilter(c));
+                const matchingCols = (this._visibleCols ?? this.repeaterColumns).filter(c => this._colMatchesRepFilter(c));
                 // Any single matched column counts (including a merged one) — its
                 // dot, name and "Show more" stats are meaningful; only a multi-
                 // match filter has no single repeater to detail.
