@@ -2095,6 +2095,7 @@ class MeshCoreApp {
         if (payload.length >= 144) lon = ((payload[140] | (payload[141] << 8) | (payload[142] << 16) | (payload[143] << 24)) | 0) / 1e6;
         if (payload.length >= 148) lastmod = payload[144] | (payload[145] << 8) | (payload[146] << 16) | (payload[147] << 24);
         this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod, pubKeyFullHex: pubKeyFull });
+        this._scheduleContactsPersist();
         // NB: do NOT advance _contactsLastmod here. The incremental-sync marker
         // must only move forward once a FULL contact list has been received
         // (END_OF_CONTACTS). Advancing it per-contact meant an interrupted fetch
@@ -2229,6 +2230,19 @@ class MeshCoreApp {
     _updateContactsCount() {
         if (this.contactsCountEl) this.contactsCountEl.textContent = this._contacts.size;
         if (this.contactsHstat) this.contactsHstat.style.display = this._contacts.size > 0 ? '' : 'none';
+    }
+
+    // Persist contacts (debounced) to the session DB so they survive a reload /
+    // renderer-crash rebuild — restored in _initStore. The incremental-sync
+    // marker is saved too, so a reconnect resumes from it instead of re-pulling
+    // the whole contact list.
+    _scheduleContactsPersist() {
+        if (!this._storeReady || !this.store.available) return;
+        clearTimeout(this._contactsPersistTimer);
+        this._contactsPersistTimer = setTimeout(() => {
+            if (!this.store.available) return;
+            this.store.setKV('contacts', { entries: [...this._contacts.values()], lastmod: this._contactsLastmod });
+        }, 1000);
     }
 
     _updateSoundHighlight() {
@@ -2432,6 +2446,7 @@ class MeshCoreApp {
             this._setContactsLoading(false);
             if (payload.length >= 5)
                 this._contactsLastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
+            this._scheduleContactsPersist();   // full list received → persist with the new sync marker
             this._updateContactsCount();
             this._lastColKey = null; // force column header redraw with names
             this._renderMsgTable();
@@ -2687,6 +2702,7 @@ class MeshCoreApp {
             pubKeyFullHex,
         });
         if (!existing) this._updateContactsCount();
+        this._scheduleContactsPersist();
     }
 
     _escHtml(s) {
@@ -4506,11 +4522,22 @@ class MeshCoreApp {
             const totals = await this.store.getKV('totals');
             if (totals && Number.isFinite(totals.totalRxCount)) this.totalRxCount = totals.totalRxCount;
         } catch (_) {}
+        // Restore persisted contacts (names, GPS, types) so the repeater map
+        // markers and column names survive a reload / renderer-crash rebuild.
+        try {
+            const saved = await this.store.getKV('contacts');
+            if (saved && Array.isArray(saved.entries)) {
+                for (const c of saved.entries) if (c?.pubKeyFullHex) this._contacts.set(c.pubKeyFullHex, c);
+                if (Number.isFinite(saved.lastmod)) this._contactsLastmod = saved.lastmod;
+                this._updateContactsCount();
+            }
+        } catch (_) {}
         await this._replayWindow();
         this._scheduleChartRender();
         this._renderMsgTable();
         this._renderRepTable();
         this._updateStats();
+        this._updateMapPins();   // contacts restored above ⇒ show repeater markers
         this._refreshWideView();
         // Keep a wide / "All" view live while capturing (no-op otherwise).
         this._wideRefreshTimer = setInterval(() => this._tickWideRefresh(), 5000);
@@ -5756,6 +5783,8 @@ class MeshCoreApp {
             headerLineIdx = i;
             break;
         }
+        this._updateContactsCount();
+        this._scheduleContactsPersist();   // persist any contacts embedded in the CSV
 
         const header = this._parseCsvLine(lines[headerLineIdx]);
         const idx = name => header.indexOf(name);

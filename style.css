@@ -2222,12 +2222,30 @@ td.col-dim { opacity: 0.25; }
     justify-content: center;
     gap: 6px 12px;
     border-radius: 0;
-    border-width: 0 0 1px 0;
-    padding: 8px 14px;
-    box-shadow: 0 2px 12px var(--shadow);
+    /* Prominent amber bar so it's obvious the view is filtered (not everything
+       is shown). Stands out from the app's blue chrome in both themes. */
+    background: linear-gradient(90deg, #d97706, #b45309);
+    color: #fff;
+    border: 0;
+    border-bottom: 2px solid #f59e0b;
+    padding: 9px 14px;
+    box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
+}
+.notice-topbar .corner-notice-line1 { color: #fff; font-weight: 700; }
+.notice-topbar .corner-notice-id { color: #fff; }
+.notice-topbar .cn-showmore-label,
+.notice-topbar .cn-stats { color: rgba(255, 255, 255, 0.92); }
+.notice-topbar .cn-stats b { color: #fff; }
+.notice-topbar .help-icon { background: rgba(255,255,255,0.25); color: #fff; }
+/* Clear-filter button: light, high-contrast against the amber bar */
+.notice-topbar .corner-notice-btn {
+    flex: 0 0 auto;
+    background: #fff;
+    color: #7c2d12;
+    border-color: transparent;
+    font-weight: 700;
 }
 .notice-topbar .corner-notice-extra { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 10px; }
-.notice-topbar .corner-notice-btn { flex: 0 0 auto; }
 /* "Show more" stats flow horizontally in the bar instead of stacking */
 .notice-topbar .cn-stats { flex-direction: row; flex-wrap: wrap; gap: 2px 14px; }
 /* Keep the selection corner box clear of the bar when both are visible */
