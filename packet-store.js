@@ -590,8 +590,14 @@ export class PacketStore {
     /** Delete obs and sent records older than `cutoff` (used for finite
      *  Auto-remove, which truly deletes). hashes are left (cheap; orphans are
      *  harmless and reused if the hash reappears). */
+    /** Delete observations/sent records older than `cutoff`, then hash records
+     *  left with no observations at all (otherwise the hashes store would grow
+     *  forever under a finite retention, inflating the table's page count and
+     *  yielding empty pages). Only hashes with firstSeen < cutoff can have
+     *  become empty, so the orphan check is bounded by what just expired — not
+     *  the whole store. Resolves to the number of hash records deleted. */
     async pruneOlderThan(cutoff) {
-        if (!this.db || !Number.isFinite(cutoff)) return;
+        if (!this.db || !Number.isFinite(cutoff)) return 0;
         for (const store of ['obs', 'sent']) {
             try {
                 await new Promise((resolve, reject) => {
@@ -610,6 +616,31 @@ export class PacketStore {
                 });
             } catch (e) { console.warn(`PacketStore: prune ${store} failed:`, e); }
         }
+        let deletedHashes = 0;
+        try {
+            await new Promise((resolve, reject) => {
+                const tx = this.db.transaction(['hashes', 'obs'], 'readwrite');
+                const obsByHash = tx.objectStore('obs').index('hash');
+                const req = tx.objectStore('hashes').index('firstSeen')
+                    .openCursor(IDBKeyRange.upperBound(cutoff, true));
+                req.onsuccess = () => {
+                    const cur = req.result;
+                    if (!cur) return;
+                    // getKey resolves to the first matching obs primary key, or
+                    // undefined when the hash has no observations left.
+                    const probe = obsByHash.getKey(cur.value.hash);
+                    probe.onsuccess = () => {
+                        if (probe.result === undefined) { cur.delete(); deletedHashes++; }
+                        cur.continue();
+                    };
+                    probe.onerror = () => cur.continue();
+                };
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error);
+            });
+        } catch (e) { console.warn('PacketStore: prune hashes failed:', e); }
+        return deletedHashes;
     }
 
     async clearAll() {

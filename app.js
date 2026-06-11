@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=111';
-import { PacketStore } from './packet-store.js?v=8';
+import { PacketStore } from './packet-store.js?v=9';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -4678,6 +4678,7 @@ class MeshCoreApp {
         if (this._quotaPruning || !this.store.available) return;
         this._quotaPruning = true;
         this.store.pruneOlderThan(Date.now() - this.RENDER_BUDGET_MS)
+            .then(n => this._afterDiskPrune(n))
             .finally(() => { this._quotaPruning = false; });
     }
 
@@ -5110,7 +5111,8 @@ class MeshCoreApp {
         // Disk keeps full history when Auto-remove is "Never"; when it is finite,
         // history is truly deleted from disk too.
         if (isFinite(this.HASH_LIFETIME) && this._storeReady) {
-            this.store.pruneOlderThan(now - this.HASH_LIFETIME);
+            this.store.pruneOlderThan(now - this.HASH_LIFETIME)
+                .then(n => this._afterDiskPrune(n));
         }
         const lifetime = this._ramWindowMs();
         const toRemove = [];
@@ -5291,6 +5293,21 @@ class MeshCoreApp {
         // Re-create the (now empty) chart/map cache layers so live upserts have
         // somewhere to land — nothing else rebuilds them outside Display changes.
         this._refreshWideView();
+    }
+
+    // A disk prune deleted `deletedHashes` hash records — keep the RAM-maintained
+    // pager count in sync immediately (it is otherwise only incremented at ingest
+    // and recounted on page loads). If the current page fell off the end, load
+    // the new last page so the snapshot matches the pager.
+    _afterDiskPrune(deletedHashes) {
+        if (!deletedHashes) return;
+        this._tableHashCount = Math.max(0, this._tableHashCount - deletedHashes);
+        this._tablePageCount = Math.max(1, Math.ceil(Math.max(1, this._tableHashCount) / this._tablePageSize));
+        if (this._tablePage > this._tablePageCount - 1) {
+            this._loadTablePage(this._tablePageCount - 1);
+        } else {
+            this._refreshTablePager();
+        }
     }
 
     _displayCutoffNow() {
