@@ -4416,45 +4416,43 @@ class MeshCoreApp {
     }
 
     // Decide which database this tab uses. Data is isolated per browser tab so
-    // two tabs capturing different devices never share a store (#5). When
-    // previous captured data is present the user is asked whether to resume it or
-    // start fresh — on a normal launch AND on a manual reload (a reload is
-    // usually deliberate, so it's a chance to start over). Only an Android
-    // renderer-crash rebuild (?recover=1, single WebView so no ambiguity) resumes
-    // the just-crashed session silently.
+    // two tabs capturing different devices never share a store (#5). Whenever
+    // previous captured data would be brought back — a normal launch, a manual
+    // reload, or an Android renderer-crash rebuild — the user is asked whether to
+    // resume it or start fresh; nothing old is ever shown unannounced. Only an
+    // empty session is continued silently (there's nothing to lose).
     async _chooseSession() {
         const mk = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         const setTab = id => { try { sessionStorage.setItem('mc_tab', id); } catch (_) {} this._tabId = id; return 'meshcore-capture-' + id; };
 
+        // The session this tab would continue: the just-crashed one on an Android
+        // renderer rebuild (?recover=1, via mc_last_tab), otherwise the within-tab
+        // reload's id (sessionStorage survives a reload).
         const isRecover = !!new URLSearchParams(location.search).get('recover');
-
-        // Android renderer-crash rebuild: resume the just-crashed session
-        // silently — the reload is involuntary, not a deliberate fresh start.
+        let cur = null;
         if (isRecover) {
             try {
                 const last = JSON.parse(localStorage.getItem('mc_last_tab') || 'null');
-                if (last && Date.now() - last.beat < 120000) return setTab(last.id);
+                if (last && Date.now() - last.beat < 120000) cur = last.id;
             } catch (_) {}
         }
+        if (!cur) { try { cur = sessionStorage.getItem('mc_tab'); } catch (_) {} }
 
-        // Within-tab reload keeps the same session id (sessionStorage survives a
-        // reload). But a manual reload is usually deliberate — people often
-        // reload precisely to start over — so if the session holds data, ask
-        // whether to resume it or start fresh (declining discards it).
-        let cur = null;
-        try { cur = sessionStorage.getItem('mc_tab'); } catch (_) {}
+        // Never bring back old data without asking — on a manual reload OR a
+        // crash rebuild. If the continued session holds data, ask whether to
+        // resume it or start fresh (declining discards it). An empty session is
+        // resumed silently (nothing to lose).
         if (cur) {
-            this._tabId = cur;
             const e = this._readReg()[cur];
             if (e && e.count > 0) {
                 const when = new Date(e.beat).toLocaleString();
                 if (confirm(`Load previously captured data?\n\n${e.count} packets received, last seen ${when}.`)) {
-                    return 'meshcore-capture-' + cur;
+                    return setTab(cur);
                 }
                 this._deleteSession(cur);     // declined → discard and start fresh
                 return setTab(mk());
             }
-            return 'meshcore-capture-' + cur;   // empty session → just keep it
+            return setTab(cur);   // empty session → just keep it
         }
 
         // Normal launch: offer to resume the most recent closed session with data.
