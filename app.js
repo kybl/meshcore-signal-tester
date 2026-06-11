@@ -5100,6 +5100,7 @@ class MeshCoreApp {
         // Pre-ready there is no pager yet, but the live tail still skips
         // narrowed-out rows — re-render so widening brings them back into the DOM.
         else this._renderMsgTable();
+    }
 
     async _loadTablePage(page, reset = false) {
         if (!this._storeReady) return;
