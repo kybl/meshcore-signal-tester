@@ -151,7 +151,6 @@ export class Signal3DMap {
         this._showDevice  = !!opts.showDevice;   // connected-device marker, default off
         this._deviceLoc   = null;                // { lat, lon } of the device, or null
         this._deviceMarker = null;
-        this._clusterRadius = (opts.initialClusterRadius > 0) ? opts.initialClusterRadius : 0; // metres; 0 = off
         this._selectedCol = null;
         this._perspSize   = opts.initialPerspSize !== false; // default on
         // Points / mesh handles — replaced per _rebuildDots call
@@ -945,12 +944,6 @@ export class Signal3DMap {
         this._scheduleMapUpdate();
     }
 
-    setClusterRadius(r) {
-        if (r === this._clusterRadius) return;
-        this._clusterRadius = r;
-        this._rebuildDots();
-    }
-
     setMapSource(source) {
         if (!TILE_SOURCES[source] || source === this._mapSource) return;
         this._mapSource = source;
@@ -1033,43 +1026,6 @@ export class Signal3DMap {
         this._histOutgoingPts = (arr && arr.length) ? arr : (arr ? [] : null);
         this._histSentAt = Date.now();   // live sent points after this are the tail
         this._dotsDirty = true;
-    }
-
-    // Merge points within _clusterRadius metres, per repeater column, keeping the
-    // most recent sample (so the map shows current conditions, matching the disk
-    // grid's representative). A no-op when clustering is off. NOTE: incoming
-    // points normally arrive pre-gridded from the host's cell cache (which uses
-    // the same user radius as its cell-size floor) — this merge only serves the
-    // outgoing (sent) stars and the no-IndexedDB live fallback.
-    _clusterByCol(pts) {
-        if (!(this._clusterRadius > 0) || pts.length < 2) return pts;
-        const latDeg = this._clusterRadius / 111320;
-        const byCols = new Map();
-        for (const p of pts) {
-            if (!byCols.has(p.col)) byCols.set(p.col, []);
-            byCols.get(p.col).push(p);
-        }
-        const clustered = [];
-        for (const cpts of byCols.values()) {
-            const used = new Uint8Array(cpts.length);
-            const refLat = cpts[0].lat;
-            const lonDeg = this._clusterRadius / (111320 * Math.cos(refLat * Math.PI / 180) || 1);
-            for (let i = 0; i < cpts.length; i++) {
-                if (used[i]) continue;
-                let best = cpts[i];
-                used[i] = 1;
-                for (let j = i + 1; j < cpts.length; j++) {
-                    if (used[j]) continue;
-                    if (Math.abs(cpts[j].lat - cpts[i].lat) < latDeg &&
-                        Math.abs(cpts[j].lon - cpts[i].lon) < lonDeg) {
-                        used[j] = 1;
-                        if (cpts[j].time > best.time) best = cpts[j];
-                    }
-                }
-                clustered.push(best);
-            }
-        }
-        return clustered;
     }
 
     // Fire onViewChange (debounced) so the host can re-query a finer disk grid
@@ -1652,10 +1608,6 @@ export class Signal3DMap {
         );
         if (!visible.length) return;
 
-        // Clustering: merge nearby points per repeater. In histMode the disk grid
-        // already spatially downsampled, so skip it; in live mode apply it here.
-        if (!histMode) visible = this._clusterByCol(visible);
-
         const litPts = sel ? visible.filter(p => p.col === sel) : visible;
         const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
 
@@ -1797,19 +1749,16 @@ export class Signal3DMap {
         this._lineSegsDim = makeLines(dimPts, dimMat);
 
         // Sent SNR stars — outgoing signal quality (how well the repeater heard
-        // us). Same source model as incoming: disk-loaded historical points when
-        // present, else the live in-RAM set; clustered the same way.
+        // us). Disk-loaded historical points when present, plus a live tail
+        // (sent points are few, so they're drawn individually — no gridding).
         const sentCutoff = this._displayCutoff;
-        // Disk layer + live tail (sent points are few, so a plain tail suffices —
-        // unlike incoming, which uses the host's incremental cell cache).
         const sentSrc = this._histOutgoingPts
             ? this._histOutgoingPts.concat(this._outgoingPts.filter(p => p.time > this._histSentAt))
             : this._outgoingPts;
-        let sentAll = sentSrc.filter(p =>
+        const sentAll = sentSrc.filter(p =>
             (!this._filterFn || this._filterFn(p.col)) &&
             (!sentCutoff || p.time >= sentCutoff)
         );
-        sentAll = this._clusterByCol(sentAll);
         const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
         const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
         addPoints(sentLit, 1.0,  3.2, this._starTex);

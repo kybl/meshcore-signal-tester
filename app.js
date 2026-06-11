@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=112';
+import { Signal3DMap } from './signal3d.js?v=113';
 import { PacketStore } from './packet-store.js?v=9';
 
 // Single source of truth for the released app version, shown in the header (and
@@ -160,7 +160,6 @@ class MeshCoreApp {
         this._renderCacheAt   = 0;               // time the table's disk page reflects; newer rows are the tail
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this.MAP_TARGET_DOTS  = 2500;            // dot budget for the map grid layers
-        this._mapClusterRadius = Store.num('clusterRadius', 0); // user floor (m) for the grid cell size
         this._wideMapBase     = null;            // RAM cell cache: full-extent map layer {cells: Map, cell, at}
         this._wideMapDetail   = null;            // finer cell layer for the zoomed-in bbox {cells, cell, bbox}
         this._wideMapKey      = null;            // identity of the last applied map view (skip same-view re-query)
@@ -812,7 +811,6 @@ class MeshCoreApp {
                 isDarkMode:    () => !document.documentElement.classList.contains('light-theme'),
                 initialSource:  sourceSel?.value,
                 initialSphereSize: this._sphereSize,
-                initialClusterRadius: Store.num('clusterRadius', 0),
                 initialPerspSize: Store.bool('perspSize', true),
                 showDevice:    Store.bool('showDevice', false),
                 onSelect:      col => {
@@ -905,7 +903,6 @@ class MeshCoreApp {
         const showLinesChk      = document.getElementById('showLinesChk');
         const showMarkerChk     = document.getElementById('showMarkerChk');
         const showDeviceChk     = document.getElementById('showDeviceChk');
-        const clusterSel        = document.getElementById('clusterRadiusSelect');
         const perspSizeChk      = document.getElementById('perspSizeChk');
         showLinesChk?.addEventListener('change', () => {
             this.signalMap?.setShowLines(showLinesChk.checked);
@@ -921,19 +918,6 @@ class MeshCoreApp {
             Store.set('showDevice', showDeviceChk.checked);
             this._updateDeviceLocationRefresh();   // start/stop position polling
         });
-        clusterSel?.addEventListener('change', () => {
-            const r = parseFloat(clusterSel.value) || 0;
-            // Sent stars + the no-store fallback cluster inside signal3d…
-            this.signalMap?.setClusterRadius(r);
-            // …while incoming points cluster via the grid-cell cache, whose cell
-            // size is baked into the cells — rebuild the layers with the new floor.
-            this._mapClusterRadius = r;
-            this._wideMapBase = null;
-            this._wideMapDetail = null;
-            this._wideMapKey = null;
-            this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null);
-            Store.set('clusterRadius', clusterSel.value);
-        });
         perspSizeChk?.addEventListener('change', () => {
             this.signalMap?.setPerspSize(perspSizeChk.checked);
             Store.set('perspSize', perspSizeChk.checked);
@@ -947,7 +931,6 @@ class MeshCoreApp {
         const showDevice = Store.bool('showDevice', false);
         this._showDeviceMarker = showDevice;
         if (showDeviceChk) { showDeviceChk.checked = showDevice; this.signalMap?.setShowDeviceMarker(showDevice); }
-        if (clusterSel)   clusterSel.value   = String(Store.num('clusterRadius', 0));
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
@@ -4917,7 +4900,7 @@ class MeshCoreApp {
             (this._pendingMapUpserts ??= []).length < 1000 && this._pendingMapUpserts.push(o);
             return;
         }
-        if (!base.cell) base.cell = Math.max(5, this._mapClusterRadius);   // first-ever point: minimum cell
+        if (!base.cell) base.cell = 5;   // first-ever point: gridObs' minimum cell
         const bKey = this._mapCellKey(base.cell, o.rawId, o.lat, o.lon);
         base.cells.set(bKey, { ...o, count: (base.cells.get(bKey)?.count ?? 0) + 1 });
         const d = this._wideMapDetail;
@@ -4974,15 +4957,12 @@ class MeshCoreApp {
         if (!this.store.available) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         const TARGET_DOTS = this.MAP_TARGET_DOTS;
-        // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent. The
-        // user's "Cluster radius" setting acts as a floor on the cell size — the
-        // grid IS the clustering, so X metres means "merge points within ~X m",
-        // and zooming in never refines below it (the detail cell uses cellFor too).
+        // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
         const cellFor = (minLat, maxLat, minLon, maxLon) => {
             const midLat = (minLat + maxLat) / 2;
             const latM = Math.max(1, (maxLat - minLat) * 111320);
             const lonM = Math.max(1, (maxLon - minLon) * 111320 * Math.cos(midLat * Math.PI / 180));
-            return Math.max(5, this._mapClusterRadius, Math.sqrt((latM * lonM) / TARGET_DOTS));
+            return Math.max(5, Math.sqrt((latM * lonM) / TARGET_DOTS));
         };
         try {
             // Outgoing (sent) SNR is low-volume and has no spatial index, so load
