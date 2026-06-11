@@ -173,6 +173,7 @@ export class Signal3DMap {
         // When non-null these replace _rxPoints as the render source (they are
         // already spatially gridded, so no further clustering is applied).
         this._histPoints      = null;
+        this._histAt          = 0;       // time the disk grid (_histPoints) reflects; newer live points are the "tail"
         this._histOutgoingPts = null;    // disk-loaded outgoing-SNR points (null = use live _outgoingPts)
         this._dotsDirty       = false;   // a live packet changed _rxPoints; rebuild is coalesced in the frame loop
         this._lastDotsBuild   = 0;
@@ -985,11 +986,11 @@ export class Signal3DMap {
         this._rxPoints.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
         if (opts.col === this._selectedCol) this._updateInfoPanel();
-        // Coalesced rebuild (see _maybeRebuildDots): rebuilding all point geometry
-        // on every packet starves the frame loop and stutters pan/zoom during
-        // capture. In a wide ("All") view the map shows the disk grid, so live
-        // points don't drive a rebuild at all.
-        if (this._histPoints == null) this._dotsDirty = true;
+        // Coalesced rebuild (see _maybeRebuildDots): throttled to ≤1/200ms and
+        // skipped while dragging, so it never starves the frame loop. In a wide
+        // ("All") view this folds the new point into the rendered tail on top of
+        // the disk grid (see _rebuildDots), so it shows without a disk re-scan.
+        this._dotsDirty = true;
         this._scheduleMapUpdate();
     }
 
@@ -1016,6 +1017,7 @@ export class Signal3DMap {
     // Each point: { lat, lon, snr, rssi, col, time, rawId, count }.
     setHistoricalPoints(arr) {
         this._histPoints = (arr && arr.length) ? arr : (arr ? [] : null);
+        this._histAt = Date.now();   // live points after this are the freshness tail
         if (this.emptyEl && this._histPoints && this._histPoints.length) this.emptyEl.classList.add('hidden');
         this._rebuildDots();
         this._scheduleMapUpdate();
@@ -1030,7 +1032,8 @@ export class Signal3DMap {
     }
 
     // Merge points within _clusterRadius metres, per repeater column, keeping the
-    // strongest sample (RSSI if present, else SNR). A no-op when clustering is off.
+    // most recent sample (so the map shows current conditions, matching the disk
+    // grid's representative). A no-op when clustering is off.
     _clusterByCol(pts) {
         if (!(this._clusterRadius > 0) || pts.length < 2) return pts;
         const latDeg = this._clusterRadius / 111320;
@@ -1039,7 +1042,6 @@ export class Signal3DMap {
             if (!byCols.has(p.col)) byCols.set(p.col, []);
             byCols.get(p.col).push(p);
         }
-        const strength = p => (p.rssi ?? p.snr ?? -Infinity);
         const clustered = [];
         for (const cpts of byCols.values()) {
             const used = new Uint8Array(cpts.length);
@@ -1054,7 +1056,7 @@ export class Signal3DMap {
                     if (Math.abs(cpts[j].lat - cpts[i].lat) < latDeg &&
                         Math.abs(cpts[j].lon - cpts[i].lon) < lonDeg) {
                         used[j] = 1;
-                        if (strength(cpts[j]) > strength(best)) best = cpts[j];
+                        if (cpts[j].time > best.time) best = cpts[j];
                     }
                 }
                 clustered.push(best);
@@ -1635,7 +1637,14 @@ export class Signal3DMap {
         // In wide / "All" mode the source is the pre-gridded historical set; it
         // is already spatially downsampled, so the per-repeater merge is skipped.
         const histMode = this._histPoints != null;
-        let visible = (histMode ? this._histPoints : this._rxPoints).filter(p =>
+        // In histMode the disk grid is the base; live points newer than the grid
+        // snapshot are added as a RAM "tail" so new packets appear within ~200 ms
+        // without a disk re-scan (the periodic rescan later folds them into the
+        // grid). Mirrors the 2D charts' cache + tail.
+        const src = histMode
+            ? this._histPoints.concat(this._rxPoints.filter(p => p.time > this._histAt))
+            : this._rxPoints;
+        let visible = src.filter(p =>
             (!this._filterFn || this._filterFn(p.col)) &&
             (!cutoff || p.time >= cutoff)
         );

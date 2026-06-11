@@ -515,8 +515,10 @@ export class PacketStore {
             let g = groups.get(key);
             if (!g) { g = { rawId: r.rawId, lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time, count: 0 }; groups.set(key, g); }
             g.count++;
-            // Representative = strongest RSSI seen in the cell.
-            if (r.rssi != null && (g.rssi == null || r.rssi > g.rssi)) {
+            // Representative = the most recent observation in the cell, so the
+            // map shows current conditions (spire height = its SNR), not a
+            // best-ever value.
+            if (r.time >= g.time) {
                 g.lat = r.lat; g.lon = r.lon; g.snr = r.snr; g.rssi = r.rssi; g.time = r.time;
             }
         });

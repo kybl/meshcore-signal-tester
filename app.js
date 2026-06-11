@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=109';
-import { PacketStore } from './packet-store.js?v=6';
+import { Signal3DMap } from './signal3d.js?v=110';
+import { PacketStore } from './packet-store.js?v=7';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -4812,9 +4812,11 @@ class MeshCoreApp {
                 this.signalMap?.setHistoricalSentPoints?.(sentPts);
                 this._wideMapSentVer = this._dataVer;
             }
-            // Base recompute only when data actually changed AND the cache aged
-            // out — viewing a static capture costs no disk scans at all.
-            const BASE_TTL = 6000;   // live capture: new off-screen points appear within this
+            // Base recompute only when data changed AND the cache aged out. The
+            // map now shows new points immediately via a RAM tail (signal3d), so
+            // the base re-scan is just periodic consolidation + window eviction
+            // and can be infrequent rather than driving freshness.
+            const BASE_TTL = 20000;
             const b = this._wideMapBase;
             if (!b || (b.dataVer !== this._dataVer && Date.now() - b.at > BASE_TTL)) {
                 const s = await this.store.regionStats(from, Infinity, null);
