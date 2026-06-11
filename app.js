@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=110';
+import { Signal3DMap } from './signal3d.js?v=111';
 import { PacketStore } from './packet-store.js?v=7';
 
 // Single source of truth for the released app version, shown in the header (and
@@ -155,9 +155,13 @@ class MeshCoreApp {
         this._wideSentPoints  = [];
         this._renderCacheAt   = 0;               // time the disk caches reflect; newer RAM data is the "tail"
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
-        this._wideMapBase     = null;            // cached coarse full-extent map layer {pts, cell, at, dataVer}
-        this._wideMapKey      = null;            // identity of the last applied map point set
+        this.MAP_TARGET_DOTS  = 2500;            // dot budget for the map grid layers
+        this._wideMapBase     = null;            // RAM cell cache: full-extent map layer {cells: Map, cell, at}
+        this._wideMapDetail   = null;            // finer cell layer for the zoomed-in bbox {cells, cell, bbox}
+        this._wideMapKey      = null;            // identity of the last applied map view (skip same-view re-query)
         this._wideMapSentVer  = -1;              // dataVer the outgoing-SNR map layer was loaded for
+        this._pendingMapUpserts = null;          // packets ingested before the base layer exists
+        this._mapPushTimer    = null;            // coalesces cell upserts into one geometry push
         this._dataVer         = 0;               // bumped whenever new records land on disk
         this._wideRefreshTimer = null;
         this._wideRefreshBusy  = false;
@@ -3122,7 +3126,15 @@ class MeshCoreApp {
         if (snr != null || rssi != null) {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
         }
-        if (loc) this.signalMap?.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
+        if (loc) {
+            this.signalMap?.addPacket({ lat: loc.lat, lon: loc.lon, rssi, snr, col: canonicalKey, time: now, rawId: repeater });
+            // Fold it into the RAM map-cell cache so the wide view shows it
+            // immediately, no disk rescan. Replay/import skip this — they end
+            // with a full disk rebuild of the layers anyway.
+            if (!opts.replaying && !opts.importing && this.store.available) {
+                this._upsertMapCell({ lat: loc.lat, lon: loc.lon, snr, rssi, time: now, rawId: repeater });
+            }
+        }
 
         // Persist this observation (rawHex is per-path, so it lives per-obs).
         // Skipped only while replaying from disk to avoid writing it back.
@@ -4662,6 +4674,7 @@ class MeshCoreApp {
         if (!this.store.available) return;
         this._lastMapView = null;       // new window → start from full extent
         this._wideMapBase = null;       // window changed → recompute the base layer
+        this._wideMapDetail = null;
         this._wideMapKey = null;
         await this._flushWrites();
         const boundary = Date.now();    // set _renderCacheAt only after caches land
@@ -4761,7 +4774,8 @@ class MeshCoreApp {
             // points momentarily vanish.
             const boundary = Date.now();
             await this._loadWideChartOverlay();
-            await this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null);
+            // (The 3D map is NOT refreshed here: live packets upsert its RAM cell
+            // cache directly — see _upsertMapCell — so it needs no disk rescan.)
             if (this._tablePage === 0) await this._loadTablePage(0);
             this._renderCacheAt = boundary;
         } catch (e) {
@@ -4771,26 +4785,101 @@ class MeshCoreApp {
         }
     }
 
-    // Spatially downsample the disk history onto the 3D map, in two layers:
+    // The 3D map renders from an in-RAM cell cache (per-repeater spatial grid).
+    // Disk is read only to BUILD a layer — never periodically:
     //
-    //  - BASE: a coarse grid over the FULL extent, never clipped to the camera.
-    //    Guarantees points exist everywhere the user may pan/rotate to. It needs
-    //    a full time-range scan, so it is cached and only recomputed when stale.
+    //  - BASE: a coarse grid over the FULL extent, built once per Display window
+    //    (and when the dot budget overflows). New packets upsert their cell
+    //    directly in RAM (_upsertMapCell), so the map is current without any
+    //    rescan. Because a cell's representative is its MOST RECENT observation,
+    //    expiry is exact too: when the representative leaves a finite Display
+    //    window, the whole cell is provably empty and is dropped (render-side
+    //    the rolling cutoff hides it; _pushMapPoints purges the Map).
     //  - DETAIL: when zoomed into a sub-region, a finer grid for the visible
-    //    bbox only (cheap — Morton-indexed). Base points inside the bbox are
-    //    replaced by the finer ones; outside it the base remains.
-    //
-    // Replacing the whole point set with a bbox-clipped query (the previous
-    // behaviour) dropped everything off-screen — rotating back to those areas
-    // showed missing dots until the next Display change.
+    //    bbox only (cheap — Morton-indexed), rebuilt on view change. Live
+    //    packets inside the bbox upsert this layer too.
     //
     // Cell size is estimated up-front from extent area and a target dot budget,
     // clamped to ~4 screen px at the current zoom; output stays bounded
     // (≤ ~2× target) regardless of how many packets the span holds.
+
+    // Same cell key math as PacketStore.gridObs, so RAM upserts and disk-built
+    // layers agree on cell identity.
+    _mapCellKey(cellMeters, rawId, lat, lon) {
+        const latCell = cellMeters / 111320;
+        const lonCell = cellMeters / (111320 * Math.cos(lat * Math.PI / 180) || 1);
+        return rawId + '|' + Math.round(lon / lonCell) + '|' + Math.round(lat / latCell);
+    }
+
+    _mapCellsFrom(arr, cellMeters) {
+        const m = new Map();
+        for (const r of arr) m.set(this._mapCellKey(cellMeters, r.rawId, r.lat, r.lon), r);
+        return m;
+    }
+
+    // Fold one live observation into the RAM cell layers. The new point is by
+    // definition the newest in its cell, so it always becomes the representative.
+    _upsertMapCell(o) {
+        const base = this._wideMapBase;
+        if (!base) {   // layers not built yet (startup race) — apply after build
+            (this._pendingMapUpserts ??= []).length < 1000 && this._pendingMapUpserts.push(o);
+            return;
+        }
+        if (!base.cell) base.cell = 5;   // first-ever point: gridObs' minimum cell
+        const bKey = this._mapCellKey(base.cell, o.rawId, o.lat, o.lon);
+        base.cells.set(bKey, { ...o, count: (base.cells.get(bKey)?.count ?? 0) + 1 });
+        const d = this._wideMapDetail;
+        if (d && o.lat >= d.bbox.minLat && o.lat <= d.bbox.maxLat
+              && o.lon >= d.bbox.minLon && o.lon <= d.bbox.maxLon) {
+            const dKey = this._mapCellKey(d.cell, o.rawId, o.lat, o.lon);
+            d.cells.set(dKey, { ...o, count: (d.cells.get(dKey)?.count ?? 0) + 1 });
+        }
+        // Walking into new territory at the 5 m floor can blow the dot budget —
+        // rebuild the base once with a properly sized cell when it does.
+        if (base.cells.size > this.MAP_TARGET_DOTS * 3 && !this._wideRefreshBusy) {
+            this._wideMapBase = null;
+            this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null);
+            return;
+        }
+        this._scheduleMapPush();
+    }
+
+    // Hand the merged cell layers to the map, coalesced so a packet burst costs
+    // one geometry rebuild. Also purges cells that left a finite Display window
+    // (exact — see header comment).
+    _scheduleMapPush() {
+        if (this._mapPushTimer) return;
+        this._mapPushTimer = setTimeout(() => { this._mapPushTimer = null; this._pushMapPoints(); }, 200);
+    }
+
+    _pushMapPoints() {
+        const base = this._wideMapBase;
+        if (!base) return;
+        const cutoff = this._displayCutoffNow();
+        if (cutoff) {
+            for (const [k, p] of base.cells) if (p.time < cutoff) base.cells.delete(k);
+            const d = this._wideMapDetail;
+            if (d) for (const [k, p] of d.cells) if (p.time < cutoff) d.cells.delete(k);
+        }
+        const d = this._wideMapDetail;
+        let merged;
+        if (d) {
+            const inB = p => p.lat >= d.bbox.minLat && p.lat <= d.bbox.maxLat
+                          && p.lon >= d.bbox.minLon && p.lon <= d.bbox.maxLon;
+            merged = [...base.cells.values()].filter(p => !inB(p)).concat([...d.cells.values()]);
+        } else {
+            merged = [...base.cells.values()];
+        }
+        this.signalMap?.setHistoricalPoints?.(merged.map(r => ({
+            lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time,
+            rawId: r.rawId, col: this._resolveColReadonly(r.rawId), count: r.count,
+        })));
+    }
+
     async _refreshWideMap(bbox = null, mpp = null) {
         if (!this.store.available) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
-        const TARGET_DOTS = 2500;
+        const TARGET_DOTS = this.MAP_TARGET_DOTS;
         // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
         const cellFor = (minLat, maxLat, minLon, maxLon) => {
             const midLat = (minLat + maxLat) / 2;
@@ -4800,8 +4889,8 @@ class MeshCoreApp {
         };
         try {
             // Outgoing (sent) SNR is low-volume and has no spatial index, so load
-            // the whole window once per data change and hand it to the map as
-            // historical points — same source as incoming, just not gridded.
+            // the whole window when (re)building; live ones arrive via the sent
+            // tail in signal3d.
             if (this._wideMapSentVer !== this._dataVer) {
                 const sentPts = [];
                 await this.store.eachSent(from, Infinity, r => {
@@ -4812,54 +4901,47 @@ class MeshCoreApp {
                 this.signalMap?.setHistoricalSentPoints?.(sentPts);
                 this._wideMapSentVer = this._dataVer;
             }
-            // Base recompute only when data changed AND the cache aged out. The
-            // map now shows new points immediately via a RAM tail (signal3d), so
-            // the base re-scan is just periodic consolidation + window eviction
-            // and can be infrequent rather than driving freshness.
-            const BASE_TTL = 20000;
-            const b = this._wideMapBase;
-            if (!b || (b.dataVer !== this._dataVer && Date.now() - b.at > BASE_TTL)) {
+            // Build the base layer only when absent (Display change nulls it).
+            // Freshness and expiry are handled in RAM — no periodic rescan.
+            if (!this._wideMapBase) {
+                await this._flushWrites();   // the disk build must include everything buffered
                 const s = await this.store.regionStats(from, Infinity, null);
-                if (!s.count) {
-                    this._wideMapBase = { pts: [], cell: 0, at: Date.now(), dataVer: this._dataVer };
-                    this.signalMap?.setHistoricalPoints?.([]);
-                    this._wideMapKey = null;
-                    return;
+                if (s.count) {
+                    const cell = cellFor(s.minLat, s.maxLat, s.minLon, s.maxLon);
+                    const pts = await this.store.gridObs(from, Infinity, cell, null);
+                    this._wideMapBase = { cells: this._mapCellsFrom(pts, cell), cell, at: Date.now() };
+                } else {
+                    this._wideMapBase = { cells: new Map(), cell: 0, at: Date.now() };
                 }
-                const cell = cellFor(s.minLat, s.maxLat, s.minLon, s.maxLon);
-                this._wideMapBase = {
-                    pts: await this.store.gridObs(from, Infinity, cell, null),
-                    cell, at: Date.now(), dataVer: this._dataVer,
-                };
+                this._wideMapKey = null;
+                // Packets that arrived while there was no base yet (startup race)
+                const pend = this._pendingMapUpserts;
+                this._pendingMapUpserts = null;
+                if (pend) for (const o of pend) this._upsertMapCell(o);
             }
             const base = this._wideMapBase;
             // Detail cell is derived from the view bbox itself (it IS the region
             // whose dot density matters) — no extra disk scan needed for sizing.
             let dCell = 0;
-            if (bbox && base.pts.length) {
+            if (bbox && base.cells.size) {
                 dCell = Math.max(cellFor(bbox.minLat, bbox.maxLat, bbox.minLon, bbox.maxLon), (mpp ?? 0) * 4);
                 if (dCell >= base.cell) dCell = 0;   // would not refine — base alone suffices
             }
-            // Skip the query AND the geometry rebuild when the same view over the
-            // same data was already applied — panning around an already-loaded
-            // region costs nothing.
+            // Skip the disk re-query when the same view is already loaded —
+            // panning around an already-loaded region costs nothing.
             const key = dCell
-                ? `${base.at}|${this._dataVer}|${Math.round(dCell)}|`
+                ? `${base.at}|${Math.round(dCell)}|`
                   + [bbox.minLat, bbox.maxLat, bbox.minLon, bbox.maxLon].map(v => Math.round(v * 1e4)).join(',')
                 : `${base.at}|base`;
             if (key === this._wideMapKey) return;
-            let merged = base.pts;
             if (dCell) {
+                await this._flushWrites();   // fine grid must include the freshest packets
                 const fine = await this.store.gridObs(from, Infinity, dCell, bbox);
-                const inB = p => p.lat >= bbox.minLat && p.lat <= bbox.maxLat
-                              && p.lon >= bbox.minLon && p.lon <= bbox.maxLon;
-                merged = base.pts.filter(p => !inB(p)).concat(fine);
+                this._wideMapDetail = { cells: this._mapCellsFrom(fine, dCell), cell: dCell, bbox };
+            } else {
+                this._wideMapDetail = null;
             }
-            const pts = merged.map(r => ({
-                lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time,
-                rawId: r.rawId, col: this._resolveColReadonly(r.rawId), count: r.count,
-            }));
-            this.signalMap?.setHistoricalPoints?.(pts);
+            this._pushMapPoints();
             this._wideMapKey = key;
         } catch (e) {
             console.warn('Wide-map load failed:', e);
@@ -5077,8 +5159,11 @@ class MeshCoreApp {
         this._tablePageCount = 1;
         this._renderCacheAt = 0;
         this._wideMapBase = null;
+        this._wideMapDetail = null;
         this._wideMapKey = null;
         this._wideMapSentVer = -1;
+        this._pendingMapUpserts = null;
+        clearTimeout(this._mapPushTimer); this._mapPushTimer = null;
         this._lastMapView = null;
         this._obsWriteBuf = [];
         this._sentWriteBuf = [];

@@ -173,8 +173,8 @@ export class Signal3DMap {
         // When non-null these replace _rxPoints as the render source (they are
         // already spatially gridded, so no further clustering is applied).
         this._histPoints      = null;
-        this._histAt          = 0;       // time the disk grid (_histPoints) reflects; newer live points are the "tail"
         this._histOutgoingPts = null;    // disk-loaded outgoing-SNR points (null = use live _outgoingPts)
+        this._histSentAt      = 0;       // time the sent layer reflects; newer live sent points are the tail
         this._dotsDirty       = false;   // a live packet changed _rxPoints; rebuild is coalesced in the frame loop
         this._lastDotsBuild   = 0;
         this._viewChangeTimer = null;
@@ -998,7 +998,9 @@ export class Signal3DMap {
         if (opts.lat == null || opts.lon == null || opts.snr == null) return;
         this._outgoingPts.push({ ...opts });
         if (this.emptyEl) this.emptyEl.classList.add('hidden');
-        if (this._histPoints == null) this._dotsDirty = true;
+        // Rendered immediately: live mode draws _outgoingPts directly; in hist
+        // mode the render adds points newer than the disk layer as a tail.
+        this._dotsDirty = true;
     }
 
     // Rebuild dots from a coalesced dirty flag, throttled and never mid-gesture,
@@ -1017,9 +1019,10 @@ export class Signal3DMap {
     // Each point: { lat, lon, snr, rssi, col, time, rawId, count }.
     setHistoricalPoints(arr) {
         this._histPoints = (arr && arr.length) ? arr : (arr ? [] : null);
-        this._histAt = Date.now();   // live points after this are the freshness tail
         if (this.emptyEl && this._histPoints && this._histPoints.length) this.emptyEl.classList.add('hidden');
-        this._rebuildDots();
+        // Coalesced rebuild (≤1/200 ms, skipped while dragging) — live upserts
+        // push updated point sets frequently during capture.
+        this._dotsDirty = true;
         this._scheduleMapUpdate();
     }
 
@@ -1028,7 +1031,8 @@ export class Signal3DMap {
     // Each point: { lat, lon, snr, col, time, rawId }.
     setHistoricalSentPoints(arr) {
         this._histOutgoingPts = (arr && arr.length) ? arr : (arr ? [] : null);
-        this._rebuildDots();
+        this._histSentAt = Date.now();   // live sent points after this are the tail
+        this._dotsDirty = true;
     }
 
     // Merge points within _clusterRadius metres, per repeater column, keeping the
@@ -1636,15 +1640,10 @@ export class Signal3DMap {
         const cutoff  = this._displayCutoff;
         // In wide / "All" mode the source is the pre-gridded historical set; it
         // is already spatially downsampled, so the per-repeater merge is skipped.
+        // In histMode the host maintains the cell cache incrementally (live
+        // packets upsert their cell), so _histPoints is always current — no tail.
         const histMode = this._histPoints != null;
-        // In histMode the disk grid is the base; live points newer than the grid
-        // snapshot are added as a RAM "tail" so new packets appear within ~200 ms
-        // without a disk re-scan (the periodic rescan later folds them into the
-        // grid). Mirrors the 2D charts' cache + tail.
-        const src = histMode
-            ? this._histPoints.concat(this._rxPoints.filter(p => p.time > this._histAt))
-            : this._rxPoints;
-        let visible = src.filter(p =>
+        let visible = (histMode ? this._histPoints : this._rxPoints).filter(p =>
             (!this._filterFn || this._filterFn(p.col)) &&
             (!cutoff || p.time >= cutoff)
         );
@@ -1798,7 +1797,11 @@ export class Signal3DMap {
         // us). Same source model as incoming: disk-loaded historical points when
         // present, else the live in-RAM set; clustered the same way.
         const sentCutoff = this._displayCutoff;
-        const sentSrc = this._histOutgoingPts ?? this._outgoingPts;
+        // Disk layer + live tail (sent points are few, so a plain tail suffices —
+        // unlike incoming, which uses the host's incremental cell cache).
+        const sentSrc = this._histOutgoingPts
+            ? this._histOutgoingPts.concat(this._outgoingPts.filter(p => p.time > this._histSentAt))
+            : this._outgoingPts;
         let sentAll = sentSrc.filter(p =>
             (!this._filterFn || this._filterFn(p.col)) &&
             (!sentCutoff || p.time >= sentCutoff)
