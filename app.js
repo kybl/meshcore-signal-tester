@@ -385,16 +385,15 @@ class MeshCoreApp {
                 this.toggleDetailRow(sigCell.dataset.hash, sigCell.dataset.col);
                 return;
             }
-            // Time/type cell: toggle detail for first repeater that has data for this row
+            // Time/type cell: toggle detail for the left-most repeater that has
+            // data in this row. Read it straight from the rendered cells (the
+            // first cell carrying a data-col) so it matches what's on screen even
+            // for disk-sourced columns not in the live column model.
             const rxCell = e.target.closest('.msg-col-rx');
             if (rxCell) {
                 const row = rxCell.closest('tr[id^="row-"]');
-                if (!row) return;
-                const hash = row.id.slice(4);
-                const data = this._tableSource().get(hash) || this.hashData.get(hash);
-                if (!data) return;
-                const firstCol = this.repeaterColumns.find(col => data.repeaters.has(col));
-                if (firstCol) this.toggleDetailRow(hash, firstCol);
+                const firstSig = row?.querySelector('.sig-snr[data-col], .sig-rssi[data-col]');
+                if (firstSig?.dataset.hash) this.toggleDetailRow(firstSig.dataset.hash, firstSig.dataset.col);
             }
         });
 
