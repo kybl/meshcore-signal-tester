@@ -4540,7 +4540,7 @@ class MeshCoreApp {
         this._updateMapPins();   // contacts restored above ⇒ show repeater markers
         this._refreshWideView();
         // Keep a wide / "All" view live while capturing (no-op otherwise).
-        this._wideRefreshTimer = setInterval(() => this._tickWideRefresh(), 5000);
+        this._wideRefreshTimer = setInterval(() => this._tickWideRefresh(), 3000);
     }
 
     // Rebuild the in-RAM render window from disk by replaying the most recent
@@ -4797,7 +4797,7 @@ class MeshCoreApp {
             }
             // Base recompute only when data actually changed AND the cache aged
             // out — viewing a static capture costs no disk scans at all.
-            const BASE_TTL = 15000;   // live capture: new off-screen points appear within this
+            const BASE_TTL = 6000;   // live capture: new off-screen points appear within this
             const b = this._wideMapBase;
             if (!b || (b.dataVer !== this._dataVer && Date.now() - b.at > BASE_TTL)) {
                 const s = await this.store.regionStats(from, Infinity, null);
