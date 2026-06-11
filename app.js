@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=113';
-import { PacketStore } from './packet-store.js?v=10';
+import { PacketStore } from './packet-store.js?v=11';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -829,7 +829,7 @@ class MeshCoreApp {
                     // Zoom/pan → re-query a finer disk grid for the now-visible
                     // region, and remember it so the live refresh keeps that zoom
                     // instead of snapping to full extent.
-                    if (!this.store.available) return;
+                    if (!this._storeReady) return;
                     // Small moves don't need a re-query: the previous detail grid
                     // over-covers the view, so only react once the camera has
                     // moved a quarter of the span or zoomed by ≥25%. (Skipped
@@ -2247,10 +2247,9 @@ class MeshCoreApp {
     // marker is saved too, so a reconnect resumes from it instead of re-pulling
     // the whole contact list.
     _scheduleContactsPersist() {
-        if (!this._storeReady || !this.store.available) return;
+        if (!this._storeReady) return;
         clearTimeout(this._contactsPersistTimer);
         this._contactsPersistTimer = setTimeout(() => {
-            if (!this.store.available) return;
             this.store.setKV('contacts', { entries: [...this._contacts.values()], lastmod: this._contactsLastmod });
         }, 1000);
     }
@@ -2614,7 +2613,7 @@ class MeshCoreApp {
         const now = Date.now();
         const sentLoc = this.signalMap?.currentLocation() ?? null;
         this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
-        if (this.store) { this._sentWriteBuf.push({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null }); this._scheduleWriteFlush(); }
+        if (!this._storeDead) { this._sentWriteBuf.push({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null }); this._scheduleWriteFlush(); }
         this._scheduleChartRender();
         if (sentLoc && remoteSnr != null) {
             this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: pubKeyHex, time: now, rawId: pubKeyHex });
@@ -3134,7 +3133,7 @@ class MeshCoreApp {
             // Fold it into the chart bucket cache so the charts show it without a
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
-            if (!opts.replaying && !opts.importing && this.store.available) {
+            if (!opts.replaying && !opts.importing && this._storeReady) {
                 this._upsertChartCell(now, snr, rssi, repeater);
             }
         }
@@ -3143,7 +3142,7 @@ class MeshCoreApp {
             // Fold it into the RAM map-cell cache so the wide view shows it
             // immediately, no disk rescan. Replay/import skip this — they end
             // with a full disk rebuild of the layers anyway.
-            if (!opts.replaying && !opts.importing && this.store.available) {
+            if (!opts.replaying && !opts.importing && this._storeReady) {
                 this._upsertMapCell({ lat: loc.lat, lon: loc.lon, snr, rssi, time: now, rawId: repeater });
             }
         }
@@ -3165,7 +3164,7 @@ class MeshCoreApp {
 
         // Keep the table pager's page count current without a disk count() —
         // replay/import end with an authoritative _loadTablePage instead.
-        if (!opts.replaying && this.store.available) {
+        if (!opts.replaying && this._storeReady) {
             if (isNewHash) this._tableHashCount++;
             // Fold the packet into the narrow index too — note an OLD hash can
             // newly join it when the narrowed repeater hears it for the first
@@ -3313,7 +3312,7 @@ class MeshCoreApp {
         const filter = this._msgFilter.toLowerCase().trim();
         // Rows = the current disk page snapshot (see _loadTablePage) plus, on
         // page 0, a live tail of packets newer than the cache so new rows show
-        // instantly. When the page is empty (store not open / unavailable) the
+        // instantly. Pre-ready (store still opening) the page is empty and the
         // cutoff-filtered tail alone is the full live RAM window — one path.
         const cutoff = this._displayCutoffNow();
         const narrowFn = this._tableNarrowFn();
@@ -3333,8 +3332,8 @@ class MeshCoreApp {
         // Page 0 is maintained in RAM during capture (the disk snapshot is never
         // periodically reloaded), so the live tail can outgrow the page — cap the
         // rendered rows at the page size; older rows are reachable via the pager.
-        // Without a store there is no pager, so the live table shows everything.
-        if (this._tablePage === 0 && this.store.available && allRows.length > this._tablePageSize) {
+        // Pre-ready (store still opening) there is no pager yet, so don't cap.
+        if (this._tablePage === 0 && this._storeReady && allRows.length > this._tablePageSize) {
             allRows = allRows.slice(0, this._tablePageSize);
         }
 
@@ -4470,10 +4469,10 @@ class MeshCoreApp {
     // retention bound; otherwise the larger of the display window and the render
     // budget, so Display changes within the budget need no disk round-trip.
     _ramWindowMs() {
-        // Without durable storage there is no disk to fall back to, so we must
-        // keep everything that should be visible in RAM (the pre-storage
-        // behaviour: bounded by retention, else the display window, else
-        // unbounded). With storage, RAM is bounded by the render budget.
+        // Until the store finishes opening there is no disk to fall back to,
+        // so keep everything that should be visible in RAM (bounded by
+        // retention, else the display window, else unbounded). Once ready,
+        // RAM is bounded by the render budget.
         if (!this._storeReady) {
             if (isFinite(this.HASH_LIFETIME)) return this.HASH_LIFETIME;
             if (isFinite(this.DISPLAY_LIFETIME)) return this.DISPLAY_LIFETIME;
@@ -4590,15 +4589,19 @@ class MeshCoreApp {
     async _initStore() {
         const ok = await this.store.open(await this._chooseSession());
         if (!ok) {
-            // IndexedDB couldn't be opened (rare: <1% of browsers, e.g. some
-            // private-mode configs). No special render path is needed — with an
-            // empty disk cache every view already renders from the RAM tail. We
-            // only stop buffering writes (nothing would ever drain them) so the
-            // buffer can't grow without bound, and skip the disk-backed features.
+            // IndexedDB is a hard requirement (available everywhere, including
+            // private modes) — a failed open means a broken browser profile or
+            // disabled site storage. Say so loudly rather than degrade silently;
+            // _storeReady stays false (the app keeps its pre-storage startup
+            // behaviour) and _storeDead stops the write buffers from growing
+            // unbounded (nothing would ever drain them).
             this._storeDead = true;
             this._obsWriteBuf = [];
             this._sentWriteBuf = [];
             this._hashWriteBuf = [];
+            alert('Storage error: the browser refused to open IndexedDB, so captured data cannot be saved or paged.\n\n'
+                + (this.store.lastError?.message ?? 'Unknown cause')
+                + '\n\nCheck that site data/storage is not blocked for this site.');
             return;
         }
         this._storeReady = true;
@@ -4634,7 +4637,6 @@ class MeshCoreApp {
     // observations through the normal ingest path, so columns / collision state
     // reconstruct identically. Used on startup and after a renderer-crash reload.
     async _replayWindow() {
-        if (!this.store.available) return;
         const w = this._ramWindowMs();
         const from = isFinite(w) ? Date.now() - w : -Infinity;
         const obsList = [];
@@ -4664,7 +4666,7 @@ class MeshCoreApp {
     // Write-through: buffer an observation (and, for a new hash, its
     // path-invariant payload) and schedule a debounced flush to disk.
     _ingestToStore(o, isNewHash) {
-        if (!this.store || this._storeDead) return;
+        if (this._storeDead) return;
         this._obsWriteBuf.push({
             time: o.now, hash: o.hash, rawId: o.repeater, rawHex: o.rawHex ?? null,
             snr: o.snr ?? null, rssi: o.rssi ?? null,
@@ -4683,9 +4685,9 @@ class MeshCoreApp {
         if (this._writeFlushTimer || this._storeDead) return;
         this._writeFlushTimer = setTimeout(() => {
             this._writeFlushTimer = null;
-            if (!this.store.available) {
-                // DB not open yet: keep buffering and retry. If it turned out to
-                // be unavailable, _initStore sets _storeDead and clears buffers.
+            if (!this._storeReady) {
+                // DB not open yet (startup): keep buffering and retry. If the
+                // open failed, _initStore sets _storeDead and clears buffers.
                 if (!this._storeDead && (this._obsWriteBuf.length || this._sentWriteBuf.length || this._hashWriteBuf.length)) this._scheduleWriteFlush();
                 return;
             }
@@ -4703,7 +4705,7 @@ class MeshCoreApp {
     _onStorageQuota() {
         // Disk full: keep the newest history by trimming the oldest on disk down
         // to the render budget. The session keeps running on its RAM window.
-        if (this._quotaPruning || !this.store.available) return;
+        if (this._quotaPruning || !this._storeReady) return;
         this._quotaPruning = true;
         this.store.pruneOlderThan(Date.now() - this.RENDER_BUDGET_MS)
             .then(n => this._afterDiskPrune(n))
@@ -4726,11 +4728,11 @@ class MeshCoreApp {
     }
 
     // (Re)build the disk render caches (chart overlay, map grid, paginated table)
-    // for the current Display window. Called on Display-window change. If the
-    // store isn't open the caches stay empty and the views render from the RAM
-    // tail alone (same code path, no separate branch).
+    // for the current Display window. Called on Display-window change. Pre-ready
+    // the caches stay empty and the views render from the RAM tail alone (same
+    // code path, no separate branch).
     async _refreshWideView() {
-        if (!this.store.available) return;
+        if (!this._storeReady) return;
         this._lastMapView = null;       // new window → start from full extent
         this._wideMapBase = null;       // window changed → recompute the base layer
         this._wideMapDetail = null;
@@ -4762,7 +4764,7 @@ class MeshCoreApp {
     // Zooming OUT needs no disk at all — the base stays maintained by upserts.
 
     async _rebuildChartBase() {
-        if (!this.store.available) return;
+        if (!this._storeReady) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         try {
             const { buckets, width, lo } = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
@@ -4786,7 +4788,7 @@ class MeshCoreApp {
     // edge-crossing connecting lines (the clip trims the overshoot).
     async _rebuildChartZoomLayer() {
         const z = this._chartZoom;
-        if (!z || !this.store.available) return;
+        if (!z || !this._storeReady) return;
         const zspan = z.tMax - z.tMin;
         try {
             const { buckets, width, lo } = await this.store.bucketObs(z.tMin - zspan, z.tMax + zspan, this.DOWNSAMPLE_BUCKETS);
@@ -4886,7 +4888,7 @@ class MeshCoreApp {
     // Flush buffered writes to disk immediately (so a following query sees the
     // newest packets). Used before export and before each live wide-view refresh.
     async _flushWrites() {
-        if (!this._storeReady || !this.store.available) return;
+        if (!this._storeReady) return;
         if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
         const dirty = this._hashWriteBuf.length || this._obsWriteBuf.length || this._sentWriteBuf.length;
         if (this._hashWriteBuf.length) { const h = this._hashWriteBuf; this._hashWriteBuf = []; await this.store.putHashes(h); }
@@ -4989,7 +4991,7 @@ class MeshCoreApp {
     }
 
     async _refreshWideMap(bbox = null, mpp = null) {
-        if (!this.store.available) return;
+        if (!this._storeReady) return;
         const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
         const TARGET_DOTS = this.MAP_TARGET_DOTS;
         // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
@@ -5094,13 +5096,13 @@ class MeshCoreApp {
         const key = this._tableNarrowKey();
         if (key === this._tableNarrowKeyApplied) return;
         this._tableNarrowKeyApplied = key;
-        if (this._storeReady && this.store.available) this._loadTablePage(0, true);
-        // No store ⇒ no pager; but the live tail still skips narrowed-out rows,
-        // so widening the narrowing must re-render to bring them back into the DOM.
+        if (this._storeReady) this._loadTablePage(0, true);
+        // Pre-ready there is no pager yet, but the live tail still skips
+        // narrowed-out rows — re-render so widening brings them back into the DOM.
         else this._renderMsgTable();
 
     async _loadTablePage(page, reset = false) {
-        if (!this.store.available) return;
+        if (!this._storeReady) return;
         await this._flushWrites();   // the page must include still-buffered packets
         const boundary = Date.now(); // snapshot covers disk up to here (tail base)
         if (reset) {
@@ -5833,7 +5835,7 @@ class MeshCoreApp {
     // --- Stats & status ---
 
     _updateStats() {
-        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0 && !(this._storeReady && this.store.available);
+        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0 && !this._storeReady;
         const displayCutoff = this._displayCutoffNow();
         const visibleHashes = displayCutoff
             ? Array.from(this.hashData.values()).filter(d => d.lastSeen >= displayCutoff).length
@@ -5893,9 +5895,8 @@ class MeshCoreApp {
 
     // Visible points come from the incrementally maintained bucket cache
     // (_wideChartPoints, see _rebuildChartArrays) — live packets are already
-    // folded in, so there is no separate tail. Without a store (IndexedDB
-    // unavailable) the cache is empty and the cutoff-filtered live RAM points
-    // serve directly — same path, no fallback branch.
+    // folded in, so there is no separate tail. Pre-ready the cache is empty and
+    // the cutoff-filtered live RAM points serve directly — same path, no branch.
     _visibleChartPoints() {
         let pts = this._wideChartPoints;
         if (!pts.length && this.chartPoints.length) {
@@ -5943,7 +5944,7 @@ class MeshCoreApp {
     }
 
     async _exportCsv() {
-        const useDisk = this._storeReady && this.store.available;
+        const useDisk = this._storeReady;
         if (this.hashData.size === 0 && !useDisk) return;
         this._unsavedRxCount = 0;
 
@@ -6224,7 +6225,7 @@ class MeshCoreApp {
         // raw repeater id and the timestamp — the same identity a row exports as).
         const existingKeys = new Set();
         const existingSent = new Set();
-        if (this._storeReady && this.store.available) {
+        if (this._storeReady) {
             await this._flushWrites();   // dedupe must also see still-buffered packets
             for (const h of new Set(rows.map(r => r.hash))) {
                 for (const o of await this.store.obsForHash(h)) existingKeys.add(h + '|' + o.rawId + '|' + o.time);
@@ -6286,7 +6287,7 @@ class MeshCoreApp {
             const snr = r.uplinkSnr ?? r.snr;
             const lat = r.lat, lon = r.lon;
             this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater });
-            if (this.store) this._sentWriteBuf.push({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
+            if (!this._storeDead) this._sentWriteBuf.push({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
         }
         if (sentSnrRows.length) {
             this._sentSnrHistory.sort((a, b) => a.time - b.time);
@@ -6295,7 +6296,7 @@ class MeshCoreApp {
 
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.
-        if (this._storeReady && this.store.available) {
+        if (this._storeReady) {
             await this._flushWrites();
             await this._refreshWideView();
         }

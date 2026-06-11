@@ -20,9 +20,11 @@
 //    history at once.
 //
 // All methods are async and resolve to plain data; callers must await open()
-// (or check `.available`) before use. Every method is a no-op / empty result
-// when the DB failed to open, so the app degrades to in-RAM-only behaviour
-// rather than crashing if IndexedDB is unavailable (e.g. private mode).
+// before use. IndexedDB is a hard requirement (available everywhere, private
+// modes included) — a failed open() is surfaced by the host as an error, not
+// silently worked around. The `if (!this.db)` guards in each method are only
+// cheap crash protection for the async-open window and for the rare case of
+// the browser closing the connection mid-session (onclose/onversionchange).
 
 const PS_DB_NAME = 'meshcore-capture';
 const PS_DB_VERSION = 3;
@@ -61,7 +63,8 @@ export class PacketStore {
     }
 
     /** Open (and if needed create) the database. Idempotent. Never rejects —
-     *  resolves to true on success, false if IndexedDB is unavailable.
+     *  resolves to true on success, false on failure (which the host treats
+     *  as a fatal storage error and reports to the user).
      *  `dbName` lets the host isolate data per browser tab (see app.js). */
     open(dbName = PS_DB_NAME) {
         if (this._ready) return this._ready;
@@ -73,7 +76,7 @@ export class PacketStore {
                 req = indexedDB.open(dbName, PS_DB_VERSION);
             } catch (e) {
                 this.lastError = e;
-                console.warn('PacketStore: IndexedDB unavailable, falling back to RAM-only:', e);
+                console.warn('PacketStore: IndexedDB unavailable:', e);
                 resolve(false);
                 return;
             }
@@ -131,7 +134,7 @@ export class PacketStore {
             };
             req.onerror = () => {
                 this.lastError = req.error;
-                console.warn('PacketStore: open failed, falling back to RAM-only:', req.error);
+                console.warn('PacketStore: open failed:', req.error);
                 resolve(false);
             };
         });
