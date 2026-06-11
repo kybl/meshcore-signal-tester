@@ -173,13 +173,15 @@ class MeshCoreApp {
         this._tablePage       = 0;
         this._tablePageSize   = 100;
         this._tablePageCount  = 1;
-        // Repeater-filtered pager: when a repeater filter is active the table
-        // pages over only the hashes that repeater appears in (otherwise pages
-        // full of hidden rows would render empty). Built by one obs scan in
-        // _buildTableFilterIndex, kept live at ingest, dropped on filter change.
-        this._tableFilterHashes = null;          // newest-first matching hashes (null = filter off / stale)
-        this._tableFilterSet    = null;          // same content as a Set, for O(1) ingest checks
-        this._tableFilterKey    = '';            // _repFilterTerms the index was built for
+        // Narrowed pager: when the table is narrowed to one repeater — by a
+        // repeater filter, or just a selection (which hides non-matching rows) —
+        // it pages over only the hashes that repeater appears in, otherwise pages
+        // full of hidden rows would render empty. Built by one obs scan in
+        // _buildTableNarrowIndex, kept live at ingest, rebuilt on narrow change.
+        this._tableNarrowHashes = null;          // newest-first matching hashes (null = not narrowed / stale)
+        this._tableNarrowSet    = null;          // same content as a Set, for O(1) ingest checks
+        this._tableNarrowKeyApplied = '';        // narrow key the current page was loaded for
+        this._tableNarrowIndexKey   = '';        // narrow key the index hashes were built for
 
         this.initUI();
         this.startCleanupTimer();
@@ -3165,13 +3167,17 @@ class MeshCoreApp {
         // replay/import end with an authoritative _loadTablePage instead.
         if (!opts.replaying && this.store.available) {
             if (isNewHash) this._tableHashCount++;
-            // Fold the packet into the filtered index too — note an OLD hash can
-            // newly join it when the filtered repeater hears it for the first time.
-            if (this._tableFilterHashes && matchesRepFilter && !this._tableFilterSet.has(hash)) {
-                this._tableFilterHashes.unshift(hash);
-                this._tableFilterSet.add(hash);
+            // Fold the packet into the narrow index too — note an OLD hash can
+            // newly join it when the narrowed repeater hears it for the first
+            // time. Guard on the index being current for the active narrowing.
+            const narrowFn = this._tableNarrowFn();
+            if (this._tableNarrowHashes && narrowFn
+                && this._tableNarrowIndexKey === this._tableNarrowKey()
+                && narrowFn(canonicalKey) && !this._tableNarrowSet.has(hash)) {
+                this._tableNarrowHashes.unshift(hash);
+                this._tableNarrowSet.add(hash);
             }
-            const total = this._tableFilterHashes ? this._tableFilterHashes.length : this._tableHashCount;
+            const total = this._tableNarrowHashes ? this._tableNarrowHashes.length : this._tableHashCount;
             this._tablePageCount = Math.max(1, Math.ceil(total / this._tablePageSize));
         }
 
@@ -3310,14 +3316,14 @@ class MeshCoreApp {
         // instantly. When the page is empty (store not open / unavailable) the
         // cutoff-filtered tail alone is the full live RAM window — one path.
         const cutoff = this._displayCutoffNow();
+        const narrowFn = this._tableNarrowFn();
         const m = new Map(this._tablePageData);
         if (this._tablePage === 0) {
             for (const [h, d] of this.hashData) {
                 if (d.lastSeen <= this._renderCacheAt || (cutoff && d.lastSeen < cutoff)) continue;
-                // With a repeater filter the snapshot holds only matching hashes —
-                // keep the tail consistent so hidden rows don't eat the page cap.
-                if (this._repFilterTerms.length
-                    && ![...d.repeaters.keys()].some(c => this._colMatchesRepFilter(c))) continue;
+                // When narrowed the snapshot holds only matching hashes — keep the
+                // tail consistent so hidden rows don't eat the page cap.
+                if (narrowFn && ![...d.repeaters.keys()].some(narrowFn)) continue;
                 m.set(h, d);
             }
         }
@@ -3367,9 +3373,11 @@ class MeshCoreApp {
         let rows = filter
             ? allRows.filter(([, data]) => this._rowMatchesFilter(data, filter))
             : allRows;
-        // When repeater filter is active, hide rows that have no data from visible columns
-        if (this._repFilterTerms.length) {
-            rows = rows.filter(([, data]) => visibleCols.some(c => data.repeaters.has(c)));
+        // When narrowed (filter or selection), drop rows with no data from a
+        // matching repeater — matches the paged hash index, so a full page of
+        // rows survives instead of mostly-hidden ones.
+        if (narrowFn) {
+            rows = rows.filter(([, data]) => [...data.repeaters.keys()].some(narrowFn));
         }
 
         // Rebuild header when column set changes
@@ -5063,28 +5071,55 @@ class MeshCoreApp {
     // Build one page of the table from disk: the newest `_tablePageSize` hashes
     // (by firstSeen) and all their observations, assembled into hashData-shaped
     // entries so _renderMsgTable can render them unchanged.
+    // The column predicate that narrows which packets the table shows, or null
+    // when it shows everything. A repeater SELECTION (single column) takes
+    // precedence over a filter, since selection always hides rows lacking that
+    // exact repeater — even within an active filter. Drives both the paged hash
+    // index and the page-0 live-tail skip so narrowed pages are never padded
+    // with hidden rows.
+    _tableNarrowFn() {
+        if (this._selectedCol) { const s = this._selectedCol; return c => c === s; }
+        if (this._repFilterTerms.length) return c => this._colMatchesRepFilter(c);
+        return null;
+    }
+    _tableNarrowKey() {
+        if (this._selectedCol) return 's:' + this._selectedCol;
+        if (this._repFilterTerms.length) return 'f:' + this._repFilterTerms.join('\x1f');
+        return '';
+    }
+
+    // Repaginate the table from page 0 when the narrowing (filter or selection)
+    // changed. Called from both the filter and the selection paths.
+    _repaginateIfNarrowChanged() {
+        const key = this._tableNarrowKey();
+        if (key === this._tableNarrowKeyApplied) return;
+        this._tableNarrowKeyApplied = key;
+        if (this._storeReady && this.store.available) this._loadTablePage(0, true);
+    }
+
     async _loadTablePage(page, reset = false) {
         if (!this.store.available) return;
         await this._flushWrites();   // the page must include still-buffered packets
         const boundary = Date.now(); // snapshot covers disk up to here (tail base)
         if (reset) {
             this._tablePage = 0;
-            // The underlying data may have changed (replay/import/prune/filter
-            // change) — any filtered index is stale.
-            this._tableFilterHashes = this._tableFilterSet = null;
+            // The underlying data may have changed (replay/import/prune/narrow
+            // change) — any narrow index is stale.
+            this._tableNarrowHashes = this._tableNarrowSet = null;
         }
         const size = this._tablePageSize;
         // Authoritative count from disk; between loads it is maintained in RAM
         // (incremented per new hash at ingest) so the pager needs no disk reads.
         this._tableHashCount = await this.store.countHashes();
-        const filtered = this._repFilterTerms.length > 0;
-        if (filtered && !this._tableFilterHashes) await this._buildTableFilterIndex();
-        if (!filtered) this._tableFilterHashes = this._tableFilterSet = null;
-        const total = filtered ? this._tableFilterHashes.length : this._tableHashCount;
+        this._tableNarrowKeyApplied = this._tableNarrowKey();
+        const narrowed = this._tableNarrowFn() != null;
+        if (narrowed && !this._tableNarrowHashes) await this._buildTableNarrowIndex();
+        if (!narrowed) this._tableNarrowHashes = this._tableNarrowSet = null;
+        const total = narrowed ? this._tableNarrowHashes.length : this._tableHashCount;
         this._tablePageCount = Math.max(1, Math.ceil(total / size));
         this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
-        const hashes = filtered
-            ? await this.store.getHashes(this._tableFilterHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
+        const hashes = narrowed
+            ? await this.store.getHashes(this._tableNarrowHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
             : await this.store.pageHashes(this._tablePage * size, size);
         const map = new Map();
         for (const h of hashes) {
@@ -5111,27 +5146,28 @@ class MeshCoreApp {
         this._refreshTablePager();
     }
 
-    // Build the repeater-filtered hash index: every hash with at least one
-    // observation from a filter-matching repeater, newest-first by the time
-    // that repeater first heard it. One chunked scan over the obs store; the
-    // rawId → matches projection is memoised since rawIds repeat heavily.
-    async _buildTableFilterIndex() {
+    // Build the narrowed hash index: every hash with at least one observation
+    // from a matching repeater, newest-first by the time that repeater first
+    // heard it. One chunked scan over the obs store; the rawId → matches
+    // projection is memoised since rawIds repeat heavily.
+    async _buildTableNarrowIndex() {
+        const narrowFn = this._tableNarrowFn();
         const matchByRawId = new Map();
         const firstHeard = new Map();   // hash -> earliest matching obs time
         await this.store.eachObs(-Infinity, Infinity, o => {
             let ok = matchByRawId.get(o.rawId);
             if (ok === undefined) {
-                ok = this._colMatchesRepFilter(this._resolveColReadonly(o.rawId));
+                ok = narrowFn(this._resolveColReadonly(o.rawId));
                 matchByRawId.set(o.rawId, ok);
             }
             // eachObs iterates ascending time, so the first sighting is the earliest.
             if (ok && !firstHeard.has(o.hash)) firstHeard.set(o.hash, o.time);
         });
-        this._tableFilterHashes = [...firstHeard.entries()]
+        this._tableNarrowHashes = [...firstHeard.entries()]
             .sort((a, b) => b[1] - a[1])
             .map(([h]) => h);
-        this._tableFilterSet = new Set(this._tableFilterHashes);
-        this._tableFilterKey = this._repFilterTerms.join('\x1f');
+        this._tableNarrowSet = new Set(this._tableNarrowHashes);
+        this._tableNarrowIndexKey = this._tableNarrowKey();
     }
 
     // Insert / update / remove the prev-next pager beneath the packet table.
@@ -5154,8 +5190,10 @@ class MeshCoreApp {
             pager.querySelector('#msgPagePrev').addEventListener('click', () => this._loadTablePage(this._tablePage - 1));
             pager.querySelector('#msgPageNext').addEventListener('click', () => this._loadTablePage(this._tablePage + 1));
         }
+        const narrowTag = this._tableNarrowHashes
+            ? (this._selectedCol ? ' (selected)' : ' (filtered)') : '';
         pager.querySelector('#msgPageInfo').textContent =
-            `Page ${this._tablePage + 1} / ${this._tablePageCount}${this._tableFilterHashes ? ' (filtered)' : ''}`;
+            `Page ${this._tablePage + 1} / ${this._tablePageCount}${narrowTag}`;
         pager.querySelector('#msgPagePrev').disabled = this._tablePage <= 0;
         pager.querySelector('#msgPageNext').disabled = this._tablePage >= this._tablePageCount - 1;
     }
@@ -5311,6 +5349,8 @@ class MeshCoreApp {
         this._tablePageData = new Map();
         this._tablePage = 0;
         this._tablePageCount = 1;
+        this._tableNarrowHashes = this._tableNarrowSet = null;
+        this._tableNarrowKeyApplied = this._tableNarrowIndexKey = '';
         this._renderCacheAt = 0;
         this._wideMapBase = null;
         this._wideMapDetail = null;
@@ -5356,8 +5396,8 @@ class MeshCoreApp {
     // the new last page so the snapshot matches the pager.
     _afterDiskPrune(deletedHashes) {
         if (!deletedHashes) return;
-        if (this._tableFilterHashes) {
-            // No way to tell how many of the deleted hashes were in the filtered
+        if (this._tableNarrowHashes) {
+            // No way to tell how many of the deleted hashes were in the narrow
             // index — rebuild it (bounded: finite retention keeps the store small).
             this._loadTablePage(0, true);
             return;
@@ -5488,6 +5528,11 @@ class MeshCoreApp {
         this._updateMapPins();
         this._scheduleChartRender();
         this._renderRepTable();
+        // Selection narrows the packet table to that repeater — repaginate over
+        // its hashes so we don't page through mostly-hidden rows. The sync
+        // _applyMsgTableSelection below dims/hides the current page for instant
+        // feedback; the async reload then re-renders a full narrowed page.
+        this._repaginateIfNarrowChanged();
         this._applyMsgTableSelection();
         this._updateCornerNotices();
     }
@@ -5875,15 +5920,11 @@ class MeshCoreApp {
     }
 
     _applyRepFilter() {
-        // Repaginate the packet table when the filter actually changed (this
-        // also runs for selection-only updates): pages are then drawn from the
-        // filtered hash index, so no pages of entirely hidden rows. Async — the
-        // immediate render below filters the current page rows in the meantime.
-        const key = this._repFilterTerms.join('\x1f');
-        if (key !== this._tableFilterKey) {
-            this._tableFilterKey = key;
-            if (this._storeReady && this.store.available) this._loadTablePage(0, true);
-        }
+        // Repaginate the packet table when the filter changed: pages are then
+        // drawn from the narrowed hash index, so no pages of entirely hidden
+        // rows. Async — the immediate render below narrows the current page's
+        // rows in the meantime.
+        this._repaginateIfNarrowChanged();
         this._renderRepTable();
         this._renderMsgTable();
         // Filtering changes how many repeater columns are shown, so the table
