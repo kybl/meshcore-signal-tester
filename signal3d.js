@@ -1037,7 +1037,10 @@ export class Signal3DMap {
 
     // Merge points within _clusterRadius metres, per repeater column, keeping the
     // most recent sample (so the map shows current conditions, matching the disk
-    // grid's representative). A no-op when clustering is off.
+    // grid's representative). A no-op when clustering is off. NOTE: incoming
+    // points normally arrive pre-gridded from the host's cell cache (which uses
+    // the same user radius as its cell-size floor) — this merge only serves the
+    // outgoing (sent) stars and the no-IndexedDB live fallback.
     _clusterByCol(pts) {
         if (!(this._clusterRadius > 0) || pts.length < 2) return pts;
         const latDeg = this._clusterRadius / 111320;
