@@ -853,7 +853,7 @@ html:not(.light-theme) .btn-connect:disabled {
 }
 .msg-table-pager .pager-btn {
     background: var(--bg-box);
-    color: var(--text);
+    color: var(--text-primary);
     border: 1px solid var(--border, #ccc);
     border-radius: 6px;
     padding: 4px 12px;
@@ -919,6 +919,9 @@ html:not(.light-theme) .btn-connect:disabled {
     font-size: 10px;
     text-align: right;
     padding: 1px 4px;
+    /* clickable — RSSI+SNR highlight together as a pair */
+    cursor: pointer;
+    user-select: none;
 }
 
 .empty-state {
@@ -982,13 +985,6 @@ html:not(.light-theme) .btn-connect:disabled {
 .forget-btn:hover {
     background: #c33;
     color: white;
-}
-
-/* Clickable signal cells — RSSI+SNR highlight together as a pair */
-.sig-rssi,
-.sig-snr {
-    cursor: pointer;
-    user-select: none;
 }
 
 .sig-rssi.sig-pair-hover,
@@ -2353,16 +2349,12 @@ td.col-dim { opacity: 0.25; }
     text-align: left;
 }
 .cn-map-btn:hover { background: rgba(40,70,120,0.4); border-color: rgba(80,140,200,0.6); }
-.cn-map-btn-active { background: rgba(40,100,40,0.3); border-color: rgba(80,180,80,0.45); color: #8dd88d; }
-.cn-map-btn-active:hover { background: rgba(40,100,40,0.45); }
 html.light-theme .cn-map-btn {
     border: 1px solid #b8d8e8;
     background: #e8f4fb;
     color: #2a6080;
 }
 html.light-theme .cn-map-btn:hover { background: #d0eaf8; border-color: #80b8d8; }
-html.light-theme .cn-map-btn-active { background: #c8e8c8; border-color: #80b880; color: #206020; }
-html.light-theme .cn-map-btn-active:hover { background: #b8ddb8; }
 
 html.light-theme .smi-colname,
 html.light-theme .corner-notice-name,

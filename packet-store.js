@@ -127,7 +127,7 @@ export class PacketStore {
             req.onsuccess = () => {
                 this.db = req.result;
                 // If the connection is later closed/blocked, drop our handle so
-                // callers fall back to RAM-only instead of throwing.
+                // the per-method guards no-op instead of throwing.
                 this.db.onclose = () => { this.db = null; };
                 this.db.onversionchange = () => { try { this.db.close(); } catch (_) {} this.db = null; };
                 resolve(true);
@@ -140,8 +140,6 @@ export class PacketStore {
         });
         return this._ready;
     }
-
-    get available() { return !!this.db; }
 
     _txComplete(tx) {
         return new Promise((resolve, reject) => {
@@ -386,20 +384,6 @@ export class PacketStore {
                     r.time < tLo || r.time > tHi) return true;
                 return cb(r) !== false;
             });
-    }
-
-    async countObs(fromTime, toTime) {
-        if (!this.db) return 0;
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('obs', 'readonly');
-                const idx = tx.objectStore('obs').index('time');
-                const range = this._timeRange(fromTime, toTime);
-                const r = range ? idx.count(range) : idx.count();
-                r.onsuccess = () => resolve(r.result);
-                r.onerror = () => reject(r.error);
-            });
-        } catch (_) { return 0; }
     }
 
     /**

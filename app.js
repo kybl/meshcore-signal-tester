@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=113';
-import { PacketStore } from './packet-store.js?v=11';
+import { Signal3DMap } from './signal3d.js?v=114';
+import { PacketStore } from './packet-store.js?v=12';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -83,8 +83,6 @@ class MeshCoreApp {
         this._neighborPollTimer = null;
         this._logPollTimer = null;
         this._pendingRaw = [];             // decoded RAW dumps awaiting their summary line (logging build)
-        this._deviceLocation = null;       // connected device's own position { lat, lon }, or null
-        this._deviceLocPolicy = null;      // companion adv_loc_policy: 0 none, 1 share (live GPS), 2 prefs
         this._showDeviceMarker = false;    // is the 3D-map device marker enabled
         this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
@@ -1016,10 +1014,6 @@ class MeshCoreApp {
                 'This could be necessary in a mobile browser to keep collection running — when the screen turns off, the browser suspends JavaScript and stops capturing. In the Android app, collection runs in a background service so the screen can be off without losing data — unless the system\'s battery optimization is active and kills the service. Setting is remembered across sessions.',
             'repeater':
                 '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Click a row to select that repeater — dims others in all views (charts, Received packets, 3D map); click again to deselect. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
-            'rssi':
-                'Received Signal Strength in dBm. Less negative = stronger. −70 dBm: excellent · −120 dBm: very weak.',
-            'snr':
-                'Signal-to-Noise Ratio in dB. Positive = signal is above the noise. LoRa can decode even at negative SNR (down to ~−20 dB).',
             'chart-snr':
                 'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, SNR/RSSI and time in a small box; click the box to dismiss it. Circles (●) = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover. Zoom the time axis with the mouse wheel, by dragging across a region, or by pinching with two fingers; once zoomed, pan with a one-finger drag, a horizontal/Shift+wheel, or scroll on. Double-click or Reset zoom to return to the full view.',
             'chart-interact':
@@ -2508,9 +2502,6 @@ class MeshCoreApp {
         if (payload.length < 44) return;
         const lat = ((payload[36] | (payload[37] << 8) | (payload[38] << 16) | (payload[39] << 24)) | 0) / 1e6;
         const lon = ((payload[40] | (payload[41] << 8) | (payload[42] << 16) | (payload[43] << 24)) | 0) / 1e6;
-        // adv_loc_policy: 0 = none (not shared), 1 = share (live GPS from the
-        // device's sensor), 2 = prefs (static stored lat/lon).
-        this._deviceLocPolicy = payload.length >= 46 ? payload[45] : null;
         this._setDeviceLocation(lat, lon);
         this._updateDeviceLocationRefresh();
     }
@@ -2561,7 +2552,6 @@ class MeshCoreApp {
     // zero-zero convention matches how contacts and adverts mark "no position".
     _setDeviceLocation(lat, lon) {
         const has = lat != null && lon != null && !(lat === 0 && lon === 0);
-        this._deviceLocation = has ? { lat, lon } : null;
         this.signalMap?.setDeviceLocation(has ? lat : null, has ? lon : null);
     }
 
@@ -4567,7 +4557,7 @@ class MeshCoreApp {
             } catch (_) {}
         };
         beat();
-        this._dbHeartbeat = setInterval(beat, 15000);
+        setInterval(beat, 15000);   // runs for the app's lifetime
     }
 
     // Garbage-collect databases of closed sessions that hold no data (stale and
@@ -5799,14 +5789,6 @@ class MeshCoreApp {
 
     // --- BLE Device Battery ---
 
-    _updateBleBattery(pct) {
-        if (!this.batteryEl || !this.device) return;
-        if (pct >= 100) return; // BLE Battery Service often reports 100% incorrectly
-        this.batteryEl.innerHTML = `<span class="hstat-label">Device </span><span class="batt-icon">🔋</span>${pct}%`;
-        this.batteryEl.classList.remove('hidden', 'battery-low');
-        if (pct <= 20) this.batteryEl.classList.add('battery-low');
-    }
-
     _updateBleBatteryVoltage(milliVolts) {
         if (!this.batteryEl || !this.device) return;
         // LiPo: 3000 mV = 0%, 4200 mV = 100%
@@ -6469,7 +6451,6 @@ class MeshCoreApp {
         clearTimeout(this._posQueryTimer);
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
-        this._deviceLocPolicy = null;
         this._setDeviceLocation(null, null);
         // Clear any in-flight contact fetch so a fresh connection starts clean
         // (a stuck _contactsReceiving from an interrupted stream would otherwise

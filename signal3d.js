@@ -146,9 +146,9 @@ export class Signal3DMap {
         this._mapSource    = (opts.initialSource && TILE_SOURCES[opts.initialSource])
             ? opts.initialSource : DEFAULT_SOURCE;
         this._sphereSize   = (opts.initialSphereSize > 0) ? opts.initialSphereSize : 1.0;
-        this._showLines   = opts.showLines !== false;
-        this._showMarker  = opts.showMarker !== false;
-        this._showDevice  = !!opts.showDevice;   // connected-device marker, default off
+        this._showLines   = true;    // set from persisted prefs via setShowLines() at init
+        this._showMarker  = true;    // … setShowMarker()
+        this._showDevice  = false;   // connected-device marker — setShowDeviceMarker()
         this._deviceLoc   = null;                // { lat, lon } of the device, or null
         this._deviceMarker = null;
         this._selectedCol = null;
@@ -397,7 +397,7 @@ export class Signal3DMap {
             this._maybeRebuildDots();
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
-            this._rafId = requestAnimationFrame(tick);
+            requestAnimationFrame(tick);   // render loop runs for the map's lifetime
         };
         tick();
     }
