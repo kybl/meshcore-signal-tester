@@ -572,6 +572,27 @@ export class PacketStore {
         } catch (_) { return []; }
     }
 
+    /** Batched getHash (one readonly transaction), records in input order.
+     *  Used by the repeater-filtered table pager, which pages by hash list
+     *  instead of the firstSeen index. A hash with no stored record (shouldn't
+     *  happen; defensive) yields a {hash}-only stub. */
+    async getHashes(hashes) {
+        if (!this.db || !hashes.length) return [];
+        try {
+            return await new Promise((resolve, reject) => {
+                const tx = this.db.transaction('hashes', 'readonly');
+                const os = tx.objectStore('hashes');
+                const out = new Array(hashes.length);
+                let pending = hashes.length;
+                hashes.forEach((h, i) => {
+                    const r = os.get(h);
+                    r.onsuccess = () => { out[i] = r.result ?? { hash: h }; if (--pending === 0) resolve(out); };
+                    r.onerror = () => reject(r.error);
+                });
+            });
+        } catch (_) { return hashes.map(h => ({ hash: h })); }
+    }
+
     /** All observations of one hash (every path/repeater it arrived by). */
     async obsForHash(hash) {
         if (!this.db) return [];

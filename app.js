@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=113';
-import { PacketStore } from './packet-store.js?v=9';
+import { PacketStore } from './packet-store.js?v=10';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -173,6 +173,13 @@ class MeshCoreApp {
         this._tablePage       = 0;
         this._tablePageSize   = 100;
         this._tablePageCount  = 1;
+        // Repeater-filtered pager: when a repeater filter is active the table
+        // pages over only the hashes that repeater appears in (otherwise pages
+        // full of hidden rows would render empty). Built by one obs scan in
+        // _buildTableFilterIndex, kept live at ingest, dropped on filter change.
+        this._tableFilterHashes = null;          // newest-first matching hashes (null = filter off / stale)
+        this._tableFilterSet    = null;          // same content as a Set, for O(1) ingest checks
+        this._tableFilterKey    = '';            // _repFilterTerms the index was built for
 
         this.initUI();
         this.startCleanupTimer();
@@ -3152,18 +3159,26 @@ class MeshCoreApp {
         (this._flashPending ??= new Set()).add(hash + '|' + canonicalKey);
         this._scheduleLiveRender(wasAtBottom);
         this._scheduleChartRender();
+        const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
+
         // Keep the table pager's page count current without a disk count() —
         // replay/import end with an authoritative _loadTablePage instead.
-        if (isNewHash && !opts.replaying && this.store.available) {
-            this._tableHashCount++;
-            this._tablePageCount = Math.max(1, Math.ceil(this._tableHashCount / this._tablePageSize));
+        if (!opts.replaying && this.store.available) {
+            if (isNewHash) this._tableHashCount++;
+            // Fold the packet into the filtered index too — note an OLD hash can
+            // newly join it when the filtered repeater hears it for the first time.
+            if (this._tableFilterHashes && matchesRepFilter && !this._tableFilterSet.has(hash)) {
+                this._tableFilterHashes.unshift(hash);
+                this._tableFilterSet.add(hash);
+            }
+            const total = this._tableFilterHashes ? this._tableFilterHashes.length : this._tableHashCount;
+            this._tablePageCount = Math.max(1, Math.ceil(total / this._tablePageSize));
         }
 
         // Sound stays immediate (cheap, and its timing matters).
         const data = this.hashData.get(hash);
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
-        const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
         if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr);
         this.emptyState?.classList.add('hidden');
     }
@@ -3298,7 +3313,12 @@ class MeshCoreApp {
         const m = new Map(this._tablePageData);
         if (this._tablePage === 0) {
             for (const [h, d] of this.hashData) {
-                if (d.lastSeen > this._renderCacheAt && (!cutoff || d.lastSeen >= cutoff)) m.set(h, d);
+                if (d.lastSeen <= this._renderCacheAt || (cutoff && d.lastSeen < cutoff)) continue;
+                // With a repeater filter the snapshot holds only matching hashes —
+                // keep the tail consistent so hidden rows don't eat the page cap.
+                if (this._repFilterTerms.length
+                    && ![...d.repeaters.keys()].some(c => this._colMatchesRepFilter(c))) continue;
+                m.set(h, d);
             }
         }
         let allRows = [...m.entries()]
@@ -3527,8 +3547,15 @@ class MeshCoreApp {
 
         // Use per-repeater packet/rawHex when available (each repeater receives a different path)
         const repEntry = col ? data.repeaters.get(col) : null;
-        const pkt = repEntry?.packet ?? data.packet;
+        let pkt = repEntry?.packet ?? data.packet;
         const hex = repEntry?.rawHex ?? data.rawHex;
+        // Disk-paged rows carry packet:null (the decoded form isn't stored — see
+        // packet-store.js) — reconstruct it from the raw bytes on demand and
+        // cache it on the entry so re-renders of an open detail don't re-decode.
+        if (!pkt && hex) {
+            try { pkt = MeshCoreDecoder.decode(hex); } catch (_) { pkt = null; }
+            if (pkt) { if (repEntry) repEntry.packet = pkt; else data.packet = pkt; }
+        }
 
         let header = '';
         if (repEntry) {
@@ -5040,14 +5067,25 @@ class MeshCoreApp {
         if (!this.store.available) return;
         await this._flushWrites();   // the page must include still-buffered packets
         const boundary = Date.now(); // snapshot covers disk up to here (tail base)
-        if (reset) this._tablePage = 0;
+        if (reset) {
+            this._tablePage = 0;
+            // The underlying data may have changed (replay/import/prune/filter
+            // change) — any filtered index is stale.
+            this._tableFilterHashes = this._tableFilterSet = null;
+        }
         const size = this._tablePageSize;
         // Authoritative count from disk; between loads it is maintained in RAM
         // (incremented per new hash at ingest) so the pager needs no disk reads.
         this._tableHashCount = await this.store.countHashes();
-        this._tablePageCount = Math.max(1, Math.ceil(this._tableHashCount / size));
+        const filtered = this._repFilterTerms.length > 0;
+        if (filtered && !this._tableFilterHashes) await this._buildTableFilterIndex();
+        if (!filtered) this._tableFilterHashes = this._tableFilterSet = null;
+        const total = filtered ? this._tableFilterHashes.length : this._tableHashCount;
+        this._tablePageCount = Math.max(1, Math.ceil(total / size));
         this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
-        const hashes = await this.store.pageHashes(this._tablePage * size, size);
+        const hashes = filtered
+            ? await this.store.getHashes(this._tableFilterHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
+            : await this.store.pageHashes(this._tablePage * size, size);
         const map = new Map();
         for (const h of hashes) {
             const obs = await this.store.obsForHash(h.hash);
@@ -5073,6 +5111,29 @@ class MeshCoreApp {
         this._refreshTablePager();
     }
 
+    // Build the repeater-filtered hash index: every hash with at least one
+    // observation from a filter-matching repeater, newest-first by the time
+    // that repeater first heard it. One chunked scan over the obs store; the
+    // rawId → matches projection is memoised since rawIds repeat heavily.
+    async _buildTableFilterIndex() {
+        const matchByRawId = new Map();
+        const firstHeard = new Map();   // hash -> earliest matching obs time
+        await this.store.eachObs(-Infinity, Infinity, o => {
+            let ok = matchByRawId.get(o.rawId);
+            if (ok === undefined) {
+                ok = this._colMatchesRepFilter(this._resolveColReadonly(o.rawId));
+                matchByRawId.set(o.rawId, ok);
+            }
+            // eachObs iterates ascending time, so the first sighting is the earliest.
+            if (ok && !firstHeard.has(o.hash)) firstHeard.set(o.hash, o.time);
+        });
+        this._tableFilterHashes = [...firstHeard.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([h]) => h);
+        this._tableFilterSet = new Set(this._tableFilterHashes);
+        this._tableFilterKey = this._repFilterTerms.join('\x1f');
+    }
+
     // Insert / update / remove the prev-next pager beneath the packet table.
     _refreshTablePager() {
         const scroll = this.msgTableHead?.closest('.msg-table-scroll');
@@ -5093,7 +5154,8 @@ class MeshCoreApp {
             pager.querySelector('#msgPagePrev').addEventListener('click', () => this._loadTablePage(this._tablePage - 1));
             pager.querySelector('#msgPageNext').addEventListener('click', () => this._loadTablePage(this._tablePage + 1));
         }
-        pager.querySelector('#msgPageInfo').textContent = `Page ${this._tablePage + 1} / ${this._tablePageCount}`;
+        pager.querySelector('#msgPageInfo').textContent =
+            `Page ${this._tablePage + 1} / ${this._tablePageCount}${this._tableFilterHashes ? ' (filtered)' : ''}`;
         pager.querySelector('#msgPagePrev').disabled = this._tablePage <= 0;
         pager.querySelector('#msgPageNext').disabled = this._tablePage >= this._tablePageCount - 1;
     }
@@ -5294,6 +5356,12 @@ class MeshCoreApp {
     // the new last page so the snapshot matches the pager.
     _afterDiskPrune(deletedHashes) {
         if (!deletedHashes) return;
+        if (this._tableFilterHashes) {
+            // No way to tell how many of the deleted hashes were in the filtered
+            // index — rebuild it (bounded: finite retention keeps the store small).
+            this._loadTablePage(0, true);
+            return;
+        }
         this._tableHashCount = Math.max(0, this._tableHashCount - deletedHashes);
         this._tablePageCount = Math.max(1, Math.ceil(Math.max(1, this._tableHashCount) / this._tablePageSize));
         if (this._tablePage > this._tablePageCount - 1) {
@@ -5807,6 +5875,15 @@ class MeshCoreApp {
     }
 
     _applyRepFilter() {
+        // Repaginate the packet table when the filter actually changed (this
+        // also runs for selection-only updates): pages are then drawn from the
+        // filtered hash index, so no pages of entirely hidden rows. Async — the
+        // immediate render below filters the current page rows in the meantime.
+        const key = this._repFilterTerms.join('\x1f');
+        if (key !== this._tableFilterKey) {
+            this._tableFilterKey = key;
+            if (this._storeReady && this.store.available) this._loadTablePage(0, true);
+        }
         this._renderRepTable();
         this._renderMsgTable();
         // Filtering changes how many repeater columns are shown, so the table
