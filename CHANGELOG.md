@@ -59,12 +59,12 @@
   - The packet table is paginated (prev/next, newest first) over the disk history
     when viewing a wide / "All" window.
   - CSV export streams the full history from disk, not just what is in memory.
-  - While capturing, charts and the packet table refresh every few seconds so
-    newly captured packets appear without changing the Display window (the table
-    page you are reading is not flipped — only the newest page updates in
-    place). The 3D map updates immediately: each new packet is folded into the
-    map's in-memory grid cell directly, with no periodic disk rescan, and the
-    current zoom is kept.
+  - While capturing, every view updates from memory immediately — each new
+    packet is folded directly into the charts' time-bucket cache, the 3D map's
+    grid-cell cache and the newest table page. Nothing re-reads the disk on a
+    timer; disk is only read when a view changes (Display window, chart zoom-in,
+    table page navigation). The table page you are reading is never flipped, and
+    the map keeps its current zoom.
 
 ### Fixed
 

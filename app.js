@@ -167,8 +167,8 @@ class MeshCoreApp {
         this._pendingMapUpserts = null;          // packets ingested before the base layer exists
         this._mapPushTimer    = null;            // coalesces cell upserts into one geometry push
         this._dataVer         = 0;               // bumped whenever new records land on disk
-        this._wideRefreshTimer = null;
-        this._wideRefreshBusy  = false;
+        this._tableHashCount   = 0;              // distinct hashes on disk (RAM-maintained for the pager)
+        this._mapRebuildBusy   = false;          // guards the map's dot-budget escape-valve rebuild
         this._tablePageData   = new Map();       // disk-paged packet table snapshot (empty ⇒ tail alone)
         this._tablePage       = 0;
         this._tablePageSize   = 100;
@@ -3159,10 +3159,12 @@ class MeshCoreApp {
         (this._flashPending ??= new Set()).add(hash + '|' + canonicalKey);
         this._scheduleLiveRender(wasAtBottom);
         this._scheduleChartRender();
-        // The visible data is a disk snapshot + tail — mark it dirty so the disk
-        // caches refresh and this packet shows even when not capturing (e.g. a
-        // debug inject), not just on the periodic tick.
-        this._markWideDirty();
+        // Keep the table pager's page count current without a disk count() —
+        // replay/import end with an authoritative _loadTablePage instead.
+        if (isNewHash && !opts.replaying && this.store.available) {
+            this._tableHashCount++;
+            this._tablePageCount = Math.max(1, Math.ceil(this._tableHashCount / this._tablePageSize));
+        }
 
         // Sound stays immediate (cheap, and its timing matters).
         const data = this.hashData.get(hash);
@@ -3186,6 +3188,7 @@ class MeshCoreApp {
             this._sortColumns();
             this._renderRepTable();
             this._renderMsgTable();
+            this._refreshTablePager();   // page count is maintained in RAM at ingest
             this._updateStats();
             // Flash the cells that received new values since the last render.
             if (this._flashPending && this._flashPending.size) {
@@ -3305,9 +3308,16 @@ class MeshCoreApp {
                 if (d.lastSeen > this._renderCacheAt && (!cutoff || d.lastSeen >= cutoff)) m.set(h, d);
             }
         }
-        const allRows = [...m.entries()]
+        let allRows = [...m.entries()]
             .filter(([, data]) => !data._stub)
             .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
+        // Page 0 is maintained in RAM during capture (the disk snapshot is never
+        // periodically reloaded), so the live tail can outgrow the page — cap the
+        // rendered rows at the page size; older rows are reachable via the pager.
+        // Without a store there is no pager, so the live table shows everything.
+        if (this._tablePage === 0 && this.store.available && allRows.length > this._tablePageSize) {
+            allRows = allRows.slice(0, this._tablePageSize);
+        }
 
         // Only include columns that actually appear in the visible rows (respects
         // display cutoff). The disk snapshot can surface a historical column that
@@ -4587,8 +4597,9 @@ class MeshCoreApp {
         this._updateStats();
         this._updateMapPins();   // contacts restored above ⇒ show repeater markers
         this._refreshWideView();
-        // Keep a wide / "All" view live while capturing (no-op otherwise).
-        this._wideRefreshTimer = setInterval(() => this._tickWideRefresh(), 3000);
+        // No periodic wide-view tick: charts, map and table page 0 are all kept
+        // current in RAM (bucket/cell upserts + the live row tail); writes flush
+        // themselves via _scheduleWriteFlush. Disk is only read on view changes.
     }
 
     // Rebuild the in-RAM render window from disk by replaying the most recent
@@ -4855,47 +4866,6 @@ class MeshCoreApp {
         if (dirty) this._dataVer++;
     }
 
-    // Mark the wide / "All" view as needing a refresh because new data was just
-    // ingested (live capture, or an out-of-band injection like the debug tool
-    // while not capturing). When not capturing, kick a prompt refresh so the
-    // disk-snapshot views (charts/map/table) actually reflect the new packet
-    // instead of waiting for the next periodic tick.
-    _markWideDirty() {
-        this._wideDirty = true;
-        if (!this._collecting) {
-            clearTimeout(this._wideKick);
-            this._wideKick = setTimeout(() => this._tickWideRefresh(), 400);
-        }
-    }
-
-    // Keep the packet TABLE current while capturing (periodic tick, plus an
-    // out-of-band kick via _wideDirty for e.g. debug injections while not
-    // connected). The 2D charts and the 3D map are NOT refreshed here any more:
-    // live packets fold into their RAM caches directly (_upsertChartCell /
-    // _upsertMapCell), so they need no disk rescan. Only page 0 is refreshed —
-    // no page flip under the reader.
-    async _tickWideRefresh() {
-        if (this._wideRefreshBusy || !this.store.available) return;
-        if (typeof document !== 'undefined' && document.hidden) return;
-        if (!this._collecting && !this._wideDirty) return;   // nothing new to show
-        this._wideRefreshBusy = true;
-        this._wideDirty = false;
-        try {
-            await this._flushWrites();
-            // Boundary = the flush point the rebuilt page reflects. Set
-            // _renderCacheAt only AFTER the page is swapped in, so during the
-            // async rebuild the old page keeps its wider tail and no recent rows
-            // momentarily vanish.
-            const boundary = Date.now();
-            if (this._tablePage === 0) await this._loadTablePage(0);
-            this._renderCacheAt = boundary;
-        } catch (e) {
-            console.warn('Live wide-view refresh failed:', e);
-        } finally {
-            this._wideRefreshBusy = false;
-        }
-    }
-
     // The 3D map renders from an in-RAM cell cache (per-repeater spatial grid).
     // Disk is read only to BUILD a layer — never periodically:
     //
@@ -4947,9 +4917,11 @@ class MeshCoreApp {
         }
         // Walking into new territory at the 5 m floor can blow the dot budget —
         // rebuild the base once with a properly sized cell when it does.
-        if (base.cells.size > this.MAP_TARGET_DOTS * 3 && !this._wideRefreshBusy) {
+        if (base.cells.size > this.MAP_TARGET_DOTS * 3 && !this._mapRebuildBusy) {
+            this._mapRebuildBusy = true;
             this._wideMapBase = null;
-            this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null);
+            this._refreshWideMap(this._lastMapView?.bbox ?? null, this._lastMapView?.mpp ?? null)
+                .finally(() => { this._mapRebuildBusy = false; });
             return;
         }
         this._scheduleMapPush();
@@ -5072,9 +5044,14 @@ class MeshCoreApp {
     // entries so _renderMsgTable can render them unchanged.
     async _loadTablePage(page, reset = false) {
         if (!this.store.available) return;
+        await this._flushWrites();   // the page must include still-buffered packets
+        const boundary = Date.now(); // snapshot covers disk up to here (tail base)
         if (reset) this._tablePage = 0;
         const size = this._tablePageSize;
-        this._tablePageCount = Math.max(1, Math.ceil((await this.store.countHashes()) / size));
+        // Authoritative count from disk; between loads it is maintained in RAM
+        // (incremented per new hash at ingest) so the pager needs no disk reads.
+        this._tableHashCount = await this.store.countHashes();
+        this._tablePageCount = Math.max(1, Math.ceil(this._tableHashCount / size));
         this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
         const hashes = await this.store.pageHashes(this._tablePage * size, size);
         const map = new Map();
@@ -5097,6 +5074,7 @@ class MeshCoreApp {
                               rawHex: obs[0].rawHex, packet: null, _stub: false });
         }
         this._tablePageData = map;
+        this._renderCacheAt = boundary;   // rows newer than this are the live tail
         this._renderMsgTable();
         this._refreshTablePager();
     }
