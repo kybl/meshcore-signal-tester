@@ -661,6 +661,14 @@ class MeshCoreApp {
         }
 
         // Corner notice buttons
+        // These are position:fixed. The Text-size feature puts a transform on
+        // <body>, which makes <body> the containing block for fixed descendants —
+        // they'd then scroll away with the page instead of staying put. Re-parent
+        // them to <html> (never transformed) so they stay truly viewport-fixed.
+        for (const id of ['filterNotice', 'selNotice']) {
+            const el = document.getElementById(id);
+            if (el) document.documentElement.appendChild(el);
+        }
         document.getElementById('filterNoticeClear')?.addEventListener('click', () => {
             this._repFilterTerms = [];
             const inp = document.getElementById('repFilter');
@@ -5171,6 +5179,10 @@ class MeshCoreApp {
         const fSnr = v => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${Number.isInteger(v) ? v : Number(v).toFixed(1)}` : '—';
 
         const buildExtra = (col, showMore, noticePrefix) => {
+            // No single resolved repeater (e.g. a filter term matching several) ⇒
+            // there are no per-repeater stats to show, so render nothing rather
+            // than a "Show more" checkbox that reveals nothing.
+            if (!col) return '';
             const stats = col ? this._colStats(col) : null;
             const contacts = col && col !== 'direct' ? this._contactsByPrefix(col) : [];
             const contactsWithName = contacts.filter(c => c.name);
@@ -5236,7 +5248,10 @@ class MeshCoreApp {
             if (hasFilter) {
                 document.getElementById('filterNoticeRep').textContent = this._repFilterTerms.join(', ');
                 const matchingCols = this.repeaterColumns.filter(c => this._colMatchesRepFilter(c));
-                const exactCol = matchingCols.length === 1 && !matchingCols[0].includes('/') ? matchingCols[0] : null;
+                // Any single matched column counts (including a merged one) — its
+                // dot, name and "Show more" stats are meaningful; only a multi-
+                // match filter has no single repeater to detail.
+                const exactCol = matchingCols.length === 1 ? matchingCols[0] : null;
                 const dot = document.getElementById('filterNoticeDot');
                 if (dot) {
                     if (exactCol) this._applyDotStyle(dot, exactCol);
