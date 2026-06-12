@@ -1721,17 +1721,22 @@ html.light-theme .msg-filter-clear:hover {
     cursor: pointer;
     white-space: nowrap;
 }
-.btn-show-all-repeaters:hover {
-    background: rgba(255,255,255,0.28);
-    border-color: rgba(255,255,255,0.7);
+/* Hover only on devices that really hover — on touch screens :hover sticks
+   after a tap, leaving the button looking pressed (and easily mistaken for
+   the blue .active follow state). */
+@media (hover: hover) {
+    .btn-show-all-repeaters:hover {
+        background: rgba(255,255,255,0.28);
+        border-color: rgba(255,255,255,0.7);
+    }
+    html.light-theme .btn-show-all-repeaters:hover {
+        background: rgba(0,0,0,0.22);
+    }
 }
 html.light-theme .btn-show-all-repeaters {
     border-color: rgba(0,0,0,0.35);
     background: rgba(0,0,0,0.12);
     color: #0f1a2e;
-}
-html.light-theme .btn-show-all-repeaters:hover {
-    background: rgba(0,0,0,0.22);
 }
 /* Pressed / active state (e.g. "Center on me" while follow mode is on).
    Scoped under html.light-theme as well so it beats the light-theme base

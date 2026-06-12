@@ -4772,8 +4772,62 @@ class MeshCoreApp {
             this._wideSentPoints = sent;
             this._sentChartAt = Date.now();   // live sent points after this are the tail
             this._rebuildChartArrays();
+            this._restoreRepStatsFromBase();
         } catch (e) {
             console.warn('Chart base build failed:', e);
+        }
+    }
+
+    // Restore Seen Repeaters entries from the freshly loaded disk chart layer.
+    // The live model (allRepeaters) exists only in RAM: when a repeater's
+    // points age out of the RAM window, cleanup dissolves its entry — and
+    // nothing brought it back when the Display window widened again (the
+    // table sat on "Waiting for data…" while charts/map/table reloaded from
+    // disk). Live entries are exact and win; only count/maxes are widened
+    // from disk. Restored entries are bucket aggregates (lastSeen ≈ bucket
+    // midpoint, last SNR/RSSI ≈ newest bucket's average).
+    _restoreRepStatsFromBase() {
+        const base = this._chartBase;
+        if (!base) return;
+        const agg = new Map();
+        for (const b of base.cells.values()) {
+            const col = this._resolveColReadonly(b.rawId);
+            let a = agg.get(col);
+            if (!a) {
+                a = { count: 0, lastSeen: -1, maxSnr: null, maxRssi: null,
+                      lastSnr: null, lastRssi: null, minPrecision: Infinity };
+                agg.set(col, a);
+            }
+            a.count += b.count;
+            if (b.snrMax  != null && (a.maxSnr  == null || b.snrMax  > a.maxSnr))  a.maxSnr  = b.snrMax;
+            if (b.rssiMax != null && (a.maxRssi == null || b.rssiMax > a.maxRssi)) a.maxRssi = b.rssiMax;
+            if (b.time > a.lastSeen) {
+                a.lastSeen = b.time;
+                a.lastSnr  = b.snrN  ? b.snrSum  / b.snrN  : null;
+                a.lastRssi = b.rssiN ? b.rssiSum / b.rssiN : null;
+            }
+            const prec = this.idPrecision(b.rawId);
+            if (prec < a.minPrecision) a.minPrecision = prec;
+        }
+        let changed = false;
+        for (const [col, a] of agg) {
+            const live = this.allRepeaters.get(col);
+            if (live) {
+                // Keep the exact live lastSeen/last values; widen the totals.
+                if (a.count > live.count) { live.count = a.count; changed = true; }
+                if (a.maxSnr  != null && (live.maxSnr  == null || a.maxSnr  > live.maxSnr))  { live.maxSnr  = a.maxSnr;  changed = true; }
+                if (a.maxRssi != null && (live.maxRssi == null || a.maxRssi > live.maxRssi)) { live.maxRssi = a.maxRssi; changed = true; }
+                continue;
+            }
+            if (!Number.isFinite(a.minPrecision)) a.minPrecision = this.idPrecision(col.split('/')[0]);
+            this.allRepeaters.set(col, a);
+            if (!this.repeaterColumns.includes(col)) this.repeaterColumns.push(col);
+            changed = true;
+        }
+        if (changed) {
+            this._sortColumns();
+            this._renderRepTable();
+            this._updateStats();
         }
     }
 
