@@ -524,20 +524,24 @@ export class PacketStore {
 
     // ---- paginated table reads --------------------------------------------
 
-    async countHashes() {
+    /** Count hash records, optionally only those first seen at/after `fromTime`
+     *  (the table's display window). */
+    async countHashes(fromTime) {
         if (!this.db) return 0;
         try {
             return await new Promise((resolve, reject) => {
                 const tx = this.db.transaction('hashes', 'readonly');
-                const r = tx.objectStore('hashes').count();
+                const idx = tx.objectStore('hashes').index('firstSeen');
+                const r = Number.isFinite(fromTime) ? idx.count(IDBKeyRange.lowerBound(fromTime)) : idx.count();
                 r.onsuccess = () => resolve(r.result);
                 r.onerror = () => reject(r.error);
             });
         } catch (_) { return 0; }
     }
 
-    /** Newest-first page of hash records (ordered by firstSeen descending). */
-    async pageHashes(offset, limit) {
+    /** Newest-first page of hash records (ordered by firstSeen descending),
+     *  optionally restricted to firstSeen >= fromTime. */
+    async pageHashes(offset, limit, fromTime) {
         if (!this.db) return [];
         try {
             return await new Promise((resolve, reject) => {
@@ -545,7 +549,8 @@ export class PacketStore {
                 const idx = tx.objectStore('hashes').index('firstSeen');
                 const out = [];
                 let skipped = false;
-                const req = idx.openCursor(null, 'prev');
+                const range = Number.isFinite(fromTime) ? IDBKeyRange.lowerBound(fromTime) : null;
+                const req = idx.openCursor(range, 'prev');
                 req.onsuccess = () => {
                     const cur = req.result;
                     if (!cur) { resolve(out); return; }

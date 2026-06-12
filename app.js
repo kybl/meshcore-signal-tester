@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=114';
-import { PacketStore } from './packet-store.js?v=12';
+import { PacketStore } from './packet-store.js?v=13';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -3309,15 +3309,17 @@ class MeshCoreApp {
         const m = new Map(this._tablePageData);
         if (this._tablePage === 0) {
             for (const [h, d] of this.hashData) {
-                if (d.lastSeen <= this._renderCacheAt || (cutoff && d.lastSeen < cutoff)) continue;
+                if (d.lastSeen <= this._renderCacheAt) continue;
                 // When narrowed the snapshot holds only matching hashes — keep the
                 // tail consistent so hidden rows don't eat the page cap.
                 if (narrowFn && ![...d.repeaters.keys()].some(narrowFn)) continue;
                 m.set(h, d);
             }
         }
+        // The Display-window cutoff applies to the snapshot too, not just the
+        // tail — the snapshot is loaded once and ages while it is on screen.
         let allRows = [...m.entries()]
-            .filter(([, data]) => !data._stub)
+            .filter(([, data]) => !data._stub && (!cutoff || data.firstSeen >= cutoff))
             .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
         // Page 0 is maintained in RAM during capture (the disk snapshot is never
         // periodically reloaded), so the live tail can outgrow the page — cap the
@@ -4074,7 +4076,10 @@ class MeshCoreApp {
         const now = this._chartFrozenAt ?? Date.now();
         const defaultWindow = 5 * 60000;
         let autoTMin;
-        if (!hasAnyData) autoTMin = now - defaultWindow;
+        // The Display window defines the X axis; Auto-remove only caps it when
+        // Display is "All" (nothing older exists then).
+        if (isFinite(this.DISPLAY_LIFETIME)) autoTMin = now - this.DISPLAY_LIFETIME;
+        else if (!hasAnyData) autoTMin = now - defaultWindow;
         else if (isFinite(this.HASH_LIFETIME)) autoTMin = now - this.HASH_LIFETIME;
         else {
             autoTMin = allInPts.length ? this._earliestTime(allInPts) : Infinity;
@@ -5103,9 +5108,12 @@ class MeshCoreApp {
             this._tableNarrowHashes = this._tableNarrowSet = null;
         }
         const size = this._tablePageSize;
+        // The table respects the Display window: pages cover only packets first
+        // seen inside it (the firstSeen index makes that a range scan).
+        const winFrom = this._displayCutoffNow() || undefined;
         // Authoritative count from disk; between loads it is maintained in RAM
         // (incremented per new hash at ingest) so the pager needs no disk reads.
-        this._tableHashCount = await this.store.countHashes();
+        this._tableHashCount = await this.store.countHashes(winFrom);
         this._tableNarrowKeyApplied = this._tableNarrowKey();
         const narrowed = this._tableNarrowFn() != null;
         if (narrowed && !this._tableNarrowHashes) await this._buildTableNarrowIndex();
@@ -5115,7 +5123,7 @@ class MeshCoreApp {
         this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
         const hashes = narrowed
             ? await this.store.getHashes(this._tableNarrowHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
-            : await this.store.pageHashes(this._tablePage * size, size);
+            : await this.store.pageHashes(this._tablePage * size, size, winFrom);
         const map = new Map();
         for (const h of hashes) {
             const obs = await this.store.obsForHash(h.hash);
@@ -5149,7 +5157,8 @@ class MeshCoreApp {
         const narrowFn = this._tableNarrowFn();
         const matchByRawId = new Map();
         const firstHeard = new Map();   // hash -> earliest matching obs time
-        await this.store.eachObs(-Infinity, Infinity, o => {
+        // Scan only the Display window — the pager shows nothing older anyway.
+        await this.store.eachObs(this._displayCutoffNow() || -Infinity, Infinity, o => {
             let ok = matchByRawId.get(o.rawId);
             if (ok === undefined) {
                 ok = narrowFn(this._resolveColReadonly(o.rawId));
@@ -5881,11 +5890,11 @@ class MeshCoreApp {
     // folded in, so there is no separate tail. Pre-ready the cache is empty and
     // the cutoff-filtered live RAM points serve directly — same path, no branch.
     _visibleChartPoints() {
-        let pts = this._wideChartPoints;
-        if (!pts.length && this.chartPoints.length) {
-            const cutoff = this._displayCutoffNow();
-            pts = cutoff ? this.chartPoints.filter(p => p.time >= cutoff) : this.chartPoints;
-        }
+        const cutoff = this._displayCutoffNow();
+        let pts = this._wideChartPoints.length ? this._wideChartPoints : this.chartPoints;
+        // The bucket cache is pruned only opportunistically (at array rebuilds),
+        // so enforce the Display cutoff at read time for both sources.
+        if (cutoff) pts = pts.filter(p => p.time >= cutoff);
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
     }
 
