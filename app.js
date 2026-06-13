@@ -751,7 +751,7 @@ class MeshCoreApp {
             const hash    = this._hashPayload(fakeHex);
             const rssi    = -60 - Math.floor(Math.random() * 50);
             const snr     = Math.round((Math.random() * 25 - 10) * 10) / 10;
-            this._ingestPacket(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null, { forceIngest: true });
+            this._ingestPacket(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null, { forceIngest: true, ...this._myLocation() });
             if (fbk) {
                 const col = this.findOrCreateColumn(repeater);
                 fbk.textContent = `→ column ${this.displayId(col)}`;
@@ -1850,7 +1850,7 @@ class MeshCoreApp {
         const snr = snrX4 / 4;
         const hash = 'nbr-' + fullId + '-' + heardEpoch;
         this._ingestPacket(hash, fullId, 'Repeater Neighbour', null, snr, null,
-            { repeaterNeighbor: true, secsAgo }, null, {});
+            { repeaterNeighbor: true, secsAgo }, null, this._myLocation());
     }
 
     _handleRepeaterLogLine(m) {
@@ -1899,7 +1899,7 @@ class MeshCoreApp {
         const hash = this._makeUnknownHash();
         const type = (route === 'D' ? 'Direct ' : 'Flood ') + Utils.getPayloadTypeName(payloadType);
         const meta = { repeaterLog: true, route, payloadType, len, payloadLen, src, dest };
-        this._ingestPacket(hash, col, type, null, snr, rssi, meta, null, {});
+        this._ingestPacket(hash, col, type, null, snr, rssi, meta, null, this._myLocation());
 
         // Summary lines with no accompanying RAW dump ⇒ stock firmware ⇒ limited
         // data. Surface the caveat once.
@@ -2648,7 +2648,7 @@ class MeshCoreApp {
         // Column = the responding node's pub key prefix so all its DSC responses share one column.
         const dscHash = 'DSC:' + (++this._dscSeq);
         const rawHex = Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join('');
-        this._ingestPacket(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null, { remoteSnr });
+        this._ingestPacket(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null, { remoteSnr, ...this._myLocation() });
     }
 
     _handleTracePush(payload) {
@@ -2671,7 +2671,7 @@ class MeshCoreApp {
         const lastSnr = snrs[snrs.length - 1];
         const hash = 'TR:' + tag.toString(16).toUpperCase().padStart(8, '0');
         const meta = { pathLen, tag, snrs };
-        this._ingestPacket(hash, repeaterCol, 'Trace', null, lastSnr, null, meta, null);
+        this._ingestPacket(hash, repeaterCol, 'Trace', null, lastSnr, null, meta, null, this._myLocation());
     }
 
     _bufferToHex(buffer) {
@@ -2712,7 +2712,7 @@ class MeshCoreApp {
         this._ingestContactFromPacket(packet);
 
         if (hash && repeater) {
-            this._ingestPacket(hash, repeater, type, rawHex, snr, rssi, meta, packet);
+            this._ingestPacket(hash, repeater, type, rawHex, snr, rssi, meta, packet, this._myLocation());
         }
     }
 
@@ -3100,6 +3100,15 @@ class MeshCoreApp {
         return window.scrollY + window.innerHeight >= document.body.scrollHeight - margin;
     }
 
+    // The user's current GPS fix as { lat, lon } (null fields when unknown), to
+    // stamp onto a freshly received live packet. The geolocation watch lives in
+    // the 3D map; this is the single point that reads it, so callers (and
+    // _ingestPacket) stay decoupled from where the fix comes from.
+    _myLocation() {
+        const l = this.signalMap?.currentLocation();
+        return { lat: l?.lat ?? null, lon: l?.lon ?? null };
+    }
+
     _ingestPacket(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null, opts = {}) {
         if (!this._collecting && !opts.importing && !opts.forceIngest) return;
         const wasAtBottom = !opts.importing && this._isAtPageBottom();
@@ -3111,16 +3120,12 @@ class MeshCoreApp {
         const prevColCount = this.repeaterColumns.length;
         const canonicalKey = this.findOrCreateColumn(repeater);
 
-        // Position: an explicit one (replay/import carry the stored lat/lon),
-        // else — only for a LIVE packet — the phone's current GPS fix. A
-        // replayed/imported packet with no stored position genuinely had none
-        // (e.g. captured before location was enabled), so it must stay
-        // position-less: falling back to currentLocation() here would stamp the
-        // restart-time location onto those early packets and plot them on the
-        // 3D map at the wrong (current) spot.
-        const live = !opts.replaying && !opts.importing;
-        const loc = opts.lat != null ? { lat: opts.lat, lon: opts.lon }
-            : (live ? (this.signalMap?.currentLocation() ?? null) : null);
+        // Position is supplied by the caller, never fetched here: live handlers
+        // stamp the current GPS fix (_myLocation), replay/import carry the stored
+        // one. A packet with no position (e.g. captured before location was on)
+        // arrives as null and STAYS null — it can never silently acquire the
+        // current location, so it's correctly omitted from the 3D map.
+        const loc = opts.lat != null ? { lat: opts.lat, lon: opts.lon } : null;
         const repEntry = { snr, rssi, packet, rawHex, rawId: repeater, time: now };
         if (loc) { repEntry.lat = loc.lat; repEntry.lon = loc.lon; }
         if (opts.remoteSnr != null) repEntry.remoteSnr = opts.remoteSnr;
