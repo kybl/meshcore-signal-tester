@@ -4778,14 +4778,16 @@ class MeshCoreApp {
         }
     }
 
-    // Restore Seen Repeaters entries from the freshly loaded disk chart layer.
-    // The live model (allRepeaters) exists only in RAM: when a repeater's
-    // points age out of the RAM window, cleanup dissolves its entry — and
-    // nothing brought it back when the Display window widened again (the
-    // table sat on "Waiting for data…" while charts/map/table reloaded from
-    // disk). Live entries are exact and win; only count/maxes are widened
-    // from disk. Restored entries are bucket aggregates (lastSeen ≈ bucket
-    // midpoint, last SNR/RSSI ≈ newest bucket's average).
+    // Restore Seen Repeaters entries from the disk chart layer. The live model
+    // (allRepeaters) exists only in RAM, bounded by the RAM window (~60 min):
+    // when a repeater's points age out of it, cleanup's _rebuildAfterPrune
+    // dissolves the entry. But the Display window can be wider ("All"), where
+    // those repeaters are still in range and live on disk — so re-seed them from
+    // the (incrementally maintained, Display-window) chart cache. Runs both on a
+    // fresh base build (Display change / startup) and after every prune. Live
+    // entries are exact and win; only count/maxes are widened from disk.
+    // Restored entries are bucket aggregates (lastSeen ≈ bucket midpoint, last
+    // SNR/RSSI ≈ newest bucket's average).
     _restoreRepStatsFromBase() {
         const base = this._chartBase;
         if (!base) return;
@@ -5392,6 +5394,15 @@ class MeshCoreApp {
         // Column keys changed (demotions/dissolves) — re-derive the chart render
         // array so its cached col fields match the new column model.
         this._scheduleChartArrays();
+
+        // Step 3 above deleted every repeater whose points aged out of the RAM
+        // window — but with a Display window wider than that window (e.g. "All"),
+        // those repeaters are still in range and live on disk. Re-seed them from
+        // the disk chart cache so Seen Repeaters / the stats count keep showing
+        // the whole Display window, not just the recent RAM tail. (This was the
+        // cause of "only 3 repeaters until I toggled Display": the restore ran
+        // only on a Display change, never after a routine prune.)
+        this._restoreRepStatsFromBase();
     }
 
     _clearAllData() {
