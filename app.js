@@ -438,7 +438,12 @@ class MeshCoreApp {
         const ttlSelect  = document.getElementById('ttlSelect');
         const hideSelect = document.getElementById('hideSelect');
         if (ttlSelect) {
-            ttlSelect.value = Store.get('ttl', ttlSelect.value);
+            const dflt = ttlSelect.value;   // HTML default (Never)
+            ttlSelect.value = Store.get('ttl', dflt);
+            // A stored value whose option was removed (e.g. the old 10/30 min)
+            // leaves selectedIndex -1 and value "" → +""*1000 = 0 = instant
+            // expiry. Fall back to the default in that case.
+            if (ttlSelect.selectedIndex < 0) { ttlSelect.value = dflt; Store.set('ttl', dflt); }
             const v = ttlSelect.value;
             this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
             ttlSelect.addEventListener('change', () => {
