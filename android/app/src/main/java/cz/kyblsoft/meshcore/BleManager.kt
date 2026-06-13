@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
+import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.ArrayDeque
@@ -48,9 +49,13 @@ class BleManager(private val context: Context, private val js: JsApi) {
         deviceAddress = address
         connectReqId = reqId
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-        if (adapter == null) {
+        if (adapter == null || !adapter.isEnabled) {
+            // BT off (or no adapter): connectGatt would just hang with no
+            // callback, leaving the JS promise pending forever. Fail fast and
+            // prompt, mirroring the requestDevice ("Connect Bluetooth") path.
             connectReqId = null
-            js.resolve(reqId, false, err("NotFoundError", "Bluetooth not available"))
+            if (adapter != null) main.post { Toast.makeText(context, "Please turn on Bluetooth", Toast.LENGTH_LONG).show() }
+            js.resolve(reqId, false, err("InvalidStateError", "Bluetooth is off"))
             return
         }
         val dev: BluetoothDevice = try {
