@@ -135,9 +135,20 @@ class WifiBridge(private val activity: MainActivity) {
  */
 class GeoBridge(private val activity: MainActivity) {
 
+    /** Real ACCESS_*_LOCATION grant state, so the polyfilled
+     *  navigator.permissions.query reports 'prompt' before the user has granted
+     *  it (instead of auto-claiming 'granted'). */
+    @JavascriptInterface
+    fun hasPermission(): Boolean = activity.hasLocationPermission()
+
     @JavascriptInterface
     fun startUpdates() {
-        activity.location.start()
+        // Request the runtime location permission first (mirrors the BLE/USB
+        // connect flow) — without this the very first "Enable location" tap hit
+        // a SecurityException and silently failed with "permission denied".
+        activity.main.post {
+            activity.ensureLocationPermission { activity.location.start() }
+        }
     }
 
     @JavascriptInterface
@@ -147,6 +158,8 @@ class GeoBridge(private val activity: MainActivity) {
 
     @JavascriptInterface
     fun getCurrent() {
-        activity.location.current()
+        activity.main.post {
+            activity.ensureLocationPermission { activity.location.current() }
+        }
     }
 }

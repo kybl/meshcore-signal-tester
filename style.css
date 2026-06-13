@@ -21,6 +21,7 @@
     --bg-row-sel:     #162840;
     --bg-row-flash:   rgba(50, 130, 210, 0.45);
     --bg-cell-flash:  rgba(150, 220, 70, 0.35);
+    --jh-key:  #c4b5fd; --jh-str:  #6ee7b7; --jh-num:  #93c5fd; --jh-bool: #fbbf24; --jh-null: #8aa0b4;
     --text-primary:   #E2F0FF;
     --text-secondary: #9EC8E8;
     --text-muted:     #5E90AC;
@@ -47,6 +48,7 @@ html.light-theme {
     --bg-row-sel:     #F0FDE0;
     --bg-row-flash:   rgba(186, 212, 238, 0.75);
     --bg-cell-flash:  rgba(140, 220, 80, 0.35);
+    --jh-key:  #7c3aed; --jh-str:  #059669; --jh-num:  #2563eb; --jh-bool: #d97706; --jh-null: #6b7280;
     --text-primary:   #0B1D2E;
     --text-secondary: #264A6A;
     --text-muted:     #506E85;
@@ -102,11 +104,11 @@ html.ui-larger body {
     text-align: center;
     padding: 14px 16px 20px;
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.55);
+    color: var(--text-muted);
 }
 
 .app-footer a {
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--text-secondary);
     text-decoration: none;
 }
 
@@ -116,7 +118,7 @@ html.ui-larger body {
 
 .footer-sep {
     margin: 0 8px;
-    color: rgba(255, 255, 255, 0.3);
+    color: var(--border);
 }
 
 header {
@@ -907,7 +909,7 @@ html:not(.light-theme) .btn-connect:disabled {
 .msg-sub-rssi,
 .msg-sub-snr {
     font-size: 8px;
-    color: #bbb;
+    color: var(--text-muted);
     font-weight: 600;
     text-align: right;
     padding: 1px 4px 2px;
@@ -1027,18 +1029,18 @@ html:not(.light-theme) .btn-connect:disabled {
 }
 
 .msg-col-rx:hover {
-    background: #f0f0ff;
+    background: var(--bg-sig-hover);
 }
 
 .rx-time {
-    color: #aaa;
+    color: var(--text-muted);
     font-size: 9px;
 }
 
 .rx-type {
     font-size: 10px;
     font-weight: 600;
-    color: #555;
+    color: var(--text-secondary);
     margin-left: 4px;
     display: inline-block;
     max-width: 160px;
@@ -1060,30 +1062,30 @@ html:not(.light-theme) .btn-connect:disabled {
 
 .detail-content {
     font-size: 11px;
-    color: #444;
+    color: var(--text-secondary);
     line-height: 1.7;
 }
 
 .detail-content b {
-    color: #888;
+    color: var(--text-muted);
     font-weight: 600;
 }
 
 .detail-type {
     font-size: 13px;
     font-weight: 700;
-    color: #333;
+    color: var(--text-primary);
     margin-bottom: 6px;
 }
 .detail-pubkey {
     font-size: 11px;
-    color: #666;
+    color: var(--text-secondary);
     margin-bottom: 6px;
     word-break: break-all;
 }
 .detail-pubkey code {
     font-size: 11px;
-    color: #999;
+    color: var(--text-muted);
 }
 
 .detail-json {
@@ -1101,35 +1103,36 @@ html:not(.light-theme) .btn-connect:disabled {
 
 .detail-sig {
     font-size: 12px;
-    color: #444;
+    color: var(--text-secondary);
     margin-bottom: 6px;
     padding-bottom: 5px;
-    border-bottom: 1px solid #e8e8f0;
+    border-bottom: 1px solid var(--border);
     cursor: pointer;
 }
 
 .detail-col-name {
-    color: #555;
+    color: var(--text-secondary);
     margin-left: 4px;
     margin-right: 4px;
 }
 
 .detail-time {
-    color: #888;
+    color: var(--text-muted);
     font-size: 11px;
 }
 
 /* JSON syntax highlighting inside .detail-json */
-.detail-json .jh-key  { color: #7c3aed; font-weight: 600; }
-.detail-json .jh-str  { color: #059669; }
-.detail-json .jh-num  { color: #2563eb; }
-.detail-json .jh-bool { color: #d97706; }
-.detail-json .jh-null { color: #9ca3af; }
+.detail-json .jh-key  { color: var(--jh-key); font-weight: 600; }
+.detail-json .jh-str  { color: var(--jh-str); }
+.detail-json .jh-num  { color: var(--jh-num); }
+.detail-json .jh-bool { color: var(--jh-bool); }
+.detail-json .jh-null { color: var(--jh-null); }
 
 .raw-hex {
     font-family: 'Courier New', monospace;
     font-size: 9px;
-    background: #eee;
+    background: var(--bg-input);
+    color: var(--text-secondary);
     padding: 1px 4px;
     border-radius: 3px;
     cursor: pointer;
@@ -1708,7 +1711,9 @@ html.light-theme .msg-filter-clear:hover {
     gap: 10px;
     padding: 8px 4px;
     font-size: 12px;
-    color: rgba(255,255,255,0.8);
+    /* The bar sits on the page background, not on the map — follow the theme
+       (was hardcoded white, invisible in light mode for the status/hint text). */
+    color: var(--text-secondary);
 }
 
 .btn-show-all-repeaters {
@@ -1845,6 +1850,9 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     top: 8px;
     left: 8px;
     background: rgba(255, 255, 255, 0.85);
+    /* The button is white-ish in both themes (it floats over the map), so the
+       glyph must be dark in both — otherwise dark mode's light text is invisible. */
+    color: #1f2d3d;
     border: none;
     border-radius: 6px;
     width: 30px;
@@ -1948,6 +1956,8 @@ html.light-theme .map-offline .map-empty {
     background: none;
     border: none;
     font-size: 11px;
+    /* .map-info is a white card over the map in both themes, so this stays
+       fixed-dark (theme text vars would be light → invisible in dark mode). */
     color: #999;
     cursor: pointer;
     padding: 2px 3px;

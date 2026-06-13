@@ -565,15 +565,19 @@
             });
         };
 
-        // Report geolocation permission as granted so the map auto-starts
-        // watching; the native side handles the real Android permission.
+        // Report the REAL location-permission state so the map doesn't auto-start
+        // watching (and silently fail) before the user has granted it: 'granted'
+        // once held, else 'prompt' so the map waits for the "Enable location" tap,
+        // which then triggers the native runtime request.
         try {
             var _permsObj = navigator.permissions || {};
             var _origQuery = _permsObj.query ? _permsObj.query.bind(_permsObj) : null;
             var _patchedQuery = function (desc) {
                 if (desc && desc.name === 'geolocation') {
+                    var st = 'prompt';
+                    try { st = window.AndroidGeo.hasPermission() ? 'granted' : 'prompt'; } catch (e) {}
                     return Promise.resolve({
-                        state: 'granted', onchange: null,
+                        state: st, onchange: null,
                         addEventListener: function () {}, removeEventListener: function () {}
                     });
                 }

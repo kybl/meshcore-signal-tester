@@ -87,6 +87,18 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission()
     ) { /* user decides in settings; capture still works while screen is on */ }
 
+    // The map's "Enable location" button. Separate from requestPerms (the
+    // connect flow) because enabling the map location must NOT start the
+    // foreground service — viewing your own position shouldn't pin a
+    // notification; the service starts when you actually connect to a device.
+    private var _onLocationPermResult: (() -> Unit)? = null
+    private val requestLocationPerm = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        _onLocationPermResult?.invoke()   // runs whether granted or not — location.start() then streams or reports the denial back to JS
+        _onLocationPermResult = null
+    }
+
     // HTML5 fullscreen (the 3D map "fullscreen" button). When the page calls
     // Element.requestFullscreen(), the WebView routes it through
     // onShowCustomView; we host that view on top of the window decor.
@@ -373,6 +385,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- permission gate (called at connect/scan time) ------------------
+
+    fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    // Location-only permission request for the map's "Enable location" button.
+    // Deliberately does not start the foreground service (see requestLocationPerm).
+    fun ensureLocationPermission(onResult: () -> Unit) {
+        if (hasLocationPermission()) { onResult(); return }
+        _onLocationPermResult = onResult
+        requestLocationPerm.launch(arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ))
+    }
 
     fun ensureConnectPermissions(includeBluetooth: Boolean = true, onGranted: () -> Unit) {
         val needed = mutableListOf(
