@@ -1849,11 +1849,12 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     position: absolute;
     top: 8px;
     left: 8px;
-    background: rgba(255, 255, 255, 0.85);
-    /* The button is white-ish in both themes (it floats over the map), so the
-       glyph must be dark in both — otherwise dark mode's light text is invisible. */
-    color: #1f2d3d;
-    border: none;
+    /* Theme-aware: this base is the dark theme (default). The button floats over
+       the map, so it carries its own background and a contrasting glyph + shadow
+       — visible over any tiles. Light theme overrides to the white variant below. */
+    background: rgba(16, 32, 48, 0.82);
+    color: #E2F0FF;
+    border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 6px;
     width: 30px;
     height: 30px;
@@ -1862,7 +1863,7 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
     z-index: 10;
     backdrop-filter: blur(4px);
     transition: background 0.15s;
@@ -1870,6 +1871,17 @@ html.light-theme .btn-show-all-repeaters.active:hover {
 }
 
 .map-fullscreen-btn:hover {
+    background: rgba(16, 32, 48, 0.95);
+}
+
+html.light-theme .map-fullscreen-btn {
+    background: rgba(255, 255, 255, 0.85);
+    color: #1f2d3d;
+    border-color: rgba(0, 0, 0, 0.12);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+html.light-theme .map-fullscreen-btn:hover {
     background: rgba(255, 255, 255, 0.97);
 }
 
