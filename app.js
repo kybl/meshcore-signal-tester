@@ -3111,8 +3111,16 @@ class MeshCoreApp {
         const prevColCount = this.repeaterColumns.length;
         const canonicalKey = this.findOrCreateColumn(repeater);
 
+        // Position: an explicit one (replay/import carry the stored lat/lon),
+        // else — only for a LIVE packet — the phone's current GPS fix. A
+        // replayed/imported packet with no stored position genuinely had none
+        // (e.g. captured before location was enabled), so it must stay
+        // position-less: falling back to currentLocation() here would stamp the
+        // restart-time location onto those early packets and plot them on the
+        // 3D map at the wrong (current) spot.
+        const live = !opts.replaying && !opts.importing;
         const loc = opts.lat != null ? { lat: opts.lat, lon: opts.lon }
-            : (this.signalMap?.currentLocation() ?? null);
+            : (live ? (this.signalMap?.currentLocation() ?? null) : null);
         const repEntry = { snr, rssi, packet, rawHex, rawId: repeater, time: now };
         if (loc) { repEntry.lat = loc.lat; repEntry.lon = loc.lon; }
         if (opts.remoteSnr != null) repEntry.remoteSnr = opts.remoteSnr;
