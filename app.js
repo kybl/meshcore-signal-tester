@@ -1375,6 +1375,9 @@ class MeshCoreApp {
         // accurate than the BLE Battery Service which some devices report as 100%.
 
         this._setConnectedDeviceName(this.saveDevice(device));
+        // Upgrade the (possibly stale) cached name to the live GAP name if the
+        // device was renamed since it was saved — fire-and-forget.
+        this._refreshBleName(device, server);
 
         this.updateStatus('Connected (companion)', 'connected');
         this._setActiveTransportBtn('ble', 'Disconnect', () => this.disconnect());
@@ -2324,8 +2327,12 @@ class MeshCoreApp {
         return Store.json('devices', []);
     }
 
-    saveDevice(device) {
+    saveDevice(device, nameOverride) {
         let devices = this.getSavedDevices();
+        // The live name: a fresh GAP-read name when we have one (see
+        // _refreshBleName), else whatever the BLE layer reported — which on a
+        // saved-id reconnect can be Android's stale cached name.
+        const liveName = nameOverride || device.name;
         // Web Bluetooth's device.id is NOT reliably stable across
         // requestDevice() calls — getDevices() (the zero-friction reconnect
         // path) needs an experimental Chrome flag, so a quick-connect usually
@@ -2334,14 +2341,35 @@ class MeshCoreApp {
         // saved entries over time. So also match a prior BLE entry by name
         // (MeshCore names carry a unique suffix) and collapse onto one entry.
         const prior = devices.find(d => d.id === device.id
-            || (device.name && d.transport === 'ble' && d.name === device.name));
-        const name = device.name || prior?.name || 'Unknown';
+            || (liveName && d.transport === 'ble' && d.name === liveName));
+        const name = liveName || prior?.name || 'Unknown';
         devices = devices.filter(d => d.id !== device.id
-            && !(device.name && d.transport === 'ble' && d.name === device.name));
+            && !(liveName && d.transport === 'ble' && d.name === liveName));
         devices.push({ id: device.id, name, transport: 'ble' });
         Store.set('devices', JSON.stringify(devices));
         this._renderSavedDevices();
         return name;
+    }
+
+    // The device may have been renamed since it was saved. device.name on a
+    // saved-id reconnect is often Android's stale cached name, so read the live
+    // GAP "Device Name" (service 0x1800, char 0x2A00) and, if it differs, adopt
+    // it for the connection label and the saved entry. Fire-and-forget so it
+    // never delays "Connected". No-op on the web: Chrome block-lists the GAP
+    // service, so getPrimaryService rejects — caught here, leaving the cached
+    // name in place (the requestDevice picker path already gets a fresh name).
+    async _refreshBleName(device, server) {
+        if (!server) return;
+        let live = null;
+        try {
+            const gap = await server.getPrimaryService('00001800-0000-1000-8000-00805f9b34fb');
+            const ch  = await gap.getCharacteristic('00002a00-0000-1000-8000-00805f9b34fb');
+            const val = await ch.readValue();
+            live = new TextDecoder('utf-8').decode(val).replace(/\0+$/, '').trim();
+        } catch (_) { return; }
+        // Still the same live connection, and a real new name?
+        if (!live || this.device !== device || live === device.name) return;
+        this._setConnectedDeviceName(this.saveDevice(device, live));
     }
 
     // Serial ports expose no stable id or name — only the USB vendor/product id
