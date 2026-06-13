@@ -5894,9 +5894,15 @@ class MeshCoreApp {
     _updateStats() {
         if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0 && !this._storeReady;
         const displayCutoff = this._displayCutoffNow();
+        // "Active" = unique packets in the Display window. A finite window is
+        // never wider than the RAM window (max Display = 1 h = the RAM budget),
+        // so the cutoff-filtered RAM set is exact. Display="All" can exceed RAM,
+        // though — fall back to the disk hash count (exact for "All": set from
+        // countHashes() on load, then incremented per new hash) so it doesn't
+        // collapse to just the recent RAM tail after a long capture.
         const visibleHashes = displayCutoff
             ? Array.from(this.hashData.values()).filter(d => d.lastSeen >= displayCutoff).length
-            : this.hashData.size;
+            : (this._storeReady ? this._tableHashCount : this.hashData.size);
         this.activeHashesEl.textContent = visibleHashes;
         this.totalRxEl.textContent = this.totalRxCount;
         const visibleRepeaters = displayCutoff
