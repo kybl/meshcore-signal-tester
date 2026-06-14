@@ -605,94 +605,101 @@ export class Signal3DMap {
         );
         this._raycaster.setFromCamera(mouse, this.camera);
 
-        // Check static marker sprites first (emoji icons and labels)
-        if (this._pinSprites.length) {
-            const clickableEntries = this._pinSprites.filter(s => !s.isClose);
-            const sprites = clickableEntries.map(s => s.sprite);
-            const hits = this._raycaster.intersectObjects(sprites);
-            if (hits.length > 0) {
-                const hit = hits[0];
-                const entry = clickableEntries.find(s => s.sprite === hit.object);
-                if (entry) {
-                    // For label sprites, check if click landed in the [x] top-right corner.
-                    // Sprites always face the camera, so we must project the hit offset
-                    // onto camera right/up vectors (not world X/Y).
-                    if (entry.isLabel) {
-                        const sp = entry.sprite;
-                        const sw = new THREE.Vector3();
-                        sp.getWorldPosition(sw);
-                        const ss = new THREE.Vector3();
-                        sp.getWorldScale(ss);
-                        const offset = hit.point.clone().sub(sw);
-                        const camRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
-                        const camUp    = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
-                        // Normalize to ±0.5 (sprite edge)
-                        const nx = offset.dot(camRight) / ss.x;
-                        const ny = offset.dot(camUp)    / ss.y;
-                        if (nx > 0.27 && ny > 0.05) {
-                            if (entry.isPinned) this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
-                            else               this.onPinMarker?.(entry.col, entry.pubKeyFullHex);
-                            return;
-                        }
-                    }
-                    const newCol = entry.col === this._selectedCol ? null : entry.col;
-                    this._clickedPoint = null;
-                    this._selectedCol = newCol;
-                    this._rebuildDots();
-                    this.onSelect?.(newCol);
-                    this._infoPanelFromClick = !!newCol;
-                    this._updateInfoPanel();
-                    return;
-                }
-            }
-        }
+        // Static marker sprites (emoji icons and labels) take priority.
+        if (this._pickPinSprite(e, rect)) return;
 
-        let newCol = null;
-        let clickedPt = null;
-        // Screen-space pick against the actually-rendered dot positions. The dots
-        // are drawn at ~constant screen size (dampened-perspective shader), so a
-        // 3D ray-vs-world-sphere test mis-selects when dots stack vertically
-        // (same lat/lon, different SNR height) or sit near each other. Projecting
-        // each dot and choosing the one nearest the cursor matches what the user
-        // sees — and clicking the guide line (away from the ball) no longer hits.
-        {
-            const px = e.clientX - rect.left, py = e.clientY - rect.top;
-            const groupSy = this._rxPointsGroup?.scale.y ?? 1;
-            const PICK_RADIUS = 16; // CSS px around a dot centre
-            const TIE = 8;          // dots this close on screen count as overlapping
-            const _v = new THREE.Vector3();
-            const candidates = [];
-            for (const p of this._hitPoints) {
-                const wp = this._latLonToWorld(p.lat, p.lon);
-                if (!wp) continue;
-                _v.set(wp.x, this._signalToHeight(p.snr) * groupSy, wp.z);
-                const camDist = this.camera.position.distanceTo(_v);
-                _v.project(this.camera);
-                if (_v.z > 1) continue; // behind the camera
-                const sx = (_v.x * 0.5 + 0.5) * rect.width;
-                const sy = (-_v.y * 0.5 + 0.5) * rect.height;
-                const d = Math.hypot(sx - px, sy - py);
-                if (d <= PICK_RADIUS) candidates.push({ p, d, camDist });
-            }
-            // Nearest to the cursor wins; for dots overlapping on screen prefer the
-            // front-most (the one visually on top).
-            let best = null;
-            for (const c of candidates) {
-                if (!best) { best = c; continue; }
-                if (Math.abs(c.d - best.d) <= TIE) { if (c.camDist < best.camDist) best = c; }
-                else if (c.d < best.d) best = c;
-            }
-            if (best) {
-                if (this._clickedPoint === best.p) { newCol = null; clickedPt = null; }
-                else { newCol = best.p.col; clickedPt = best.p; }
-            }
-        }
+        const { newCol, clickedPt } = this._pickRxPoint(e, rect);
+        this._commitSelection(newCol, clickedPt);
+    }
+
+    // Apply a new selection: rebuild dots, notify the host and refresh the info
+    // panel. `clickedPt` is the picked RX/TX point (null for non-point sources).
+    _commitSelection(newCol, clickedPt = null) {
         this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
         this._rebuildDots();
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
         this._infoPanelFromClick = !!newCol;   // set after the feedback loop so panel stays visible
         this._updateInfoPanel();
+    }
+
+    // Hit-test the static marker sprites. Returns true if the click was handled
+    // (toggling a pin via the label's [x] corner, or selecting the marker's
+    // column); false if no sprite was hit.
+    _pickPinSprite(e, rect) {
+        if (!this._pinSprites.length) return false;
+        const clickableEntries = this._pinSprites.filter(s => !s.isClose);
+        const sprites = clickableEntries.map(s => s.sprite);
+        const hits = this._raycaster.intersectObjects(sprites);
+        if (hits.length === 0) return false;
+        const hit = hits[0];
+        const entry = clickableEntries.find(s => s.sprite === hit.object);
+        if (!entry) return false;
+        // For label sprites, check if click landed in the [x] top-right corner.
+        // Sprites always face the camera, so we must project the hit offset
+        // onto camera right/up vectors (not world X/Y).
+        if (entry.isLabel) {
+            const sp = entry.sprite;
+            const sw = new THREE.Vector3();
+            sp.getWorldPosition(sw);
+            const ss = new THREE.Vector3();
+            sp.getWorldScale(ss);
+            const offset = hit.point.clone().sub(sw);
+            const camRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+            const camUp    = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+            // Normalize to ±0.5 (sprite edge)
+            const nx = offset.dot(camRight) / ss.x;
+            const ny = offset.dot(camUp)    / ss.y;
+            if (nx > 0.27 && ny > 0.05) {
+                if (entry.isPinned) this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
+                else               this.onPinMarker?.(entry.col, entry.pubKeyFullHex);
+                return true;
+            }
+        }
+        const newCol = entry.col === this._selectedCol ? null : entry.col;
+        this._commitSelection(newCol);
+        return true;
+    }
+
+    // Screen-space pick against the actually-rendered dot positions. The dots
+    // are drawn at ~constant screen size (dampened-perspective shader), so a
+    // 3D ray-vs-world-sphere test mis-selects when dots stack vertically
+    // (same lat/lon, different SNR height) or sit near each other. Projecting
+    // each dot and choosing the one nearest the cursor matches what the user
+    // sees — and clicking the guide line (away from the ball) no longer hits.
+    // Returns { newCol, clickedPt } (both null when nothing is hit).
+    _pickRxPoint(e, rect) {
+        const px = e.clientX - rect.left, py = e.clientY - rect.top;
+        const groupSy = this._rxPointsGroup?.scale.y ?? 1;
+        const PICK_RADIUS = 16; // CSS px around a dot centre
+        const TIE = 8;          // dots this close on screen count as overlapping
+        const _v = new THREE.Vector3();
+        const candidates = [];
+        for (const p of this._hitPoints) {
+            const wp = this._latLonToWorld(p.lat, p.lon);
+            if (!wp) continue;
+            _v.set(wp.x, this._signalToHeight(p.snr) * groupSy, wp.z);
+            const camDist = this.camera.position.distanceTo(_v);
+            _v.project(this.camera);
+            if (_v.z > 1) continue; // behind the camera
+            const sx = (_v.x * 0.5 + 0.5) * rect.width;
+            const sy = (-_v.y * 0.5 + 0.5) * rect.height;
+            const d = Math.hypot(sx - px, sy - py);
+            if (d <= PICK_RADIUS) candidates.push({ p, d, camDist });
+        }
+        // Nearest to the cursor wins; for dots overlapping on screen prefer the
+        // front-most (the one visually on top).
+        let best = null;
+        for (const c of candidates) {
+            if (!best) { best = c; continue; }
+            if (Math.abs(c.d - best.d) <= TIE) { if (c.camDist < best.camDist) best = c; }
+            else if (c.d < best.d) best = c;
+        }
+        if (best) {
+            if (this._clickedPoint === best.p) return { newCol: null, clickedPt: null };
+            return { newCol: best.p.col, clickedPt: best.p };
+        }
+        return { newCol: null, clickedPt: null };
     }
 
     _updateInfoPanel() {
@@ -1211,16 +1218,8 @@ export class Signal3DMap {
         // bbox that the current level can already accommodate. Sources that
         // don't serve tiles all the way to z19 cap the starting level.
         const srcMaxZoom = TILE_SOURCES[this._mapSource].maxZoom ?? 19;
-        let zoom = Math.min(srcMaxZoom, this._tileBounds ? this._tileBounds.zoom : 19);
-        let tl, br;
-        while (zoom > 1) {
-            tl = lonLatToTile(minLon, maxLat, zoom);
-            br = lonLatToTile(maxLon, minLat, zoom);
-            const dtx = Math.floor(br.x) - Math.floor(tl.x) + 1;
-            const dty = Math.floor(br.y) - Math.floor(tl.y) + 1;
-            if (dtx <= MAX_TILES_AXIS && dty <= MAX_TILES_AXIS) break;
-            zoom--;
-        }
+        const startZoom = Math.min(srcMaxZoom, this._tileBounds ? this._tileBounds.zoom : 19);
+        const { zoom, tl, br } = this._fitZoomForBbox(minLon, maxLat, maxLon, minLat, startZoom);
 
         // Asymmetric padding: proportional to data extent so elongated shapes don't waste tiles
         const maxTile = Math.pow(2, zoom) - 1;
@@ -1505,6 +1504,21 @@ export class Signal3DMap {
 
     // ---- Detail overlay (high-zoom tiles when camera is close) ----
 
+    // Highest zoom at which the lon/lat bbox fits within MAX_TILES_AXIS² tiles,
+    // counting down from `startZoom`. Returns { zoom, tl, br } (tl/br = the
+    // top-left / bottom-right tile coords at that zoom).
+    _fitZoomForBbox(minLon, maxLat, maxLon, minLat, startZoom) {
+        let zoom = startZoom, tl, br;
+        while (zoom > 1) {
+            tl = lonLatToTile(minLon, maxLat, zoom);
+            br = lonLatToTile(maxLon, minLat, zoom);
+            if (Math.floor(br.x) - Math.floor(tl.x) + 1 <= MAX_TILES_AXIS &&
+                Math.floor(br.y) - Math.floor(tl.y) + 1 <= MAX_TILES_AXIS) break;
+            zoom--;
+        }
+        return { zoom, tl, br };
+    }
+
     async _updateOverlay() {
         if (!this._tileBounds || this._overlayBusy) return;
         if (this._mapSource === 'none') { this._removeOverlay(); return; }  // nothing to detail
@@ -1513,14 +1527,9 @@ export class Signal3DMap {
 
         // Find highest zoom where camera view fits in MAX_TILES_AXIS × MAX_TILES_AXIS
         // (capped at the source's own maximum tile level)
-        let overlayZoom = TILE_SOURCES[this._mapSource].maxZoom ?? 19, oTl, oBr;
-        while (overlayZoom > 1) {
-            oTl = lonLatToTile(camBb.minLon, camBb.maxLat, overlayZoom);
-            oBr = lonLatToTile(camBb.maxLon, camBb.minLat, overlayZoom);
-            if (Math.floor(oBr.x) - Math.floor(oTl.x) + 1 <= MAX_TILES_AXIS &&
-                Math.floor(oBr.y) - Math.floor(oTl.y) + 1 <= MAX_TILES_AXIS) break;
-            overlayZoom--;
-        }
+        const { zoom: overlayZoom, tl: oTl, br: oBr } = this._fitZoomForBbox(
+            camBb.minLon, camBb.maxLat, camBb.maxLon, camBb.minLat,
+            TILE_SOURCES[this._mapSource].maxZoom ?? 19);
         // Only show overlay when it offers more detail than the base map
         if (overlayZoom <= this._tileBounds.zoom) { this._removeOverlay(); return; }
 
@@ -1815,6 +1824,17 @@ export class Signal3DMap {
         });
     }
 
+    // The translucent ground disc shared by the user and device markers.
+    _makeMarkerBase(color) {
+        const base = new THREE.Mesh(
+            new THREE.CircleGeometry(1.44, 24),
+            new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35 })
+        );
+        base.rotation.x = -Math.PI / 2;
+        base.position.y = 0.05;
+        return base;
+    }
+
     _updateUserMarker() {
         if (!this._userLoc || !this._tileBounds) return;
         const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
@@ -1827,13 +1847,7 @@ export class Signal3DMap {
             );
             cone.position.y = 1.4;
             group.add(cone);
-            const base = new THREE.Mesh(
-                new THREE.CircleGeometry(1.44, 24),
-                new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.35 })
-            );
-            base.rotation.x = -Math.PI / 2;
-            base.position.y = 0.05;
-            group.add(base);
+            group.add(this._makeMarkerBase(0xff3355));
             this._markerNoZFight(group);
             this._userMarker = group;
             this._userMarker.visible = this._showMarker;
@@ -1864,13 +1878,7 @@ export class Signal3DMap {
             );
             ball.position.y = 2.6;
             group.add(ball);
-            const base = new THREE.Mesh(
-                new THREE.CircleGeometry(1.44, 24),
-                new THREE.MeshBasicMaterial({ color: COL, transparent: true, opacity: 0.35 })
-            );
-            base.rotation.x = -Math.PI / 2;
-            base.position.y = 0.05;
-            group.add(base);
+            group.add(this._makeMarkerBase(COL));
             this._markerNoZFight(group);
             this._deviceMarker = group;
             this.scene.add(this._deviceMarker);
