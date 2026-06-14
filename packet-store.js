@@ -171,6 +171,24 @@ export class PacketStore {
         }
     }
 
+    // Run a readwrite transaction against `storeName`. `fn(store)` queues the
+    // writes; the transaction is awaited to completion. Any failure (no db,
+    // transaction/request error) routes through _onWriteError and resolves to
+    // false, so writes never throw — every writer previously hand-rolled this
+    // same guard/try/_txComplete/catch. Returns true on commit.
+    async _write(storeName, fn) {
+        if (!this.db) return false;
+        try {
+            const tx = this.db.transaction(storeName, 'readwrite');
+            fn(tx.objectStore(storeName));
+            await this._txComplete(tx);
+            return true;
+        } catch (e) {
+            this._onWriteError(e);
+            return false;
+        }
+    }
+
     // ---- writes -----------------------------------------------------------
 
     /** Append observation records. Each:
@@ -180,20 +198,14 @@ export class PacketStore {
      *  field changes), so it must live here, not in the per-hash record.
      *  `seq` is assigned by the store. Returns the records or [] on failure. */
     async putObs(records) {
-        if (!this.db || !records || !records.length) return [];
-        try {
-            const tx = this.db.transaction('obs', 'readwrite');
-            const os = tx.objectStore('obs');
+        if (!records || !records.length) return [];
+        const ok = await this._write('obs', os => {
             for (const r of records) {
                 if (r.mz == null && r.lat != null && r.lon != null) r.mz = ps_morton(r.lat, r.lon);
                 os.add(r);
             }
-            await this._txComplete(tx);
-            return records;
-        } catch (e) {
-            this._onWriteError(e);
-            return [];
-        }
+        });
+        return ok ? records : [];
     }
 
     /** Store the path-invariant per-hash payload once: {hash, firstSeen, type, meta}.
@@ -203,24 +215,15 @@ export class PacketStore {
      *  be reconstructed from an observation's rawHex on demand, so it isn't stored.
      *  Uses put() so re-ingest of the same hash is harmless (last write wins). */
     async putHash(rec) {
-        if (!this.db || !rec) return;
-        try {
-            const tx = this.db.transaction('hashes', 'readwrite');
-            tx.objectStore('hashes').put(rec);
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        if (!rec) return;
+        await this._write('hashes', os => os.put(rec));
     }
 
     /** Batched putHash: all records in one transaction. Used by the debounced
      *  write flush so a burst of new hashes doesn't cost one transaction each. */
     async putHashes(records) {
-        if (!this.db || !records || !records.length) return;
-        try {
-            const tx = this.db.transaction('hashes', 'readwrite');
-            const os = tx.objectStore('hashes');
-            for (const r of records) os.put(r);
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        if (!records || !records.length) return;
+        await this._write('hashes', os => { for (const r of records) os.put(r); });
     }
 
     async getHash(hash) {
@@ -229,24 +232,14 @@ export class PacketStore {
 
     /** Append outgoing-SNR records: {time, snr, rawId, label}. */
     async putSent(records) {
-        if (!this.db || !records || !records.length) return;
-        try {
-            const tx = this.db.transaction('sent', 'readwrite');
-            const os = tx.objectStore('sent');
-            for (const r of records) os.add(r);
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        if (!records || !records.length) return;
+        await this._write('sent', os => { for (const r of records) os.add(r); });
     }
 
     // ---- small key/value state (column model, aggregates, totals) ---------
 
     async setKV(k, v) {
-        if (!this.db) return;
-        try {
-            const tx = this.db.transaction('kv', 'readwrite');
-            tx.objectStore('kv').put({ k, v });
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        await this._write('kv', os => os.put({ k, v }));
     }
 
     async getKV(k) {
