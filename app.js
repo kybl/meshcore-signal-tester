@@ -4178,6 +4178,45 @@ class MeshCoreApp {
 
         const parts = [];
 
+        // Bundle the geometry/scale/theme context so the grid and data-series
+        // builders take one parameter instead of ~20. The transforms (xOf/yOf)
+        // and valOf are captured as-is.
+        const geom = {
+            W, H, pl, pr, pt, pb, cw, ch, tMin, tMax, tRange, yMin, yMax, yStep, yRange,
+            xOf, yOf, valOf, isDark, gridMinor, gridMajor, gridAxis, labelFill, dotStroke,
+        };
+        this._pushChartGrid(parts, geom, type);
+        this._pushChartSeries(parts, geom, type, pts, sentPts, hasData);
+
+        if (!hasData) {
+            const msg = noneSelected ? 'Select Incoming or Outgoing above' : 'Waiting for data…';
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">${msg}</text>`);
+        }
+
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.innerHTML = parts.join('');
+
+        // Find the most recent point per column, then sort best → worst
+        const lastByCol = new Map();
+        for (const p of pts) {
+            if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
+        }
+        const visible = [...lastByCol.keys()].sort((a, b) => {
+            const pa = lastByCol.get(a), pb = lastByCol.get(b);
+            const va = type === 'rssi' ? pa.rssi : pa.snr;
+            const vb = type === 'rssi' ? pb.rssi : pb.snr;
+            if (vb == null && va == null) return 0;
+            if (vb == null) return -1;
+            if (va == null) return 1;
+            return vb - va;
+        });
+
+    }
+
+    // Append the static chart frame (Y/X gridlines + labels + axes) to `parts`.
+    _pushChartGrid(parts, geom, type) {
+        const { pl, cw, pt, ch, tMin, tMax, tRange, yMin, yMax, yStep, xOf, yOf,
+                gridMinor, gridMajor, gridAxis, labelFill } = geom;
         // Y grid + labels (major every yStep, minor every yStep/2)
         const yMinorStep = yStep / 2;
         for (let y = yMin + yMinorStep; y < yMax; y += yStep) {
@@ -4220,7 +4259,12 @@ class MeshCoreApp {
         // Axes
         parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
         parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
+    }
 
+    // Append the clipped data layer (noise floor, per-repeater lines, dots and
+    // outgoing-SNR stars) to `parts`.
+    _pushChartSeries(parts, geom, type, pts, sentPts, hasData) {
+        const { pl, pt, cw, ch, tMin, tMax, xOf, yOf, valOf, dotStroke } = geom;
         // Clip the data layer (noise floor, lines, dots, stars) to the plot rect so
         // that when zoomed in, points outside the X window don't spill over the
         // axes/labels. Grid, axes and labels stay outside the clip.
@@ -4319,30 +4363,6 @@ class MeshCoreApp {
         }
 
         parts.push(`</g>`);   // close the clipped data layer
-
-        if (!hasData) {
-            const msg = noneSelected ? 'Select Incoming or Outgoing above' : 'Waiting for data…';
-            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">${msg}</text>`);
-        }
-
-        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-        svg.innerHTML = parts.join('');
-
-        // Find the most recent point per column, then sort best → worst
-        const lastByCol = new Map();
-        for (const p of pts) {
-            if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
-        }
-        const visible = [...lastByCol.keys()].sort((a, b) => {
-            const pa = lastByCol.get(a), pb = lastByCol.get(b);
-            const va = type === 'rssi' ? pa.rssi : pa.snr;
-            const vb = type === 'rssi' ? pb.rssi : pb.snr;
-            if (vb == null && va == null) return 0;
-            if (vb == null) return -1;
-            if (va == null) return 1;
-            return vb - va;
-        });
-
     }
 
     _decimateChartPts(colPts, tMin, tMax, pixelWidth, type) {
