@@ -52,6 +52,15 @@ class JsApi(private var webView: WebView) {
         eval("window.__mcGeoError($code, ${q(message)})")
     }
 
+    /**
+     * Tell the page that the location permission is now held, so the 3D map can
+     * begin watching immediately — without the user having to tap "Enable
+     * location". Fired right after the connect flow's permission grant.
+     */
+    fun locationPermissionGranted() {
+        eval("window.__mcLocationPermissionGranted && window.__mcLocationPermissionGranted()")
+    }
+
     /** Deliver a chunk of bytes received from a serial port. */
     fun serialData(portId: String, base64Value: String) {
         eval("window.__mcSerialData(${q(portId)}, ${q(base64Value)})")

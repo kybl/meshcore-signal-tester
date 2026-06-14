@@ -893,6 +893,15 @@ class MeshCoreApp {
             return;
         }
 
+        // Native wrapper calls this the moment the location permission becomes
+        // available (granted during the BLE/USB/WiFi connect flow). Start the
+        // map's GPS watch right away so capture is geotagged from connect time —
+        // no detour to the 3D map's "Enable location" button. startWatching()
+        // guards against a double-start, so repeated calls are harmless.
+        window.__mcLocationPermissionGranted = () => {
+            this.signalMap?.startWatching?.();
+        };
+
         sourceSel?.addEventListener('change', () => {
             this.signalMap.setMapSource(sourceSel.value);
             Store.set('mapSource', sourceSel.value);

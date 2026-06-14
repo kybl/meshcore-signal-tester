@@ -79,6 +79,9 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
         MeshcoreService.start(this)
+        // Connect-flow grant doubles as the trigger to start GPS capture, so the
+        // map geotags packets from connect time without a separate button tap.
+        if (hasLocationPermission()) jsApi.locationPermissionGranted()
         _onPermsGranted?.invoke()
         _onPermsGranted = null
     }
@@ -420,6 +423,8 @@ class MainActivity : AppCompatActivity() {
         }
         if (missing.isEmpty()) {
             MeshcoreService.start(this)
+            // Already held — start GPS capture now (mirrors the post-prompt path).
+            jsApi.locationPermissionGranted()
             onGranted()
         } else {
             _onPermsGranted = onGranted
