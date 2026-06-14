@@ -550,9 +550,11 @@ export class Signal3DMap {
                 if (this.btnEl) this.btnEl.classList.add('hidden');
                 const { latitude, longitude, accuracy } = pos.coords;
                 // Drop one-off GPS outliers (the ~200 m spikes) before they reach
-                // the marker or get stamped onto packets — hold the last good fix.
-                if (!this._gpsAccept(latitude, longitude, accuracy, pos.timestamp || Date.now())) return;
-                this._userLoc = { lat: latitude, lon: longitude, accuracy };
+                // the marker or get stamped onto packets; a rejected fix returns a
+                // dead-reckoned point (or null to hold) instead of the raw spike.
+                const fix = this._gpsAccept(latitude, longitude, accuracy, pos.timestamp || Date.now());
+                if (!fix) return;
+                this._userLoc = { lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy };
                 this._locationReady();   // swap the status text for the "Center on me" button
                 if (this.emptyEl && !this._rxPoints.length) {
                     this.emptyEl.textContent = 'Waiting for data…';
@@ -579,13 +581,15 @@ export class Signal3DMap {
     // Outlier rejection for GPS fixes. Compares each fix to where constant-velocity
     // motion from the last two accepted fixes predicts it should be; rejects it if
     // it deviates by more than plausible acceleration (0.5·a·Δt²) plus its own
-    // accuracy and a noise floor allow. A single bad fix is held (marker stays
-    // put); after a few rejects in a row it gives up and trusts the new track
-    // (real jump / tunnel exit / GPS reset), rebuilding the velocity from scratch.
-    // Returns true when the fix should be used.
+    // accuracy and a noise floor allow. For a rejected fix it dead-reckons —
+    // returns the predicted point along the last known velocity — so the marker
+    // keeps gliding instead of freezing; after a few rejects in a row it gives up
+    // and trusts the new track (real jump / tunnel exit / GPS reset). State is
+    // only ever advanced on real accepted fixes, so the estimate never drifts on
+    // its own predictions. Returns { lat, lon, accuracy } to use, or null to hold.
     _gpsAccept(lat, lon, accuracy, t) {
         const last = this._gpsLast;
-        if (!last) { this._gpsLast = { lat, lon, t }; this._gpsPrev = null; this._gpsReject = 0; return true; }
+        if (!last) { this._gpsLast = { lat, lon, t, accuracy }; this._gpsPrev = null; this._gpsReject = 0; return { lat, lon, accuracy }; }
 
         const dt = Math.max(0.001, (t - last.t) / 1000);   // seconds since last accepted fix
         const mPerDegLat = 111320;
@@ -593,15 +597,15 @@ export class Signal3DMap {
         const nx = (lon - last.lon) * mPerDegLon;          // metres moved from last fix
         const ny = (lat - last.lat) * mPerDegLat;
 
-        let reject;
+        let reject, vx = 0, vy = 0;
         const prev = this._gpsPrev;
         if (!prev) {
             // No velocity yet — only reject an outright teleport.
             reject = accuracy > GPS_MAX_ACC || Math.hypot(nx, ny) / dt > GPS_FALLBACK_SPEED;
         } else {
             const dtPrev = Math.max(0.001, (last.t - prev.t) / 1000);
-            const vx = (last.lon - prev.lon) * mPerDegLon / dtPrev;   // velocity at last fix (m/s)
-            const vy = (last.lat - prev.lat) * mPerDegLat / dtPrev;
+            vx = (last.lon - prev.lon) * mPerDegLon / dtPrev;        // velocity at last fix (m/s)
+            vy = (last.lat - prev.lat) * mPerDegLat / dtPrev;
             const residual = Math.hypot(nx - vx * dt, ny - vy * dt);  // deviation from the prediction
             const tol = 0.5 * GPS_MAX_ACCEL * dt * dt + 2 * (accuracy || 0) + GPS_BASE_TOL;
             reject = accuracy > GPS_MAX_ACC || residual > tol;
@@ -609,13 +613,20 @@ export class Signal3DMap {
 
         if (reject && this._gpsReject < GPS_MAX_REJECT) {
             this._gpsReject++;
-            return false;   // outlier — hold the previous position
+            if (!prev) return null;   // no velocity to extrapolate — hold the last fix
+            // Dead-reckon: glide along the last known velocity (dt grows while we
+            // keep rejecting, so the point advances). State stays on the real fixes.
+            return {
+                lat: last.lat + (vy * dt) / mPerDegLat,
+                lon: last.lon + (vx * dt) / mPerDegLon,
+                accuracy: last.accuracy,
+            };
         }
         // Accept: either plausible, or we've held long enough and now trust the move.
         this._gpsPrev   = reject ? null : last;   // after a forced accept, rebuild velocity afresh
-        this._gpsLast   = { lat, lon, t };
+        this._gpsLast   = { lat, lon, t, accuracy };
         this._gpsReject = 0;
-        return true;
+        return { lat, lon, accuracy };
     }
 
     currentLocation() {
