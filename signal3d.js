@@ -1471,9 +1471,16 @@ export class Signal3DMap {
         const maxPhi  = this.controls.maxPolarAngle ?? (Math.PI / 2 - 0.08);
         const fovRad  = this.camera.fov * Math.PI / 180;
         const offsetAt = phi => (Math.PI / 2 - phi) - Math.atan2(r * Math.cos(phi), d + r * Math.sin(phi));
+        // Leave headroom above the repeater for ~4 dot-height units of its spire,
+        // so the marker plus that stretch stay in view instead of the repeater
+        // sitting near the top edge with the spire cut off. `want` is where the
+        // repeater should sit above the view centre; tilt toward the horizon
+        // whenever it would sit higher than that.
+        const sy = this._rxPointsGroup?.scale.y ?? 1;
+        const headroom = Math.atan2(4 * sy, r + d);   // angular height of ~4 units at the repeater
+        const want = Math.max(0, fovRad / 2 * 0.6 - headroom);
         let phiTo = phi0;
-        if (offsetAt(phi0) > fovRad / 2 * 0.85) {
-            const want = fovRad / 2 * 0.6;       // place R ~60% toward the top edge
+        if (offsetAt(phi0) > want) {
             if (offsetAt(maxPhi) >= want) {
                 phiTo = maxPhi;                  // as horizontal as allowed
             } else {
