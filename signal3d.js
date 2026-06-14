@@ -1861,7 +1861,9 @@ export class Signal3DMap {
             const group = new THREE.Group();
             const cone = new THREE.Mesh(
                 new THREE.ConeGeometry(1, 2.8, 14),
-                new THREE.MeshBasicMaterial({ color: 0xff3355 })
+                // Lambert (not Basic) so the cone is shaded by the scene's ambient
+                // + directional lights and reads as a 3D solid, not a flat blob.
+                new THREE.MeshLambertMaterial({ color: 0xff3355 })
             );
             cone.position.y = 1.4;
             group.add(cone);

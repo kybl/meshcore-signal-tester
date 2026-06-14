@@ -121,6 +121,13 @@ html.ui-larger body {
     color: var(--border);
 }
 
+/* The footer sits on <body>, whose background (--bg-gutter) is dark navy in
+   BOTH themes. In light theme the inherited text vars turn dark → unreadable on
+   that dark strip, so pin the footer to the dark-theme (light-on-dark) colours. */
+html.light-theme .app-footer   { color: #5E90AC; }
+html.light-theme .app-footer a { color: #9EC8E8; }
+html.light-theme .footer-sep   { color: #2A4E6E; }
+
 header {
     background: var(--bg-header);
     padding: 8px 16px;
