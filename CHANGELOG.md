@@ -1,120 +1,59 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.0] - 2026-06-14
 
 ### Added
 
-- **Zoom and pan the 2D signal charts on the time (X) axis.** Scroll the mouse
-  wheel to zoom about the cursor, drag across a region to zoom into it, or pinch
-  with two fingers on touch. Once zoomed, pan with a one-finger drag, a
-  horizontal (or Shift+) wheel. Both charts (SNR and RSSI) share one time window
-  so they stay aligned. Double-click the chart or use the **Reset zoom** button
-  to return to the full view. (Pinch now works on a densely filled chart too.)
+- **Zoom and pan the 2D signal charts** along the time axis — wheel or pinch to
+  zoom, drag across a region to zoom into it, drag or Shift+wheel to pan. Both
+  charts stay aligned; double-click or **Reset zoom** returns to the full view.
+- **More 3D map styles, none needing an API key** — CARTO (Dark Matter,
+  Positron, Voyager, plus no-label variants), Esri (Dark/Light Gray Canvas and
+  satellite), extra OpenStreetMap flavours, and a **None (no map)** option. In
+  dark mode the area around the map is now black.
+- **Longer history durations** — Auto-remove and Display now offer **3 h** and
+  **12 h** (the little-used 10 min and 30 min were removed).
 
-- **More 3D map styles** (none of them need an API key):
-  - CARTO basemaps — Dark Matter, Positron (light) and Voyager, each also in a
-    no-labels variant that keeps the floor clean under the signal beads;
-  - Esri basemaps — Dark Gray Canvas, Light Gray Canvas and World Imagery
-    (satellite);
-  - more OpenStreetMap flavours — CyclOSM (cycling), Humanitarian (HOT),
-    German and French styles;
-  - a **None (no map)** option that drops the map imagery and shows a plain floor.
-- **Dark page = dark map background** — when the page is in dark mode the 3D map
-  background is now black (separate from the chosen map style — a dark *page*
-  and a dark *basemap* are two different things).
+### Changed
 
-- **All views now render the same way regardless of the Display window.** Every
-  view (charts, 3D map, packet table) draws from the on-disk store plus a short
-  in-memory "tail" of just-arrived packets, instead of switching between a
-  separate live (RAM) path for short windows and a disk path for "All". This
-  removes the behavioural differences between windows (downsampling, point
-  merging, and a packet cell now consistently shows the strongest-RSSI
-  observation everywhere). New packets still appear immediately via the tail; the
-  disk caches refresh in the background. There is now a **single** render path:
-  when the disk cache is empty (store still opening, or — for the <1% of browsers
-  without usable IndexedDB — unavailable) the cutoff-filtered tail alone is the
-  full live RAM window, so the no-store case is handled by the same code rather
-  than a separate, hard-to-test fallback branch.
-
-- **Captured data is now stored on disk (IndexedDB) instead of only in memory.**
-  The full session history is persisted as it is captured; only a bounded recent
-  window is kept in RAM for rendering. This means:
-  - "Auto-remove: Never" keeps the full history without growing memory without
-    limit — it is bounded by disk storage instead of RAM.
-  - Storage is isolated per browser tab, so two tabs capturing different devices
-    never mix their data. On launch, if a previous session's data is present, the
-    app asks whether to load it (otherwise it starts clean). A within-tab reload
-    resumes silently, and on Android a renderer-crash rebuild resumes the
-    in-progress session automatically. Databases of closed sessions are
-    garbage-collected.
-  - "Display: All" (or a window wider than the in-RAM budget) renders the signal
-    charts from a **downsampled** view of the full history on disk, so showing the
-    whole session no longer has to load every packet into memory at once.
-  - The 3D map downsamples the full history onto a lat/lon grid whose cell size is
-    estimated up-front from the region's extent and a target dot budget, then
-    clamped to the screen resolution; it re-queries a finer grid for the visible
-    region as you zoom/pan. A Morton (Z-order) spatial index makes the
-    visible-region query a single index range scan instead of scanning all of
-    history.
-  - The packet table is paginated (prev/next, newest first) over the disk history
-    when viewing a wide / "All" window.
-  - CSV export streams the full history from disk, not just what is in memory.
-  - While capturing, every view updates from memory immediately — each new
-    packet is folded directly into the charts' time-bucket cache, the 3D map's
-    grid-cell cache and the newest table page. Nothing re-reads the disk on a
-    timer; disk is only read when a view changes (Display window, chart zoom-in,
-    table page navigation). The table page you are reading is never flipped, and
-    the map keeps its current zoom.
+- **The full capture history is now kept on disk, not just in memory.** With
+  "Auto-remove: Never" the app keeps the whole session without slowing down or
+  running out of memory, and your data now survives a reload or a crash — on
+  launch it asks whether to resume the previous session. Every view (charts, 3D
+  map, packet table) shows the same data whatever the Display window, and CSV
+  export covers the complete history.
+- **Selecting or filtering a repeater** narrows the Received Packets table to
+  just that repeater's packets, so you no longer page through empty pages.
+- The Seen Repeaters **"Show all rows" toggle is now "Expand table"**, and the
+  Display menu lists **"All" last**.
 
 ### Fixed
 
-- **Android app no longer freezes on a blank screen after running for hours.**
-  Two causes were addressed:
-  - Unbounded memory growth. With Auto-remove "Never" (the default) the heap grew
-    until Android OOM-killed the WebView renderer. Memory is now bounded by a
-    fixed in-RAM window (the full history lives on disk — see above).
-  - If the WebView renderer was killed anyway (e.g. the OS reclaiming memory in
-    the background), the app showed a permanent blank screen. It now detects this
-    and rebuilds the WebView so the UI recovers instead of staying frozen.
-- **Re-importing the same CSV no longer keeps adding duplicate points.** Imports
-  are deduplicated against the persisted history, so importing an already-imported
-  file is a no-op.
-- **Cancelling the CSV import "data already loaded" prompt** no longer leaves the
-  Import button stuck showing "Importing…".
-- **3D map no longer loses off-screen points in wide / "All" views.** Zoom/pan
-  used to replace the whole point set with only the visible region's points, so
-  rotating back to a previously visible area showed missing dots. The map now
-  keeps a full-extent base layer and only overlays a finer grid for the visible
-  region.
-- **The "my location" cone (and the device marker) no longer flicker.** Their
-  ground disc and base caps sat almost coplanar with the map plane and z-fought
-  with it as the marker rescaled each frame; their depth is now biased slightly
-  toward the camera (polygonOffset), so they resolve above the plane while still
-  behaving as normal 3D objects.
-- **Moving around the 3D map with many points is much smoother.** Several
-  causes were addressed: disk scans now fetch records in large batches instead
-  of one round-trip per record; panning/rotating within an already-loaded region
-  no longer re-queries or rebuilds geometry (only after moving a quarter of the
-  view or zooming ≥25%); and, most importantly, the per-packet work during live
-  capture (rebuilding the map point geometry and both tables) is now coalesced —
-  the map geometry rebuild is throttled and skipped entirely while you are
-  panning/rotating, and the tables refresh a few times a second instead of on
-  every packet. (Movement was smooth with capture stopped, janky while capturing.)
-- **Newly ingested packets now show in a wide / "All" view even when not
-  capturing** (e.g. the debug "Inject a fake RX" tool). The wide view renders a
-  disk snapshot that previously only refreshed during live capture, so an
-  injected packet appeared to do nothing; it now refreshes whenever new data is
-  ingested.
-- **"Center on me" now has a dead zone.** While following, the camera only
-  glides after you once your marker leaves the central third of the view, and
-  small manual map adjustments that keep the marker inside that zone no longer
-  switch the follow mode off.
-
-### Known limitations / to verify on-device
-
-- The IndexedDB storage + downsampling + pagination paths have been
-  syntax-checked but need runtime validation on a device (they cannot be
-  exercised in CI without a browser and a live packet stream).
+- **The Android app no longer freezes on a blank screen after running for
+  hours**, and recovers on its own if the system reclaims it in the background.
+- **Packets captured before location was turned on are no longer placed at your
+  current location on the 3D map** — points with no position aren't shown at
+  all. Importing a CSV likewise never assigns the current location to rows that
+  have none.
+- **Connecting to a saved Bluetooth device while Bluetooth is off** now prompts
+  you to turn it on, instead of silently never connecting.
+- **A Bluetooth device you renamed after saving it** now connects under, and is
+  re-saved with, its new name.
+- **Seen Repeaters and the "Active"/"Repeaters" counts** now show the whole
+  Display window after a long capture instead of shrinking to only the recent
+  ones; old packets also correctly leave the table as they age past the Display
+  window, and the charts' time span matches the window.
+- **Better light/dark readability** — the map's location-status text, the 3D-map
+  fullscreen button, the packet detail panel and the page footer are now legible
+  in both themes, and map buttons no longer look stuck-pressed after a tap.
+- **The decoded packet detail (JSON) shows again** when you expand a row in
+  Received Packets.
+- **3D map**: off-screen dots are no longer lost when zoomed out in wide views,
+  the location markers no longer flicker, and moving around stays smooth even
+  while capturing.
+- **CSV import**: re-importing the same file no longer adds duplicate points,
+  and cancelling the import prompt no longer leaves the button stuck on
+  "Importing…".
 
 ## [1.1.0] - 2026-06-07
 
