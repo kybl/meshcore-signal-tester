@@ -333,7 +333,7 @@ export class Signal3DMap {
         // Only the my-location cone uses a lit material (everything else is
         // MeshBasic/Points), so a low ambient + strong directional gives that
         // cone clear 3D shading without affecting the dots, floor or other markers.
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.62));
         const dl = new THREE.DirectionalLight(0xffffff, 0.95);
         dl.position.set(60, 180, 80);
         this.scene.add(dl);
@@ -1861,16 +1861,17 @@ export class Signal3DMap {
         const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
         if (!pos) return;
         if (!this._userMarker) {
+            const COL = 0xff6678;   // light red — bright enough to read even on the shaded side
             const group = new THREE.Group();
             const cone = new THREE.Mesh(
                 new THREE.ConeGeometry(1, 2.8, 14),
                 // Lambert (not Basic) so the cone is shaded by the scene's ambient
                 // + directional lights and reads as a 3D solid, not a flat blob.
-                new THREE.MeshLambertMaterial({ color: 0xff3355 })
+                new THREE.MeshLambertMaterial({ color: COL })
             );
             cone.position.y = 1.4;
             group.add(cone);
-            group.add(this._makeMarkerBase(0xff3355));
+            group.add(this._makeMarkerBase(COL));
             this._markerNoZFight(group);
             this._userMarker = group;
             this._userMarker.visible = this._showMarker;
