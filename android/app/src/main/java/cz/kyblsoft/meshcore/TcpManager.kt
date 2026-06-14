@@ -1,7 +1,6 @@
 package cz.kyblsoft.meshcore
 
 import android.util.Base64
-import org.json.JSONObject
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -38,7 +37,7 @@ class TcpManager(private val js: JsApi) {
                 s.tcpNoDelay = true
             } catch (e: Exception) {
                 try { s.close() } catch (_: Exception) {}
-                js.resolve(reqId, false, err("NetworkError", "Couldn't reach $host:$port — ${e.message}"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "Couldn't reach $host:$port — ${e.message}"))
                 return@Thread
             }
             socket = s
@@ -71,7 +70,7 @@ class TcpManager(private val js: JsApi) {
         ioExecutor.execute {
             val o = output
             if (o == null) {
-                js.resolve(reqId, false, err("NetworkError", "WiFi socket not open"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "WiFi socket not open"))
                 return@execute
             }
             try {
@@ -79,7 +78,7 @@ class TcpManager(private val js: JsApi) {
                 o.flush()
                 js.resolve(reqId, true, null)
             } catch (e: Exception) {
-                js.resolve(reqId, false, err("NetworkError", "Write failed: ${e.message}"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "Write failed: ${e.message}"))
             }
         }
     }
@@ -95,9 +94,6 @@ class TcpManager(private val js: JsApi) {
         socket = null
         output = null
     }
-
-    private fun err(name: String, message: String): String =
-        JSONObject().put("name", name).put("message", message).toString()
 
     companion object {
         private const val CONNECT_TIMEOUT_MS = 8000

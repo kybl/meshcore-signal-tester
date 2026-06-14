@@ -152,7 +152,7 @@ class SerialManager(private val context: Context, private val js: JsApi) {
                         js.resolve(reqId, true, portInfo(device).toString())
                     } else {
                         // Matches the web app: user denial = NotFoundError.
-                        js.resolve(reqId, false, err("NotFoundError", "USB permission denied"))
+                        js.resolve(reqId, false, errJson(BridgeError.NOT_FOUND, "USB permission denied"))
                     }
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
@@ -170,22 +170,22 @@ class SerialManager(private val context: Context, private val js: JsApi) {
             closeInternal()
             val driver = knownDrivers[portId] ?: availableDrivers().firstOrNull { portIdFor(it.device) == portId }
             if (driver == null) {
-                js.resolve(reqId, false, err("NotFoundError", "USB device no longer attached"))
+                js.resolve(reqId, false, errJson(BridgeError.NOT_FOUND, "USB device no longer attached"))
                 return@execute
             }
             val device = driver.device
             if (!usbManager.hasPermission(device)) {
-                js.resolve(reqId, false, err("SecurityError", "USB permission not granted"))
+                js.resolve(reqId, false, errJson(BridgeError.SECURITY, "USB permission not granted"))
                 return@execute
             }
             val connection = usbManager.openDevice(device)
             if (connection == null) {
-                js.resolve(reqId, false, err("NetworkError", "Could not open USB device"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "Could not open USB device"))
                 return@execute
             }
             val p = driver.ports.firstOrNull()
             if (p == null) {
-                js.resolve(reqId, false, err("NetworkError", "USB device has no serial port"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "USB device has no serial port"))
                 return@execute
             }
             try {
@@ -197,7 +197,7 @@ class SerialManager(private val context: Context, private val js: JsApi) {
                 try { p.setRTS(true) } catch (_: Exception) {}
             } catch (e: Exception) {
                 try { p.close() } catch (_: Exception) {}
-                js.resolve(reqId, false, err("NetworkError", "Open failed: ${e.message}"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "Open failed: ${e.message}"))
                 return@execute
             }
 
@@ -221,14 +221,14 @@ class SerialManager(private val context: Context, private val js: JsApi) {
         ioExecutor.execute {
             val p = port
             if (p == null || portId != openPortId) {
-                js.resolve(reqId, false, err("NetworkError", "Serial port not open"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "Serial port not open"))
                 return@execute
             }
             try {
                 p.write(Base64.decode(base64, Base64.DEFAULT), WRITE_TIMEOUT_MS)
                 js.resolve(reqId, true, null)
             } catch (e: Exception) {
-                js.resolve(reqId, false, err("NetworkError", "Write failed: ${e.message}"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "Write failed: ${e.message}"))
             }
         }
     }
@@ -252,9 +252,6 @@ class SerialManager(private val context: Context, private val js: JsApi) {
         closeInternal()
         js.serialDisconnected(portId)
     }
-
-    private fun err(name: String, message: String): String =
-        JSONObject().put("name", name).put("message", message).toString()
 
     companion object {
         private const val ACTION_USB_PERMISSION = "cz.kyblsoft.meshcore.USB_PERMISSION"

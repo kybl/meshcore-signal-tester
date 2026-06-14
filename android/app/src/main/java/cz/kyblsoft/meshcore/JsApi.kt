@@ -10,7 +10,14 @@ import org.json.JSONObject
  *
  * The matching JS handlers live in native-bridge.js.
  */
-class JsApi(private var webView: WebView) {
+class JsApi(webView: WebView) {
+
+    // @Volatile: rebind() runs on the main thread while eval() is called from
+    // the BLE GATT callback / serial I/O / TCP reader threads, so the field is
+    // read and written across threads. Volatile guarantees those threads see
+    // the freshly rebound view rather than a stale reference.
+    @Volatile
+    private var webView: WebView = webView
 
     /**
      * Point this bridge at a freshly built WebView. Used when the renderer

@@ -1168,11 +1168,7 @@ class MeshCoreApp {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!this.device);
         }
     }
 
@@ -1198,11 +1194,7 @@ class MeshCoreApp {
                 try {
                     await this.connectToDevice(device);
                 } catch (error) {
-                    if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                        alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-                    }
-                    if (this.device) this.onDisconnected();
-                    else this._resetConnectBtn();
+                    this._handleConnectError(error, !!this.device);
                 }
                 return;
             }
@@ -1225,11 +1217,7 @@ class MeshCoreApp {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!this.device);
         }
     }
 
@@ -1264,12 +1252,20 @@ class MeshCoreApp {
 
             await this.connectToSerialPort(port);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.serialPort || this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!(this.serialPort || this.device));
         }
+    }
+
+    // Shared handler for a failed connect attempt. `hasConnection` says whether a
+    // transport actually came up (tear it down) or never did (just reset the
+    // button). NotFoundError = user cancelled the picker; InvalidStateError = BT
+    // off (already prompted natively) — neither warrants an alert.
+    _handleConnectError(error, hasConnection) {
+        if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
+            alert('Connection error: ' + error.message);
+        }
+        if (hasConnection) this.onDisconnected();
+        else this._resetConnectBtn();
     }
 
     _resetConnectBtn() {
@@ -1438,11 +1434,7 @@ class MeshCoreApp {
             const port = await navigator.serial.requestPort({ filters: [] });
             await this.connectToSerialPort(port);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.serialPort || this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!(this.serialPort || this.device));
         }
     }
 

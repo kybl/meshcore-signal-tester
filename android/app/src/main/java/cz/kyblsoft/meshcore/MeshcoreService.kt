@@ -1,6 +1,5 @@
 package cz.kyblsoft.meshcore
 
-import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,14 +7,12 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import androidx.core.content.ContextCompat
 
 /**
  * Foreground service that keeps the process alive (and the CPU running via a
@@ -68,7 +65,7 @@ class MeshcoreService : Service() {
         // try the richest type set first and fall back until one is accepted.
         val connected = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         val loc = ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-        val candidates = if (hasLocationPermission())
+        val candidates = if (Permissions.hasLocation(this))
             listOf(connected or loc, connected, loc)
         else
             listOf(connected)
@@ -81,12 +78,6 @@ class MeshcoreService : Service() {
         // Last resort: a plain foreground service with no special type.
         try { startForeground(NOTIF_ID, notification) } catch (_: Exception) {}
     }
-
-    private fun hasLocationPermission(): Boolean =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED ||
-        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
 
     private fun buildNotification(): Notification =
         buildNotification(this, statusText ?: getString(R.string.notif_text))
