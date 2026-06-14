@@ -2,6 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=115';
 import { PacketStore } from './packet-store.js?v=14';
+import { buildCsv, parseCsv } from './csv.js?v=1';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -6080,16 +6081,6 @@ class MeshCoreApp {
 
         const msgFilter = this._msgFilter.toLowerCase().trim();
 
-        const esc = v => {
-            if (v == null || v === '') return '';
-            const s = String(v);
-            return (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
-                ? '"' + s.replace(/"/g, '""') + '"' : s;
-        };
-
-        const header = ['time', 'type', 'hash', 'repeater', 'snr', 'uplink_snr', 'rssi', 'raw_hex', 'lat', 'lon', 'text', 'sender'];
-        const lines = [];
-
         // One row per (hash, repeater) observation, sorted chronologically.
         // Source the full history from disk when available; otherwise the RAM
         // window. Each row carries its own rawHex (per-path) and the per-hash
@@ -6139,47 +6130,28 @@ class MeshCoreApp {
                 contactsToExport.set(c.pubKeyFullHex, c);
             }
         }
-        for (const c of contactsToExport.values()) {
-            lines.push('# CONTACT,' + [c.pubKeyFullHex, c.name || '', c.lat ?? 0, c.lon ?? 0].map(esc).join(','));
-        }
-        lines.push(header.join(','));
+        // Map the gathered observations into the flat shape csv.js serialises;
+        // numeric/date formatting lives in buildCsv.
+        const observations = allRows.map(({ hash, data, rep }) => ({
+            time:      rep.time ?? data.firstSeen,
+            type:      data.type,
+            hash,
+            rawId:     rep.rawId,
+            snr:       rep.snr,
+            remoteSnr: rep.remoteSnr,
+            rssi:      rep.rssi,
+            rawHex:    rep.rawHex || data.rawHex,
+            lat:       rep.lat,
+            lon:       rep.lon,
+            text:      data.meta?.text,
+            sender:    data.meta?.sender,
+        }));
 
-        for (const { hash, data, rep } of allRows) {
-            lines.push([
-                new Date(rep.time ?? data.firstSeen).toISOString(),
-                data.type  || '',
-                hash,
-                rep.rawId  || '',
-                rep.snr?.toFixed(2) ?? '',
-                rep.remoteSnr?.toFixed(2) ?? '',
-                rep.rssi ?? '',
-                rep.rawHex || data.rawHex || '',
-                rep.lat    ?? '',
-                rep.lon    ?? '',
-                data.meta?.text   || '',
-                data.meta?.sender || '',
-            ].map(esc).join(','));
-        }
-
-        // Append sent SNR history rows
-        for (const p of sentSource) {
-            lines.push([
-                new Date(p.time).toISOString(),
-                'SentSNR',
-                'SENTSNR',
-                p.col || '',
-                '',
-                p.snr.toFixed(2),
-                '',
-                '',
-                p.lat ?? '',
-                p.lon ?? '',
-                p.label || '',
-                '',
-            ].map(esc).join(','));
-        }
-
-        const csv = lines.join('\r\n');
+        const csv = buildCsv({
+            contacts: [...contactsToExport.values()],
+            observations,
+            sentRows: sentSource,
+        });
         const suggestedName = `meshcore-signal-tester-${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.csv`;
 
         // Android native app: delegate to SAF picker (shows system "Save as" dialog)
@@ -6214,96 +6186,32 @@ class MeshCoreApp {
         URL.revokeObjectURL(url);
     }
 
-    _parseCsvLine(line) {
-        const cols = [];
-        let cur = '';
-        let inQ = false;
-        for (let i = 0; i < line.length; i++) {
-            const ch = line[i];
-            if (inQ) {
-                if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-                else if (ch === '"') inQ = false;
-                else cur += ch;
-            } else {
-                if (ch === '"') inQ = true;
-                else if (ch === ',') { cols.push(cur); cur = ''; }
-                else cur += ch;
-            }
-        }
-        cols.push(cur);
-        return cols;
-    }
-
     async _importCsv(file) {
         let text;
         try { text = await file.text(); } catch { alert('Could not read file.'); return; }
-        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
-        const lines = text.split(/\r?\n/);
-        if (lines.length < 2) return;
+        const parsed = parseCsv(text);
+        if (parsed.error === 'empty') return;
 
-        // Parse embedded contact metadata and find real header line
-        let headerLineIdx = 0;
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            if (line.startsWith('# CONTACT,')) {
-                const parts = this._parseCsvLine(line.slice('# CONTACT,'.length));
-                const [pubKeyFullHex, name, latStr, lonStr] = parts;
-                if (pubKeyFullHex && !this._contacts.has(pubKeyFullHex)) {
-                    const lat = parseFloat(latStr) || 0;
-                    const lon = parseFloat(lonStr) || 0;
-                    this._contacts.set(pubKeyFullHex, { name: name || null, type: null, lat, lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex });
-                }
-                continue;
+        // Merge any contacts embedded in the CSV (new keys only, keep existing).
+        // Done before the header check so a malformed body still imports contacts.
+        for (const c of parsed.contacts) {
+            if (!this._contacts.has(c.pubKeyFullHex)) {
+                this._contacts.set(c.pubKeyFullHex,
+                    { name: c.name, type: null, lat: c.lat, lon: c.lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex: c.pubKeyFullHex });
             }
-            headerLineIdx = i;
-            break;
         }
         this._updateContactsCount();
         this._scheduleContactsPersist();   // persist any contacts embedded in the CSV
 
-        const header = this._parseCsvLine(lines[headerLineIdx]);
-        const idx = name => header.indexOf(name);
-        const iTime = idx('time'), iType = idx('type'), iHash = idx('hash');
-        const iRep  = idx('repeater'), iRssi = idx('rssi'), iSnr = idx('snr');
-        const iUplinkSnr = idx('uplink_snr');
-        const iHex  = idx('raw_hex'), iLat = idx('lat'), iLon = idx('lon');
-        const iTxt  = idx('text'), iSnd = idx('sender');
-
-        if (iTime < 0 || iHash < 0 || iRep < 0) {
-            alert('Unrecognised CSV format — expected columns: time, hash, repeater.');
+        if (!parsed.ok) {
+            if (parsed.error === 'format')
+                alert('Unrecognised CSV format — expected columns: time, hash, repeater.');
             return;
         }
 
-        let rows = [];
-        for (let i = headerLineIdx + 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            const c = this._parseCsvLine(line);
-            const time = new Date(c[iTime]).getTime();
-            if (isNaN(time)) continue;
-            const lat = iLat >= 0 && c[iLat] !== '' ? parseFloat(c[iLat]) : null;
-            const lon = iLon >= 0 && c[iLon] !== '' ? parseFloat(c[iLon]) : null;
-            rows.push({
-                time,
-                type:      iType >= 0 ? c[iType] : '',
-                hash:      c[iHash],
-                repeater:  c[iRep],
-                rssi:      parseInt(c[iRssi]) || -100,
-                snr:       parseFloat(c[iSnr]) || 0,
-                rawHex:    iHex  >= 0 ? c[iHex]  : '',
-                lat:       lat != null && !isNaN(lat) ? lat : null,
-                lon:       lon != null && !isNaN(lon) ? lon : null,
-                uplinkSnr: iUplinkSnr >= 0 && c[iUplinkSnr] !== '' ? parseFloat(c[iUplinkSnr]) : null,
-                csvText:   iTxt >= 0 ? c[iTxt]  : '',
-                csvSender: iSnd >= 0 ? c[iSnd]  : '',
-            });
-        }
-        // Split SentSNR rows from regular rows
-        const sentSnrRows = rows.filter(r => r.type === 'SentSNR');
-        rows = rows.filter(r => r.type !== 'SentSNR');
-
+        const rows = parsed.rows;
+        const sentSnrRows = parsed.sentRows;
         if (rows.length === 0 && sentSnrRows.length === 0) return;
 
         const importBtn = document.getElementById('importCsvBtn');
