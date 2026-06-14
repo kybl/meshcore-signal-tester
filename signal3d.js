@@ -1117,7 +1117,13 @@ export class Signal3DMap {
         this._rxPoints   = this._rxPoints.filter(p => p.time >= cutoff);
         this._outgoingPts = this._outgoingPts.filter(p => p.time >= cutoff);
         if (this._rxPoints.length === before && this._outgoingPts.length === sentBefore) return;
-        if (this._selectedCol && !this._rxPoints.some(p => p.col === this._selectedCol)) {
+        // Only drop the selection if the selected repeater is no longer rendered.
+        // Check the same source _rebuildDots draws: in wide/"All" display mode the
+        // dots come from _histPoints (which this purge doesn't touch), so checking
+        // only _rxPoints would wrongly deselect a repeater picked from a historical
+        // dot on the next cleanup tick.
+        const rendered = this._histPoints != null ? this._histPoints : this._rxPoints;
+        if (this._selectedCol && !rendered.some(p => p.col === this._selectedCol)) {
             this._selectedCol = null;
             this._updateInfoPanel();
             this.onSelect?.(null);
