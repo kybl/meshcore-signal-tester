@@ -253,34 +253,8 @@ class MeshCoreApp {
         }
 
         // Custom resize handles — large touch target below each chart
-        document.querySelectorAll('.chart-svg-wrap').forEach(wrap => {
-            const handle = document.createElement('div');
-            handle.className = 'chart-resize-handle';
-            wrap.insertAdjacentElement('afterend', handle);
-            let startY = 0, startH = 0;
-            const onMove = e => {
-                const cy = e.touches ? e.touches[0].clientY : e.clientY;
-                wrap.style.height = Math.max(80, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
-            };
-            const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('touchmove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                document.removeEventListener('touchend', onUp);
-            };
-            handle.addEventListener('mousedown', e => {
-                e.preventDefault();
-                startY = e.clientY; startH = wrap.offsetHeight;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-            });
-            handle.addEventListener('touchstart', e => {
-                e.preventDefault();
-                startY = e.touches[0].clientY; startH = wrap.offsetHeight;
-                document.addEventListener('touchmove', onMove, { passive: false });
-                document.addEventListener('touchend', onUp);
-            }, { passive: false });
-        });
+        document.querySelectorAll('.chart-svg-wrap').forEach(
+            wrap => this._attachResizeHandle(wrap, 'chart-resize-handle', 80));
         setInterval(() => {
             if (!this._chartFrozenAt) this._scheduleChartRender();
             if (isFinite(this.DISPLAY_LIFETIME)) {
@@ -783,40 +757,45 @@ class MeshCoreApp {
         inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inject(); } });
     }
 
+    // Append a drag-to-resize handle below `target` that adjusts its height
+    // between `minHeight` and the viewport. Shared by the signal charts and the
+    // 3D map container.
+    _attachResizeHandle(target, handleClass, minHeight) {
+        const handle = document.createElement('div');
+        handle.className = handleClass;
+        target.insertAdjacentElement('afterend', handle);
+        let startY = 0, startH = 0;
+        const onMove = e => {
+            const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            target.style.height = Math.max(minHeight, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('touchmove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('touchend', onUp);
+        };
+        handle.addEventListener('mousedown', e => {
+            e.preventDefault();
+            startY = e.clientY; startH = target.offsetHeight;
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+        handle.addEventListener('touchstart', e => {
+            e.preventDefault();
+            startY = e.touches[0].clientY; startH = target.offsetHeight;
+            document.addEventListener('touchmove', onMove, { passive: false });
+            document.addEventListener('touchend', onUp);
+        }, { passive: false });
+    }
+
     _initSignalMap() {
         const canvas = document.getElementById('mapCanvas');
         if (!canvas) return;
 
         // Resize handle — same pattern as chart resize handles
         const mapContainer = document.querySelector('.map-container');
-        if (mapContainer) {
-            const handle = document.createElement('div');
-            handle.className = 'map-resize-handle';
-            mapContainer.insertAdjacentElement('afterend', handle);
-            let startY = 0, startH = 0;
-            const onMove = e => {
-                const cy = e.touches ? e.touches[0].clientY : e.clientY;
-                mapContainer.style.height = Math.max(200, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
-            };
-            const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('touchmove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                document.removeEventListener('touchend', onUp);
-            };
-            handle.addEventListener('mousedown', e => {
-                e.preventDefault();
-                startY = e.clientY; startH = mapContainer.offsetHeight;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-            });
-            handle.addEventListener('touchstart', e => {
-                e.preventDefault();
-                startY = e.touches[0].clientY; startH = mapContainer.offsetHeight;
-                document.addEventListener('touchmove', onMove, { passive: false });
-                document.addEventListener('touchend', onUp);
-            }, { passive: false });
-        }
+        if (mapContainer) this._attachResizeHandle(mapContainer, 'map-resize-handle', 200);
 
         const sourceSel = document.getElementById('mapSourceSelect');
         const savedSource = Store.get('mapSource', '');
@@ -927,6 +906,10 @@ class MeshCoreApp {
             Store.set('mapSource', sourceSel.value);
         });
 
+        this._setupMapSettings();
+    }
+
+    _setupMapSettings() {
         // Settings gear panel
         const settingsBtn   = document.getElementById('mapSettingsBtn');
         const settingsPanel = document.getElementById('mapSettingsPanel');
