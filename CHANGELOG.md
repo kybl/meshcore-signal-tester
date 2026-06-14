@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- **Location capture now starts automatically when you connect (Android).**
+  Granting the location permission during the Bluetooth/USB/WiFi connect flow
+  is enough — GPS starts streaming and packets are geotagged from connect time.
+  No more hunting for the 3D map's "Enable location" button, which now only
+  acts as a fallback when the permission is missing or location is off.
+
 ## [1.2.0] - 2026-06-14
 
 ### Added
@@ -20,11 +30,6 @@
 
 ### Changed
 
-- **Location capture now starts automatically when you connect (Android).**
-  Granting the location permission during the Bluetooth/USB/WiFi connect flow
-  is enough — GPS starts streaming and packets are geotagged from connect time.
-  No more hunting for the 3D map's "Enable location" button, which now only
-  acts as a fallback when the permission is missing or location is off.
 - **Longer history durations** — Auto-remove and Display now offer **3 h** and
   **12 h** (the little-used 10 min and 30 min were removed).
 - **The 3D map's "Cluster radius" setting is gone** — nearby points are now
