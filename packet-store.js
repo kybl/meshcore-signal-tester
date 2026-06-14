@@ -619,7 +619,7 @@ export class PacketStore {
                     tx.onerror = () => reject(tx.error);
                     tx.onabort = () => reject(tx.error);
                 });
-            } catch (e) { this._onWriteError(e); }
+            } catch (e) { console.warn(`PacketStore: prune ${store} failed:`, e); }
         }
         let deletedHashes = 0;
         try {
@@ -644,7 +644,7 @@ export class PacketStore {
                 tx.onerror = () => reject(tx.error);
                 tx.onabort = () => reject(tx.error);
             });
-        } catch (e) { this._onWriteError(e); }
+        } catch (e) { console.warn('PacketStore: prune hashes failed:', e); }
         return deletedHashes;
     }
 
@@ -657,7 +657,7 @@ export class PacketStore {
             tx.objectStore('sent').clear();
             tx.objectStore('kv').clear();
             await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        } catch (e) { console.warn('PacketStore: clearAll failed:', e); }
     }
 
     _onWriteError(e) {
