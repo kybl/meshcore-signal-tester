@@ -4,28 +4,24 @@
 
 ### Added
 
-- **Zoom and pan the 2D signal charts** along the time axis — wheel or pinch to
-  zoom, drag across a region to zoom into it, drag or Shift+wheel to pan. Both
-  charts stay aligned; double-click or **Reset zoom** returns to the full view.
-- **More 3D map styles, none needing an API key** — CARTO (Dark Matter,
-  Positron, Voyager, plus no-label variants), Esri (Dark/Light Gray Canvas and
-  satellite), extra OpenStreetMap flavours, and a **None (no map)** option. In
-  dark mode the area around the map is now black.
-- **Longer history durations** — Auto-remove and Display now offer **3 h** and
-  **12 h** (the little-used 10 min and 30 min were removed).
-
-### Changed
-
+- **Zoomable 2D signal charts** — wheel or pinch to zoom along the time axis,
+  drag across a region to zoom into it, drag or Shift+wheel to pan. Both charts
+  stay aligned; double-click or **Reset zoom** returns to the full view.
 - **The full capture history is now kept on disk, not just in memory.** With
   "Auto-remove: Never" the app keeps the whole session without slowing down or
   running out of memory, and your data now survives a reload or a crash — on
   launch it asks whether to resume the previous session. Every view (charts, 3D
   map, packet table) shows the same data whatever the Display window, and CSV
   export covers the complete history.
-- **Selecting or filtering a repeater** narrows the Received Packets table to
-  just that repeater's packets, so you no longer page through empty pages.
-- The Seen Repeaters **"Show all rows" toggle is now "Expand table"**, and the
-  Display menu lists **"All" last**.
+- **More 3D map styles** — CARTO (Dark Matter, Positron, Voyager, plus no-label
+  variants), Esri (Dark/Light Gray Canvas and satellite), extra OpenStreetMap
+  flavours, and a **None (no map)** option. In dark mode the area around the map
+  is now black.
+
+### Changed
+
+- **Longer history durations** — Auto-remove and Display now offer **3 h** and
+  **12 h** (the little-used 10 min and 30 min were removed).
 
 ### Fixed
 
@@ -46,14 +42,6 @@
 - **Better light/dark readability** — the map's location-status text, the 3D-map
   fullscreen button, the packet detail panel and the page footer are now legible
   in both themes, and map buttons no longer look stuck-pressed after a tap.
-- **The decoded packet detail (JSON) shows again** when you expand a row in
-  Received Packets.
-- **3D map**: off-screen dots are no longer lost when zoomed out in wide views,
-  the location markers no longer flicker, and moving around stays smooth even
-  while capturing.
-- **CSV import**: re-importing the same file no longer adds duplicate points,
-  and cancelling the import prompt no longer leaves the button stuck on
-  "Importing…".
 
 ## [1.1.0] - 2026-06-07
 
