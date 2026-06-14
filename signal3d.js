@@ -21,6 +21,15 @@ const TILE_PX        = 256;
 // depend on when the first tile load happened.
 const CAMERA_REF_DIST = PLANE_SIZE * Math.sqrt(0.4*0.4 + 0.55*0.55 + 0.6*0.6); // ≈ 90.7
 
+// GPS outlier rejection (see _gpsAccept). The marker and the packet geotag use
+// only accepted fixes. Tuned for a moving car; conservative so legitimate motion
+// (incl. hard braking/cornering) is never dropped.
+const GPS_MAX_ACCEL      = 12;   // m/s² — plausible accel/brake/cornering
+const GPS_BASE_TOL       = 15;   // m — base slack (GPS noise) on top of the accel + accuracy budget
+const GPS_MAX_ACC        = 150;  // m — reject fixes less certain than this
+const GPS_MAX_REJECT     = 4;    // accept after this many consecutive rejects (anti-stuck: real jump / GPS reset)
+const GPS_FALLBACK_SPEED = 70;   // m/s (~252 km/h) — speed gate used until a velocity is known
+
 // Mapy.com tile API: path includes tile size (256) before z/x/y.
 // Reference: https://developer.mapy.com/rest-api/maptiles/
 const MAPYCOM_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
@@ -154,6 +163,9 @@ export class Signal3DMap {
         this._pinGroups = [];
         this._userLoc      = null;
         this._watchId      = null;
+        this._gpsLast      = null;   // last accepted fix {lat, lon, t} — for outlier rejection
+        this._gpsPrev      = null;   // the one before it, for the velocity estimate
+        this._gpsReject    = 0;      // consecutive rejected fixes (anti-stuck counter)
         this._followUser   = false;  // when true, camera tracks the user's GPS position
         this._userDragging = false;  // a pointer gesture on the map is in progress
         this.onFollowChange = opts.onFollowChange || null;
@@ -537,6 +549,9 @@ export class Signal3DMap {
                 clearTimeout(failTimer);
                 if (this.btnEl) this.btnEl.classList.add('hidden');
                 const { latitude, longitude, accuracy } = pos.coords;
+                // Drop one-off GPS outliers (the ~200 m spikes) before they reach
+                // the marker or get stamped onto packets — hold the last good fix.
+                if (!this._gpsAccept(latitude, longitude, accuracy, pos.timestamp || Date.now())) return;
                 this._userLoc = { lat: latitude, lon: longitude, accuracy };
                 this._locationReady();   // swap the status text for the "Center on me" button
                 if (this.emptyEl && !this._rxPoints.length) {
@@ -559,6 +574,48 @@ export class Signal3DMap {
             },
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
         );
+    }
+
+    // Outlier rejection for GPS fixes. Compares each fix to where constant-velocity
+    // motion from the last two accepted fixes predicts it should be; rejects it if
+    // it deviates by more than plausible acceleration (0.5·a·Δt²) plus its own
+    // accuracy and a noise floor allow. A single bad fix is held (marker stays
+    // put); after a few rejects in a row it gives up and trusts the new track
+    // (real jump / tunnel exit / GPS reset), rebuilding the velocity from scratch.
+    // Returns true when the fix should be used.
+    _gpsAccept(lat, lon, accuracy, t) {
+        const last = this._gpsLast;
+        if (!last) { this._gpsLast = { lat, lon, t }; this._gpsPrev = null; this._gpsReject = 0; return true; }
+
+        const dt = Math.max(0.001, (t - last.t) / 1000);   // seconds since last accepted fix
+        const mPerDegLat = 111320;
+        const mPerDegLon = 111320 * Math.cos(last.lat * Math.PI / 180);
+        const nx = (lon - last.lon) * mPerDegLon;          // metres moved from last fix
+        const ny = (lat - last.lat) * mPerDegLat;
+
+        let reject;
+        const prev = this._gpsPrev;
+        if (!prev) {
+            // No velocity yet — only reject an outright teleport.
+            reject = accuracy > GPS_MAX_ACC || Math.hypot(nx, ny) / dt > GPS_FALLBACK_SPEED;
+        } else {
+            const dtPrev = Math.max(0.001, (last.t - prev.t) / 1000);
+            const vx = (last.lon - prev.lon) * mPerDegLon / dtPrev;   // velocity at last fix (m/s)
+            const vy = (last.lat - prev.lat) * mPerDegLat / dtPrev;
+            const residual = Math.hypot(nx - vx * dt, ny - vy * dt);  // deviation from the prediction
+            const tol = 0.5 * GPS_MAX_ACCEL * dt * dt + 2 * (accuracy || 0) + GPS_BASE_TOL;
+            reject = accuracy > GPS_MAX_ACC || residual > tol;
+        }
+
+        if (reject && this._gpsReject < GPS_MAX_REJECT) {
+            this._gpsReject++;
+            return false;   // outlier — hold the previous position
+        }
+        // Accept: either plausible, or we've held long enough and now trust the move.
+        this._gpsPrev   = reject ? null : last;   // after a forced accept, rebuild velocity afresh
+        this._gpsLast   = { lat, lon, t };
+        this._gpsReject = 0;
+        return true;
     }
 
     currentLocation() {
