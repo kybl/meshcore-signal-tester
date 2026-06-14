@@ -225,6 +225,19 @@ class MeshCoreApp {
     }
 
     initUI() {
+        this._setupChartArea();
+        this._setupCollapsibleSections();
+        this._setupConnectionUi();
+        this._setupTableInteractions();
+        this._setupControls();
+        this._setupFiltersAndNotices();
+        this._initHelpSystem();
+        this._initWifiModal();
+        this._initSignalMap();
+        this._initDebug();
+    }
+
+    _setupChartArea() {
         this.connectBtn = document.getElementById('connectBtn');
         this.statusEl = document.getElementById('status');
         this.statusTextEl = document.getElementById('statusText');
@@ -277,7 +290,9 @@ class MeshCoreApp {
             }
             this._updateStats();
         }, 2000);
+    }
 
+    _setupCollapsibleSections() {
         // Collapsible sections — clicking anywhere in the header row toggles
         document.querySelectorAll('.section-header').forEach(header => {
             const btn = header.querySelector('.collapse-btn');
@@ -296,6 +311,9 @@ class MeshCoreApp {
                 updateHint(collapsed);
             });
         });
+    }
+
+    _setupConnectionUi() {
         this.msgTableHead = document.getElementById('msgTableHead');
         this.msgTableBody = document.getElementById('msgTableBody');
         this.emptyState = document.getElementById('emptyState');
@@ -334,7 +352,9 @@ class MeshCoreApp {
         document.getElementById('disconnectBtn')?.addEventListener('click', () => this.disconnect());
 
         document.getElementById('disconnectAlarmClose')?.addEventListener('click', () => this._hideDisconnectAlarm());
+    }
 
+    _setupTableInteractions() {
         // Pair-hover: hovering RSSI or SNR highlights both cells for that repeater
         if (this.msgTableBody) {
             this.msgTableBody.addEventListener('mouseover', e => {
@@ -428,7 +448,9 @@ class MeshCoreApp {
             const col = th.dataset.col;
             this._selectRepeater(col === this._selectedCol ? null : col);
         });
+    }
 
+    _setupControls() {
         document.getElementById('savedDevices')?.addEventListener('click', e => {
             const quickBtn = e.target.closest('.saved-btn');
             const forgetBtn = e.target.closest('.forget-btn');
@@ -575,7 +597,9 @@ class MeshCoreApp {
                 this._renderRepTable();
             });
         }
+    }
 
+    _setupFiltersAndNotices() {
         this.packetRateEl   = document.getElementById('packetRate');
         this.msgFilterCountEl = document.getElementById('msgFilterCount');
 
@@ -719,11 +743,6 @@ class MeshCoreApp {
                 e.returnValue = '';
             }
         });
-
-        this._initHelpSystem();
-        this._initWifiModal();
-        this._initSignalMap();
-        this._initDebug();
     }
 
     _initDebug() {
