@@ -3855,15 +3855,27 @@ class MeshCoreApp {
     // drag a region with the mouse, two-finger pinch on touch. Double-click or
     // the "Reset zoom" button returns to the full auto/live window.
 
+    // A viewport clientX mapped into the SVG's own (local, pre-transform) pixel
+    // space — the space style.left and the SVG's internal drawing both use.
+    // The page may be CSS-scaled (the desktop / text-size zoom transforms
+    // <body>), so getBoundingClientRect() is in scaled viewport pixels while
+    // svg.clientWidth is the unscaled layout width; dividing by their ratio
+    // undoes the scale. (Without this the drag-zoom selection band, positioned
+    // via style.left, landed off to the side by the scale factor.)
+    _chartLocalX(svg, clientX) {
+        const rect = svg.getBoundingClientRect();
+        const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
+        return (clientX - rect.left) / scale;
+    }
+
     // Map a clientX over `svg` to a time, using the window the chart was last
     // drawn with (so it matches what's on screen).
     _chartTimeAtClientX(svg, clientX) {
         const win = this._lastChartWindow ?? this._chartFullWindow;
         if (!win) return null;
-        const rect = svg.getBoundingClientRect();
         const { l: pl, r: pr } = CHART_PAD;
-        const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
-        const frac = Math.max(0, Math.min(1, (clientX - rect.left - pl) / cw));
+        const cw = Math.max(1, svg.clientWidth - pl - pr);
+        const frac = Math.max(0, Math.min(1, (this._chartLocalX(svg, clientX) - pl) / cw));
         return win.tMin + frac * (win.tMax - win.tMin);
     }
 
@@ -3952,10 +3964,13 @@ class MeshCoreApp {
             wrap.appendChild(band);
             this._zoomSelBand = band;
         }
-        const rect = svg.getBoundingClientRect();
         const { l: pl, r: pr } = CHART_PAD;
-        const left  = Math.max(pl, Math.min(xa, xb) - rect.left);
-        const right = Math.min((rect.width || svg.clientWidth) - pr, Math.max(xa, xb) - rect.left);
+        // Position in the SVG's local px (what style.left uses) — see _chartLocalX:
+        // a CSS-scaled page would otherwise offset the band by the scale factor.
+        const xaL = this._chartLocalX(svg, xa);
+        const xbL = this._chartLocalX(svg, xb);
+        const left  = Math.max(pl, Math.min(xaL, xbL));
+        const right = Math.min(svg.clientWidth - pr, Math.max(xaL, xbL));
         band.style.left = left + 'px';
         band.style.width = Math.max(0, right - left) + 'px';
         band.style.display = 'block';
