@@ -296,6 +296,41 @@
     // getInfo, a readable.getReader() with read()/releaseLock(), a
     // writable.getWriter() with write()/releaseLock(), and a 'disconnect' event.
 
+    // Shared read-stream machinery for the serial and WiFi port proxies: a queue
+    // of byte chunks plus pending read() resolvers, exposed as a Web-Streams-like
+    // reader. deliverData/deliverDone are driven by the native data/close
+    // callbacks; reset() re-arms a cached proxy for reconnect.
+    function makeReadStream() {
+        var readQueue = [];    // Uint8Array chunks waiting to be read
+        var readWaiters = [];  // pending read() resolvers
+        var closed = false;
+
+        function deliverData(bytes) {
+            if (readWaiters.length) readWaiters.shift()({ value: bytes, done: false });
+            else readQueue.push(bytes);
+        }
+        // Resolve any in-flight/future read() with done so app.js's read loop
+        // exits cleanly (on releaseLock, close, or device disconnect).
+        function deliverDone() {
+            closed = true;
+            while (readWaiters.length) readWaiters.shift()({ value: undefined, done: true });
+        }
+
+        var reader = {
+            read: function () {
+                if (readQueue.length) return Promise.resolve({ value: readQueue.shift(), done: false });
+                if (closed) return Promise.resolve({ value: undefined, done: true });
+                return new Promise(function (resolve) { readWaiters.push(resolve); });
+            },
+            cancel: function () { deliverDone(); return Promise.resolve(); },
+            releaseLock: function () { deliverDone(); }
+        };
+
+        function reset() { closed = false; readQueue.length = 0; readWaiters.length = 0; }
+
+        return { reader: reader, deliverData: deliverData, deliverDone: deliverDone, reset: reset };
+    }
+
     if (typeof window.AndroidSerial !== 'undefined') {
         var _serialPorts = {}; // portId -> SerialPort proxy
 
@@ -303,30 +338,8 @@
             var existing = _serialPorts[info.portId];
             if (existing) { existing._info = info; return existing; }
 
-            var readQueue = [];    // Uint8Array chunks waiting to be read
-            var readWaiters = [];  // pending read() resolvers
-            var closed = false;
-
-            function deliverData(bytes) {
-                if (readWaiters.length) readWaiters.shift()({ value: bytes, done: false });
-                else readQueue.push(bytes);
-            }
-            // Resolve any in-flight/future read() with done so app.js's read loop
-            // exits cleanly (on releaseLock, close, or device disconnect).
-            function deliverDone() {
-                closed = true;
-                while (readWaiters.length) readWaiters.shift()({ value: undefined, done: true });
-            }
-
-            var reader = {
-                read: function () {
-                    if (readQueue.length) return Promise.resolve({ value: readQueue.shift(), done: false });
-                    if (closed) return Promise.resolve({ value: undefined, done: true });
-                    return new Promise(function (resolve) { readWaiters.push(resolve); });
-                },
-                cancel: function () { deliverDone(); return Promise.resolve(); },
-                releaseLock: function () { deliverDone(); }
-            };
+            var stream = makeReadStream();
+            var reader = stream.reader;
 
             var writer = {
                 write: function (data) {
@@ -348,21 +361,19 @@
                 get writable() { return { getWriter: function () { return writer; } }; },
                 open: function (options) {
                     // Reset stream state so a cached proxy works on reconnect.
-                    closed = false;
-                    readQueue.length = 0;
-                    readWaiters.length = 0;
+                    stream.reset();
                     var baud = (options && options.baudRate) || 115200;
                     return call(function (id) {
                         window.AndroidSerial.open(id, info.portId, baud);
                     });
                 },
                 close: function () {
-                    deliverDone();
+                    stream.deliverDone();
                     try { window.AndroidSerial.close(info.portId); } catch (e) {}
                     return Promise.resolve();
                 },
-                _onData: deliverData,
-                _onClosed: deliverDone
+                _onData: stream.deliverData,
+                _onClosed: stream.deliverDone
             };
             Object.assign(port, eventTargetMixin());
             _serialPorts[info.portId] = port;
@@ -415,25 +426,9 @@
         var _wifiPort = null;
 
         window.__mcMakeWifiPort = function (host, tcpPort) {
-            var readQueue = [], readWaiters = [], closed = false, opened = false;
-            function deliverData(bytes) {
-                if (readWaiters.length) readWaiters.shift()({ value: bytes, done: false });
-                else readQueue.push(bytes);
-            }
-            function deliverDone() {
-                closed = true;
-                while (readWaiters.length) readWaiters.shift()({ value: undefined, done: true });
-            }
-
-            var reader = {
-                read: function () {
-                    if (readQueue.length) return Promise.resolve({ value: readQueue.shift(), done: false });
-                    if (closed) return Promise.resolve({ value: undefined, done: true });
-                    return new Promise(function (resolve) { readWaiters.push(resolve); });
-                },
-                cancel: function () { deliverDone(); return Promise.resolve(); },
-                releaseLock: function () { deliverDone(); }
-            };
+            var opened = false;
+            var stream = makeReadStream();
+            var reader = stream.reader;
             var writer = {
                 write: function (data) {
                     return call(function (id) {
@@ -449,18 +444,18 @@
                 get writable() { return { getWriter: function () { return writer; } }; },
                 open: function () {
                     if (opened) return Promise.resolve();
-                    closed = false; readQueue.length = 0; readWaiters.length = 0;
+                    stream.reset();
                     return call(function (id) {
                         window.AndroidWifi.open(id, host, tcpPort);
                     }).then(function () { opened = true; });
                 },
                 close: function () {
-                    deliverDone();
+                    stream.deliverDone();
                     try { window.AndroidWifi.close(); } catch (e) {}
                     return Promise.resolve();
                 },
-                _onData: deliverData,
-                _onClosed: deliverDone
+                _onData: stream.deliverData,
+                _onClosed: stream.deliverDone
             };
             Object.assign(port, eventTargetMixin());
             _wifiPort = port;
