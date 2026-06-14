@@ -325,16 +325,18 @@ export class Signal3DMap {
         this.controls.addEventListener('start', () => { this._camAnim = null; this._userDragging = true; });
         this.controls.addEventListener('end', () => {
             this._userDragging = false;
-            if (this._followUser && !this._userInDeadZone()) this.setFollowUser(false);
+            if (this._followUser && !this._followTargetInDeadZone()) this.setFollowUser(false);
         });
 
         this._initTwistGesture(canvas);
 
-        // Only the my-location cone uses a lit material (everything else is
-        // MeshBasic/Points), so a low ambient + strong directional gives that
-        // cone clear 3D shading without affecting the dots, floor or other markers.
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.62));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.95);
+        // The my-location cone is the only lit material in the scene. Its visible
+        // (near-vertical) sides are lit almost entirely by ambient — the
+        // directional only really catches the top — so ambient is the main lever
+        // for how bright the cone reads. Keep it high; the directional adds a
+        // little top highlight without affecting the unlit dots/floor/markers.
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.5);
         dl.position.set(60, 180, 80);
         this.scene.add(dl);
 
@@ -543,7 +545,7 @@ export class Signal3DMap {
                 // drifts out of the central-third dead zone — small moves don't
                 // nudge the map. Never recentre mid-gesture (it would fight the
                 // user's drag).
-                if (this._followUser && !this._userDragging && !this._userInDeadZone()) this.flyToUser(450);
+                if (this._followUser && !this._userDragging && !this._followTargetInDeadZone()) this.flyToUser(450);
             },
             err => {
                 resolved = true;
@@ -1361,17 +1363,45 @@ export class Signal3DMap {
 
     // Recenter the view on the user's current GPS location (keeps angle/zoom).
     // Returns false (and shows a status message) when the location is unknown.
+    // World position of the strongest-SNR visible dot (same filter/cutoff as the
+    // rendered dots), or null when there's none.
+    _bestDotWorld() {
+        const cutoff = this._displayCutoff;
+        const src = this._histPoints != null ? this._histPoints : this._rxPoints;
+        let best = null;
+        for (const p of src) {
+            if (p.snr == null || p.lat == null) continue;
+            if (this._filterFn && !this._filterFn(p.col)) continue;
+            if (cutoff && p.time < cutoff) continue;
+            if (!best || p.snr > best.snr) best = p;
+        }
+        return best ? this._latLonToWorld(best.lat, best.lon) : null;
+    }
+
+    // The point "Center on me" frames: the midpoint between the user and the
+    // strongest-SNR dot, so both the user and the best-signal point (and the
+    // stretch between them) stay in view. Falls back to the user position when
+    // there's no usable dot. Null when the user location isn't known yet.
+    _followTarget() {
+        if (!this._userLoc) return null;
+        const u = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
+        if (!u) return null;
+        const best = this._bestDotWorld();
+        if (!best) return u;
+        return new THREE.Vector3((u.x + best.x) / 2, 0, (u.z + best.z) / 2);
+    }
+
     flyToUser(duration = 700) {
         if (!this._userLoc) {
             this._setStatus('Location not known yet — tap “Enable location” first.');
             return false;
         }
-        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
-        if (!pos) return false;
-        const delta    = new THREE.Vector3(pos.x - this.controls.target.x, 0, pos.z - this.controls.target.z);
+        const target = this._followTarget();
+        if (!target) return false;
+        const delta    = new THREE.Vector3(target.x - this.controls.target.x, 0, target.z - this.controls.target.z);
         const fromT    = this.controls.target.clone();
         const fromE    = this.camera.position.clone();
-        const toT      = new THREE.Vector3(pos.x, 0, pos.z);
+        const toT      = new THREE.Vector3(target.x, 0, target.z);
         const toE      = this.camera.position.clone().add(delta);
         this._animate(e => {
             this.controls.target.lerpVectors(fromT, toT, e);
@@ -1383,11 +1413,13 @@ export class Signal3DMap {
     // True while the user's marker projects within the central third of the
     // canvas (both axes). Follow mode uses this as its dead zone: inside it the
     // map is left alone and manual gestures don't disengage following.
-    _userInDeadZone() {
-        if (!this._userLoc) return false;
-        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
-        if (!pos) return false;
-        const v = pos.project(this.camera);   // NDC: visible canvas is -1..1
+    // True when the follow target (user↔best-dot midpoint) sits in the central
+    // third of the view — i.e. already framed, so following needn't recenter and
+    // a manual nudge that keeps it centred doesn't disengage follow.
+    _followTargetInDeadZone() {
+        const target = this._followTarget();
+        if (!target) return false;
+        const v = target.project(this.camera);   // NDC: visible canvas is -1..1
         return v.z < 1 && Math.abs(v.x) <= 1 / 3 && Math.abs(v.y) <= 1 / 3;
     }
 
@@ -1861,7 +1893,7 @@ export class Signal3DMap {
         const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
         if (!pos) return;
         if (!this._userMarker) {
-            const COL = 0xff6678;   // light red — bright enough to read even on the shaded side
+            const COL = 0xffa6b8;   // light red — bright even on the ambient-lit sides
             const group = new THREE.Group();
             const cone = new THREE.Mesh(
                 new THREE.ConeGeometry(1, 2.8, 14),
