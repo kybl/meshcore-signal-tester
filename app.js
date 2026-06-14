@@ -3,6 +3,7 @@ import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=115';
 import { PacketStore } from './packet-store.js?v=14';
 import { buildCsv, parseCsv } from './csv.js?v=1';
+import { Store } from './storage.js?v=1';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -28,30 +29,6 @@ const REP_L_MIN = 42, REP_L_MAX = 60;   // lightness range (%) — readable band
 const REP_DARK_BUMP = 18;               // dark theme adds this to lightness
 
 
-
-// Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
-// Booleans are stored as 'true'/'false'; numbers as their string form.
-const Store = {
-    get(key, fallback = null) {
-        try { const v = localStorage.getItem(key); return v === null ? fallback : v; }
-        catch { return fallback; }
-    },
-    set(key, value) {
-        try { localStorage.setItem(key, value); } catch { /* private mode / quota */ }
-    },
-    num(key, fallback) {
-        const n = parseFloat(this.get(key));
-        return Number.isFinite(n) ? n : fallback;
-    },
-    bool(key, fallback) {
-        const v = this.get(key);
-        return v === null ? fallback : (v === 'true' || v === '1');
-    },
-    json(key, fallback) {
-        try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
-        catch { return fallback; }
-    },
-};
 
 // Inner padding (px) of the SVG signal charts: left (y-axis labels), right,
 // top, bottom (x-axis labels). Shared by render, click hit-testing and tooltip.

@@ -59,6 +59,7 @@ tasks.register('copyWebApp', Copy) {
         include 'index.html'
         include 'app.js'
         include 'csv.js'
+        include 'storage.js'
         include 'signal3d.js'
         include 'packet-store.js'
         include 'style.css'
