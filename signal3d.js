@@ -1391,15 +1391,18 @@ export class Signal3DMap {
             this._setStatus('Location not known yet — tap “Enable location” first.');
             return false;
         }
-        const target = this._followTarget();
-        if (!target) return false;
-        const delta    = new THREE.Vector3(target.x - this.controls.target.x, 0, target.z - this.controls.target.z);
-        const fromT    = this.controls.target.clone();
-        const fromE    = this.camera.position.clone();
-        const toT      = new THREE.Vector3(target.x, target.y, target.z);
-        const toE      = this.camera.position.clone().add(delta);
+        if (!this._followTarget()) return false;
+        const fromT = this.controls.target.clone();
+        const fromE = this.camera.position.clone();
+        // Recompute the target each frame: its height tracks the live dot scale,
+        // which shifts as the camera distance changes during the move. Ending on
+        // the live value means it exactly matches the height the follow handler
+        // then maintains — no little snap at the end. Camera move is a flat pan.
         this._animate(e => {
-            this.controls.target.lerpVectors(fromT, toT, e);
+            const target = this._followTarget();
+            if (!target) return;
+            const toE = fromE.clone().add(new THREE.Vector3(target.x - fromT.x, 0, target.z - fromT.z));
+            this.controls.target.lerpVectors(fromT, target, e);
             this.camera.position.lerpVectors(fromE, toE, e);
         }, duration);
         return true;
