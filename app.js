@@ -3400,26 +3400,7 @@ class MeshCoreApp {
             rows = rows.filter(([, data]) => [...data.repeaters.keys()].some(narrowFn));
         }
 
-        // Rebuild header when column set changes
-        const colKey = visibleCols.join(',');
-        if (colKey !== this._lastColKey) {
-            this._lastColKey = colKey;
-            const repHeaders = visibleCols.map(r => {
-                const cName = this._contactNameForCol(r);
-                const nameTag = cName ? `<br><span class="col-contact-name">${this._escHtml(cName)}</span>` : '';
-                return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
-            }).join('');
-            const subHeaders = visibleCols.map(() =>
-                `<th class="msg-sub-snr">SNR</th><th class="msg-sub-rssi">RSSI</th>`
-            ).join('');
-            this.msgTableHead.innerHTML = `
-                <tr>
-                    <th class="msg-col-rx-head" rowspan="2">RX log<span class="help-icon" data-help="msg-type">?</span></th>
-                    ${repHeaders}
-                </tr>
-                <tr>${subHeaders}</tr>
-            `;
-        }
+        this._renderMsgTableHeader(visibleCols);
 
         // Filter count badge
         if (this.msgFilterCountEl) {
@@ -3432,6 +3413,44 @@ class MeshCoreApp {
             this._buildMsgRow(hash, data, visibleCols)
         ).join('');
 
+        this._reinsertOpenDetailRows(openDetails);
+
+        this._applyMsgTableSelection();
+
+        if (flashHash) {
+            const row = document.getElementById(`row-${flashHash}`);
+            if (row) row.classList.add('row-new');
+        }
+    }
+
+    // Rebuild the packet-table header (repeater columns + SNR/RSSI sub-row) only
+    // when the visible column set changes, keyed on _lastColKey.
+    _renderMsgTableHeader(visibleCols) {
+        const colKey = visibleCols.join(',');
+        if (colKey === this._lastColKey) return;
+        this._lastColKey = colKey;
+        const repHeaders = visibleCols.map(r => {
+            const cName = this._contactNameForCol(r);
+            const nameTag = cName ? `<br><span class="col-contact-name">${this._escHtml(cName)}</span>` : '';
+            return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
+        }).join('');
+        const subHeaders = visibleCols.map(() =>
+            `<th class="msg-sub-snr">SNR</th><th class="msg-sub-rssi">RSSI</th>`
+        ).join('');
+        // Indentation inside this template literal is intentionally preserved
+        // byte-for-byte from the original inline version (it becomes innerHTML).
+        this.msgTableHead.innerHTML = `
+                <tr>
+                    <th class="msg-col-rx-head" rowspan="2">RX log<span class="help-icon" data-help="msg-type">?</span></th>
+                    ${repHeaders}
+                </tr>
+                <tr>${subHeaders}</tr>
+            `;
+    }
+
+    // Re-attach detail rows that were open before a table rebuild. `openDetails`
+    // maps hash → column (or null), captured before msgTableBody was replaced.
+    _reinsertOpenDetailRows(openDetails) {
         for (const [hash, col] of openDetails) {
             if (!this._tableSource().has(hash) && !this.hashData.has(hash)) continue;
             // Drop detail for a column that is now filtered out
@@ -3451,13 +3470,6 @@ class MeshCoreApp {
                 this.msgTableBody.querySelectorAll(`[data-hash="${hash}"][data-col="${col}"]`)
                     .forEach(el => el.classList.add('sig-active'));
             }
-        }
-
-        this._applyMsgTableSelection();
-
-        if (flashHash) {
-            const row = document.getElementById(`row-${flashHash}`);
-            if (row) row.classList.add('row-new');
         }
     }
 
