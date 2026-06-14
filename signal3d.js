@@ -1110,6 +1110,19 @@ export class Signal3DMap {
 
     // Drop packets older than the given timestamp. Disposes their meshes and
     // refreshes selection / info panel if the active repeater goes away.
+    // Whether `col` still has any rendered point — across every source
+    // _rebuildDots draws: live or historical RX dots, plus live or historical
+    // outgoing-SNR stars. Used to decide if a dropped point should clear the
+    // selection.
+    _isColShown(col) {
+        const rx = this._histPoints != null ? this._histPoints : this._rxPoints;
+        if (rx.some(p => p.col === col)) return true;
+        const sent = this._histOutgoingPts != null
+            ? this._histOutgoingPts.concat(this._outgoingPts)
+            : this._outgoingPts;
+        return sent.some(p => p.col === col);
+    }
+
     purgeOlderThan(cutoff) {
         if (!Number.isFinite(cutoff)) return;
         const before     = this._rxPoints.length;
@@ -1117,13 +1130,12 @@ export class Signal3DMap {
         this._rxPoints   = this._rxPoints.filter(p => p.time >= cutoff);
         this._outgoingPts = this._outgoingPts.filter(p => p.time >= cutoff);
         if (this._rxPoints.length === before && this._outgoingPts.length === sentBefore) return;
-        // Only drop the selection if the selected repeater is no longer rendered.
-        // Check the same source _rebuildDots draws: in wide/"All" display mode the
-        // dots come from _histPoints (which this purge doesn't touch), so checking
-        // only _rxPoints would wrongly deselect a repeater picked from a historical
-        // dot on the next cleanup tick.
-        const rendered = this._histPoints != null ? this._histPoints : this._rxPoints;
-        if (this._selectedCol && !rendered.some(p => p.col === this._selectedCol)) {
+        // Only drop the selection if the selected repeater is no longer rendered
+        // at all (see _isColShown). Checking just _rxPoints wrongly deselected a
+        // repeater shown only via _histPoints (wide/"All" mode) or only as an
+        // outgoing-SNR star — which fired intermittently, whenever a point
+        // happened to expire on a cleanup tick.
+        if (this._selectedCol && !this._isColShown(this._selectedCol)) {
             this._selectedCol = null;
             this._updateInfoPanel();
             this.onSelect?.(null);
