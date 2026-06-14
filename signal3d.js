@@ -11,8 +11,8 @@ import { MapControls } from './vendor/controls/MapControls.js';
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 12;    // world units for strongest signal
 const MIN_HEIGHT     = 2;     // world units for weakest signal
-const SNR_GOOD       = 12;    // dB — excellent signal
-const SNR_BAD        = -20;   // dB — minimum decodable (LoRa SF12)
+const SNR_GOOD       = 15;    // dB — top of the height scale (max height)
+const SNR_BAD        = -13;   // dB — bottom of the height scale (min height)
 const MAX_TILES_AXIS = 4;
 const TILE_PX        = 256;
 // Reference camera distance: distance from origin when camera is at the initial
@@ -330,8 +330,11 @@ export class Signal3DMap {
 
         this._initTwistGesture(canvas);
 
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.45);
+        // Only the my-location cone uses a lit material (everything else is
+        // MeshBasic/Points), so a low ambient + strong directional gives that
+        // cone clear 3D shading without affecting the dots, floor or other markers.
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.95);
         dl.position.set(60, 180, 80);
         this.scene.add(dl);
 
