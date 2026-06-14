@@ -149,6 +149,28 @@ export class PacketStore {
         });
     }
 
+    // Wrap a single IDBRequest as a Promise of its result.
+    _req(request) {
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Run a one-request readonly read against `storeName`. `fn(store)` returns
+    // the IDBRequest to await; its result is passed through `map`. Any failure
+    // (no db, transaction/request error) resolves to `fallback`, so reads never
+    // throw — every caller previously hand-rolled this same try/Promise/catch.
+    async _read(storeName, fn, fallback, map = (x) => x) {
+        if (!this.db) return fallback;
+        try {
+            const tx = this.db.transaction(storeName, 'readonly');
+            return map(await this._req(fn(tx.objectStore(storeName))));
+        } catch (_) {
+            return fallback;
+        }
+    }
+
     // ---- writes -----------------------------------------------------------
 
     /** Append observation records. Each:
@@ -202,15 +224,7 @@ export class PacketStore {
     }
 
     async getHash(hash) {
-        if (!this.db) return null;
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('hashes', 'readonly');
-                const r = tx.objectStore('hashes').get(hash);
-                r.onsuccess = () => resolve(r.result ?? null);
-                r.onerror = () => reject(r.error);
-            });
-        } catch (_) { return null; }
+        return this._read('hashes', os => os.get(hash), null, r => r ?? null);
     }
 
     /** Append outgoing-SNR records: {time, snr, rawId, label}. */
@@ -236,15 +250,7 @@ export class PacketStore {
     }
 
     async getKV(k) {
-        if (!this.db) return undefined;
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('kv', 'readonly');
-                const r = tx.objectStore('kv').get(k);
-                r.onsuccess = () => resolve(r.result ? r.result.v : undefined);
-                r.onerror = () => reject(r.error);
-            });
-        } catch (_) { return undefined; }
+        return this._read('kv', os => os.get(k), undefined, r => r ? r.v : undefined);
     }
 
     // ---- reads ------------------------------------------------------------
@@ -527,16 +533,10 @@ export class PacketStore {
     /** Count hash records, optionally only those first seen at/after `fromTime`
      *  (the table's display window). */
     async countHashes(fromTime) {
-        if (!this.db) return 0;
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('hashes', 'readonly');
-                const idx = tx.objectStore('hashes').index('firstSeen');
-                const r = Number.isFinite(fromTime) ? idx.count(IDBKeyRange.lowerBound(fromTime)) : idx.count();
-                r.onsuccess = () => resolve(r.result);
-                r.onerror = () => reject(r.error);
-            });
-        } catch (_) { return 0; }
+        return this._read('hashes', os => {
+            const idx = os.index('firstSeen');
+            return Number.isFinite(fromTime) ? idx.count(IDBKeyRange.lowerBound(fromTime)) : idx.count();
+        }, 0);
     }
 
     /** Newest-first page of hash records (ordered by firstSeen descending),
@@ -587,15 +587,7 @@ export class PacketStore {
 
     /** All observations of one hash (every path/repeater it arrived by). */
     async obsForHash(hash) {
-        if (!this.db) return [];
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('obs', 'readonly');
-                const req = tx.objectStore('obs').index('hash').getAll(hash);
-                req.onsuccess = () => resolve(req.result || []);
-                req.onerror = () => reject(req.error);
-            });
-        } catch (_) { return []; }
+        return this._read('obs', os => os.index('hash').getAll(hash), [], r => r || []);
     }
 
     // ---- maintenance ------------------------------------------------------
@@ -627,7 +619,7 @@ export class PacketStore {
                     tx.onerror = () => reject(tx.error);
                     tx.onabort = () => reject(tx.error);
                 });
-            } catch (e) { console.warn(`PacketStore: prune ${store} failed:`, e); }
+            } catch (e) { this._onWriteError(e); }
         }
         let deletedHashes = 0;
         try {
@@ -652,7 +644,7 @@ export class PacketStore {
                 tx.onerror = () => reject(tx.error);
                 tx.onabort = () => reject(tx.error);
             });
-        } catch (e) { console.warn('PacketStore: prune hashes failed:', e); }
+        } catch (e) { this._onWriteError(e); }
         return deletedHashes;
     }
 
@@ -665,7 +657,7 @@ export class PacketStore {
             tx.objectStore('sent').clear();
             tx.objectStore('kv').clear();
             await this._txComplete(tx);
-        } catch (e) { console.warn('PacketStore: clearAll failed:', e); }
+        } catch (e) { this._onWriteError(e); }
     }
 
     _onWriteError(e) {

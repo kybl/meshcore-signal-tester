@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=114';
-import { PacketStore } from './packet-store.js?v=13';
+import { Signal3DMap } from './signal3d.js?v=115';
+import { PacketStore } from './packet-store.js?v=14';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the

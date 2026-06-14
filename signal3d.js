@@ -102,6 +102,32 @@ function tileToLatLon(tx, ty, zoom) {
     return { lat, lon };
 }
 
+// 2*tan(fov/2): the recurring factor converting between world size at a given
+// camera distance and on-screen size. Callers needing tan(fov/2) use the
+// result divided by 2.
+function fovFactor(camera) {
+    return 2 * Math.tan((camera.fov / 2) * Math.PI / 180);
+}
+
+// Detach a Three.js object from its parent and release its GPU resources
+// (geometry + materials, recursively). Pass disposeTextures:false for objects
+// whose materials reference shared/cached textures (the signal dots reuse
+// sprite textures owned by the map) — disposing those would corrupt every
+// other object still using them.
+function disposeObject3D(obj, { disposeTextures = true } = {}) {
+    if (!obj) return;
+    obj.parent?.remove(obj);
+    obj.traverse(node => {
+        node.geometry?.dispose?.();
+        const mat = node.material;
+        if (!mat) return;
+        for (const m of (Array.isArray(mat) ? mat : [mat])) {
+            if (disposeTextures) m.map?.dispose?.();
+            m.dispose?.();
+        }
+    });
+}
+
 export class Signal3DMap {
     constructor(opts) {
         this.canvas    = opts.canvas;
@@ -737,16 +763,7 @@ export class Signal3DMap {
     }
 
     _disposePins() {
-        for (const g of this._pinGroups) {
-            this.scene.remove(g);
-            g.traverse(obj => {
-                obj.geometry?.dispose();
-                if (obj.material) {
-                    obj.material.map?.dispose();
-                    obj.material.dispose();
-                }
-            });
-        }
+        for (const g of this._pinGroups) disposeObject3D(g);
         this._pinGroups = [];
         this._pinSprites = [];
     }
@@ -1234,12 +1251,7 @@ export class Signal3DMap {
             const planeW = aspect >= 1 ? PLANE_SIZE : PLANE_SIZE * aspect;
             const planeH = aspect >= 1 ? PLANE_SIZE / aspect : PLANE_SIZE;
 
-            if (this._mapMesh) {
-                this.scene.remove(this._mapMesh);
-                this._mapMesh.geometry.dispose();
-                this._mapMesh.material.map?.dispose?.();
-                this._mapMesh.material.dispose();
-            }
+            if (this._mapMesh) disposeObject3D(this._mapMesh);
             const geo = new THREE.PlaneGeometry(planeW, planeH);
             const mat = new THREE.MeshBasicMaterial({ map: texture });
             this._mapMesh = new THREE.Mesh(geo, mat);
@@ -1478,7 +1490,7 @@ export class Signal3DMap {
         if (!center) return null;
         // Target is clamped to y=0 so getDistance() ≈ camera-to-floor distance.
         // Multiply by 1.5 to cover tilted views where visible area extends past the target.
-        const r = Math.max(1, this.controls.getDistance()) * Math.tan((this.camera.fov / 2) * Math.PI / 180) * 1.5;
+        const r = Math.max(1, this.controls.getDistance()) * (fovFactor(this.camera) / 2) * 1.5;
         // Convert radius in world units → lon/lat delta using current tileBounds scale
         const { nx, ny, zoom } = this._tileBounds;
         const { w, h } = this._planeDim;
@@ -1561,10 +1573,7 @@ export class Signal3DMap {
 
     _removeOverlay() {
         if (!this._overlayMesh) return;
-        this.scene.remove(this._overlayMesh);
-        this._overlayMesh.geometry.dispose();
-        this._overlayMesh.material.map?.dispose();
-        this._overlayMesh.material.dispose();
+        disposeObject3D(this._overlayMesh);
         this._overlayMesh = null;
         this._overlayKey = null;
     }
@@ -1577,17 +1586,16 @@ export class Signal3DMap {
     }
 
     _disposeDots() {
-        for (const obj of [...this._dotMeshes, this._hitMesh, this._lineSegs, this._lineSegsDim]) {
-            if (!obj) continue;
-            this._rxPointsGroup.remove(obj);
-            obj.material?.dispose();
-            if (obj !== this._hitMesh) obj.geometry?.dispose();
+        // disposeTextures:false — dot materials share the cached sprite textures
+        // (_sphereTex/_starTex/_ringTex*), which outlive any single rebuild.
+        for (const obj of [...this._dotMeshes, this._lineSegs, this._lineSegsDim]) {
+            disposeObject3D(obj, { disposeTextures: false });
         }
         this._dotMeshes   = [];
-        this._hitMesh    = null;
+        this._hitMesh     = null;
         this._lineSegs    = null;
         this._lineSegsDim = null;
-        this._hitPoints = [];
+        this._hitPoints   = [];
     }
 
     _rebuildDots() {
@@ -1612,9 +1620,6 @@ export class Signal3DMap {
         const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
 
         const _col = new THREE.Color();
-
-        const fovFactor  = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
-        const screenH    = this.canvas.clientHeight || 600;
 
         // Build a THREE.Points object for a set of data points
         const makePoints = (pts, opacity, sizeMult, tex = this._sphereTex) => {
@@ -1774,10 +1779,10 @@ export class Signal3DMap {
 
     _scaleMarkerToScreen() {
         const screenH = this.canvas.clientHeight || 1;
-        const fovFactor = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
+        const ff = fovFactor(this.camera);
         const scaleFor = (group, localH) => {
             const d = this.camera.position.distanceTo(group.position);
-            group.scale.setScalar(40 * d * fovFactor / (localH * screenH));
+            group.scale.setScalar(40 * d * ff / (localH * screenH));
         };
         // Cone local height = 2.8; target 40 CSS pixels tall on screen
         if (this._userMarker) scaleFor(this._userMarker, 2.8);
