@@ -35,10 +35,6 @@
   you to turn it on, instead of silently never connecting.
 - **A Bluetooth device you renamed after saving it** now connects under, and is
   re-saved with, its new name.
-- **Seen Repeaters and the "Active"/"Repeaters" counts** now show the whole
-  Display window after a long capture instead of shrinking to only the recent
-  ones; old packets also correctly leave the table as they age past the Display
-  window, and the charts' time span matches the window.
 - **Better light/dark readability** — the map's location-status text, the 3D-map
   fullscreen button, the packet detail panel and the page footer are now legible
   in both themes, and map buttons no longer look stuck-pressed after a tap.
