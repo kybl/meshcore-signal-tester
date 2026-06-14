@@ -3090,6 +3090,22 @@ class MeshCoreApp {
         return { lat: l?.lat ?? null, lon: l?.lon ?? null };
     }
 
+    // Fold one observation into the per-repeater running stats (RX count, max/last
+    // SNR & RSSI, last-seen, and the finest id precision seen for this column).
+    _recordRepeaterStat(canonicalKey, repeater, now, snr, rssi) {
+        const rawPrec  = this.idPrecision(repeater);
+        const existing = this.allRepeaters.get(canonicalKey);
+        this.allRepeaters.set(canonicalKey, {
+            lastSeen:     now,
+            count:        (existing?.count ?? 0) + 1,
+            maxSnr:  snr  != null ? Math.max(existing?.maxSnr  ?? -Infinity, snr)  : (existing?.maxSnr  ?? null),
+            maxRssi: rssi != null ? Math.max(existing?.maxRssi ?? -Infinity, rssi) : (existing?.maxRssi ?? null),
+            lastSnr:  snr  != null ? snr  : (existing?.lastSnr  ?? null),
+            lastRssi: rssi != null ? rssi : (existing?.lastRssi ?? null),
+            minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
+        });
+    }
+
     _ingestPacket(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null, opts = {}) {
         if (!this._collecting && !opts.importing && !opts.forceIngest) return;
         const wasAtBottom = !opts.importing && this._isAtPageBottom();
@@ -3136,17 +3152,7 @@ class MeshCoreApp {
             }
         }
 
-        const rawPrec  = this.idPrecision(repeater);
-        const existing = this.allRepeaters.get(canonicalKey);
-        this.allRepeaters.set(canonicalKey, {
-            lastSeen:     now,
-            count:        (existing?.count ?? 0) + 1,
-            maxSnr:  snr  != null ? Math.max(existing?.maxSnr  ?? -Infinity, snr)  : (existing?.maxSnr  ?? null),
-            maxRssi: rssi != null ? Math.max(existing?.maxRssi ?? -Infinity, rssi) : (existing?.maxRssi ?? null),
-            lastSnr:  snr  != null ? snr  : (existing?.lastSnr  ?? null),
-            lastRssi: rssi != null ? rssi : (existing?.lastRssi ?? null),
-            minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
-        });
+        this._recordRepeaterStat(canonicalKey, repeater, now, snr, rssi);
         if (snr != null || rssi != null) {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
             // Fold it into the chart bucket cache so the charts show it without a
