@@ -328,10 +328,42 @@ export class Signal3DMap {
             if (this._followUser && !this._userInDeadZone()) this.setFollowUser(false);
         });
 
-        // Two-finger twist: rotate camera azimuth by the angular change between the
-        // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
-        // rotate camera.position directly around the Y axis through controls.target
-        // and let controls.update() recompute its internal spherical state.
+        this._initTwistGesture(canvas);
+
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.45);
+        dl.position.set(60, 180, 80);
+        this.scene.add(dl);
+
+        // Placeholder floor until tiles arrive
+        const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
+        const phMat = new THREE.MeshBasicMaterial({ color: this._floorColor() });
+        this._mapMesh = new THREE.Mesh(phGeo, phMat);
+        this._mapMesh.rotation.x = -Math.PI / 2;
+        this.scene.add(this._mapMesh);
+        this._planeDim = { w: PLANE_SIZE, h: PLANE_SIZE };
+
+        this._rxPointsGroup = new THREE.Group();
+        this.scene.add(this._rxPointsGroup);
+
+        this._raycaster = new THREE.Raycaster();
+
+        this._initClickDetection(canvas);
+
+        this._onResize = () => this._resize();
+        window.addEventListener('resize', this._onResize);
+        this._ro = new ResizeObserver(() => this._resize());
+        this._ro.observe(canvas);
+
+        this._initInfoPanelEvents();
+        this._startRenderLoop();
+    }
+
+    // Two-finger twist: rotate camera azimuth by the angular change between the
+    // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
+    // rotate camera.position directly around the Y axis through controls.target
+    // and let controls.update() recompute its internal spherical state.
+    _initTwistGesture(canvas) {
         let _twistAngle = null;
         canvas.addEventListener('touchstart', e => {
             if (e.touches.length === 2) {
@@ -362,26 +394,11 @@ export class Signal3DMap {
         }, { passive: true });
         canvas.addEventListener('touchend',   () => { _twistAngle = null; }, { passive: true });
         canvas.addEventListener('touchcancel',() => { _twistAngle = null; }, { passive: true });
+    }
 
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.45);
-        dl.position.set(60, 180, 80);
-        this.scene.add(dl);
-
-        // Placeholder floor until tiles arrive
-        const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
-        const phMat = new THREE.MeshBasicMaterial({ color: this._floorColor() });
-        this._mapMesh = new THREE.Mesh(phGeo, phMat);
-        this._mapMesh.rotation.x = -Math.PI / 2;
-        this.scene.add(this._mapMesh);
-        this._planeDim = { w: PLANE_SIZE, h: PLANE_SIZE };
-
-        this._rxPointsGroup = new THREE.Group();
-        this.scene.add(this._rxPointsGroup);
-
-        this._raycaster = new THREE.Raycaster();
-
-        // Distinguish click from drag: track pointer displacement
+    // Distinguish click from drag: only fire _onCanvasClick when the pointer
+    // barely moved between down and up.
+    _initClickDetection(canvas) {
         let _ptrStart = null;
         canvas.addEventListener('pointerdown', e => { _ptrStart = { x: e.clientX, y: e.clientY }; });
         canvas.addEventListener('click', e => {
@@ -392,38 +409,39 @@ export class Signal3DMap {
             if (Math.sqrt(dx * dx + dy * dy) > 5) return; // drag, not click
             this._onCanvasClick(e);
         });
+    }
 
-        this._onResize = () => this._resize();
-        window.addEventListener('resize', this._onResize);
-        this._ro = new ResizeObserver(() => this._resize());
-        this._ro.observe(canvas);
+    // Wire the selected-repeater info panel's action buttons (close, filter,
+    // look-at, pin).
+    _initInfoPanelEvents() {
+        if (!this.infoEl) return;
+        this.infoEl.addEventListener('click', e => {
+            if (e.target.closest('.smi-close')) {
+                this._selectedCol = null;
+                this._rebuildDots();
+                this._updateInfoPanel();
+                this.onSelect?.(null);
+            } else if (e.target.closest('.smi-filter')) {
+                this.onFilter?.(this._selectedCol);
+            } else if (e.target.closest('.smi-look')) {
+                const loc = this._repeaterLocation(this._selectedCol);
+                if (loc) this.faceLatLon(loc.lat, loc.lon);
+            } else if (e.target.closest('.smi-pin')) {
+                this.onToggleMapPin?.(this._selectedCol);
+                this._updateInfoPanel();   // reflect the new pin state
+            }
+        });
+    }
 
-        if (this.infoEl) {
-            this.infoEl.addEventListener('click', e => {
-                if (e.target.closest('.smi-close')) {
-                    this._selectedCol = null;
-                    this._rebuildDots();
-                    this._updateInfoPanel();
-                    this.onSelect?.(null);
-                } else if (e.target.closest('.smi-filter')) {
-                    this.onFilter?.(this._selectedCol);
-                } else if (e.target.closest('.smi-look')) {
-                    const loc = this._repeaterLocation(this._selectedCol);
-                    if (loc) this.faceLatLon(loc.lat, loc.lon);
-                } else if (e.target.closest('.smi-pin')) {
-                    this.onToggleMapPin?.(this._selectedCol);
-                    this._updateInfoPanel();   // reflect the new pin state
-                }
-            });
-        }
-
+    // Per-frame render loop, runs for the map's lifetime.
+    _startRenderLoop() {
         const tick = () => {
             this._stepCameraAnim();
             this.controls.update();
             this._maybeRebuildDots();
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
-            requestAnimationFrame(tick);   // render loop runs for the map's lifetime
+            requestAnimationFrame(tick);
         };
         tick();
     }
