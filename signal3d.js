@@ -309,8 +309,10 @@ export class Signal3DMap {
         this.controls.update();
         this.controls.addEventListener('change', () => {
             // While following, keep the orbit pivot at the framing height (user +
-            // half a max-height spire); otherwise pin it to the ground plane.
-            this.controls.target.y = this._followUser ? this._followCenterY() : 0;
+            // half a max-height spire); otherwise pin it to the ground plane. Skip
+            // during a camera animation so its lerp drives the target height
+            // smoothly instead of snapping (see _stepCameraAnim / flyToUser).
+            if (!this._camAnim) this.controls.target.y = this._followUser ? this._followCenterY() : 0;
             this._updateHeightScale();
             this._updatePerspUniforms();
             this._notifyViewChange();
@@ -333,13 +335,12 @@ export class Signal3DMap {
         this._initTwistGesture(canvas);
 
         // The my-location cone is the only lit material in the scene. Its visible
-        // (near-vertical) sides are lit almost entirely by ambient — the
-        // directional only really catches the top — so ambient is the main lever
-        // for how bright the cone reads. Keep it high; the directional adds a
-        // little top highlight without affecting the unlit dots/floor/markers.
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.95));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.5);
-        dl.position.set(60, 180, 80);
+        // (near-vertical) sides only catch the directional light when that light
+        // comes from the side, so keep it fairly horizontal and strong for a clear
+        // lit/shadow split as the camera orbits; ambient sets the shadow-side floor.
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const dl = new THREE.DirectionalLight(0xffffff, 1.3);
+        dl.position.set(90, 70, 50);
         this.scene.add(dl);
 
         // Placeholder floor until tiles arrive
@@ -1358,7 +1359,9 @@ export class Signal3DMap {
         const k = Math.min(1, (performance.now() - a.start) / a.duration);
         const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // easeInOutQuad
         a.apply(e);
-        this.controls.target.y = 0;
+        // Keep camera-only animations (e.g. faceLatLon) pinned to the ground, but
+        // let a follow recenter animate its target height (set by apply) smoothly.
+        if (!this._followUser) this.controls.target.y = 0;
         this._updateHeightScale();
         if (k >= 1) this._camAnim = null;
     }
