@@ -1621,117 +1621,14 @@ export class Signal3DMap {
 
         const _col = new THREE.Color();
 
-        // Build a THREE.Points object for a set of data points
-        const makePoints = (pts, opacity, sizeMult, tex = this._sphereTex) => {
-            const pos = new Float32Array(pts.length * 3);
-            const col = new Float32Array(pts.length * 3);
-            for (let i = 0; i < pts.length; i++) {
-                const p  = pts[i];
-                const wp = this._latLonToWorld(p.lat, p.lon);
-                pos[i*3]   = wp ? wp.x : 0;
-                pos[i*3+1] = wp ? this._signalToHeight(p.snr) : 0;
-                pos[i*3+2] = wp ? wp.z : 0;
-                if (p.col === 'direct' || p.col === 'unknown') {
-                    col[i*3] = 1; col[i*3+1] = 1; col[i*3+2] = 1;   // white — ring texture carries the rim colour
-                } else {
-                    _col.set(this.colorFor(p.col));
-                    col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
-                }
-            }
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-            const dotSize = this._sphereSize * sizeMult * 7;
-            const isLit = opacity >= 1.0;
-            const mat = new THREE.PointsMaterial({
-                map:             tex,
-                size:            dotSize,
-                sizeAttenuation: false,  // we apply our own dampened perspective below
-                vertexColors:    true,
-                // Keep everything in the transparent pass so renderOrder controls draw
-                // order within the same pass (opaque pass always renders before
-                // transparent regardless of renderOrder, breaking our layering).
-                transparent:     true,
-                opacity,
-                depthWrite:      isLit,  // lit balls write depth → occlude each other
-                alphaTest:       isLit ? 0.5 : 0.02,
-            });
-            // Dampened perspective: gl_PointSize = size * (refDist / -mvz)^0.5
-            // Standard perspective would use exponent 1.0; 0.5 halves the visual
-            // size difference between near and far dots in log space.
-            // uRefDist is updated every frame to controls.getDistance() so that
-            // the reference distance tracks the camera rather than being a fixed
-            // constant — otherwise high-scaled dots float closer to the camera
-            // than the target and appear enormous.
-            if (this._perspSize) {
-                const uRefDist = { value: this.controls.getDistance() };
-                mat.onBeforeCompile = shader => {
-                    shader.uniforms.uRefDist = uRefDist;
-                    shader.vertexShader = shader.vertexShader
-                        .replace('#include <common>',
-                                 '#include <common>\nuniform float uRefDist;')
-                        .replace('gl_PointSize = size;',
-                                 'gl_PointSize = size * pow(uRefDist / max(0.5, -mvPosition.z), 0.5);');
-                };
-                mat.userData.uRefDistUniform = uRefDist;
-            }
-            const mesh = new THREE.Points(geo, mat);
-            // Render order: lit dots (renderOrder 2) paint over lines (renderOrder 1)
-            // so the ball is always visually in front of its own guide line.
-            mesh.renderOrder = isLit ? 2 : 0;
-            mesh.userData.baseDotSize = dotSize;
-            return mesh;
-        };
-
-        const addPoints = (pts, opacity, sizeMult, tex) => {
-            if (!pts.length) return;
-            const m = makePoints(pts, opacity, sizeMult, tex);
-            this._dotMeshes.push(m);
-            this._rxPointsGroup.add(m);
-        };
-
-        // Split each set by sprite texture: real repeaters use the shaded
-        // sphere, the two pseudo columns use white-filled rings.
-        const addGroup = (pts, opacity) => {
-            const normal = [], direct = [], unknown = [];
-            for (const p of pts) {
-                if (p.col === 'direct') direct.push(p);
-                else if (p.col === 'unknown') unknown.push(p);
-                else normal.push(p);
-            }
-            addPoints(normal,  opacity, 2.0, this._sphereTex);
-            addPoints(direct,  opacity, 2.0, this._ringTexDirect);
-            addPoints(unknown, opacity, 2.0, this._ringTexUnknown);
-        };
-        addGroup(litPts, 1.0);
-        addGroup(dimPts, 0.07);
+        this._addDotGroup(litPts, 1.0);
+        this._addDotGroup(dimPts, 0.07);
 
         // Points used for screen-space click picking (see _onCanvasClick).
         // Outgoing TX stars are appended further below, once sentAll is built.
         this._hitPoints = visible;
 
         // Vertical lines — split into lit (coloured) and dim (flat grey, low opacity)
-        const makeLines = (pts, mat) => {
-            if (!pts.length) return null;
-            const pos = new Float32Array(pts.length * 6);
-            for (let i = 0; i < pts.length; i++) {
-                const p  = pts[i];
-                const wp = this._latLonToWorld(p.lat, p.lon);
-                if (!wp) continue;
-                const h = this._signalToHeight(p.snr);
-                const j = i * 6;
-                pos[j]   = wp.x; pos[j+1] = 0; pos[j+2] = wp.z;
-                pos[j+3] = wp.x; pos[j+4] = h; pos[j+5] = wp.z;
-            }
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            const seg = new THREE.LineSegments(geo, mat);
-            seg.renderOrder = 1;  // after dim dots (0), before lit balls (2)
-            seg.visible = this._showLines;
-            this._rxPointsGroup.add(seg);
-            return seg;
-        };
-
         const litCol = new Float32Array(litPts.length * 6);
         for (let i = 0; i < litPts.length; i++) {
             _col.set(this.colorFor(litPts[i].col));
@@ -1748,10 +1645,10 @@ export class Signal3DMap {
             color: 0x888888, transparent: true, depthWrite: false, depthTest: false, opacity: 0.18,
         });
 
-        this._lineSegs = makeLines(litPts, litMat);
+        this._lineSegs = this._makeDotLines(litPts, litMat);
         if (this._lineSegs)
             this._lineSegs.geometry.setAttribute('color', new THREE.BufferAttribute(litCol, 3));
-        this._lineSegsDim = makeLines(dimPts, dimMat);
+        this._lineSegsDim = this._makeDotLines(dimPts, dimMat);
 
         // Sent SNR stars — outgoing signal quality (how well the repeater heard
         // us). Disk-loaded historical points when present, plus a live tail
@@ -1766,8 +1663,8 @@ export class Signal3DMap {
         );
         const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
         const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
-        addPoints(sentLit, 1.0,  3.2, this._starTex);
-        addPoints(sentDim, 0.07, 3.2, this._starTex);
+        this._addDotPoints(sentLit, 1.0,  3.2, this._starTex);
+        this._addDotPoints(sentDim, 0.07, 3.2, this._starTex);
 
         // Make the TX stars clickable too (clicking one selects its repeater,
         // exactly like clicking an RX sphere).
@@ -1775,6 +1672,113 @@ export class Signal3DMap {
 
         this._rebuildPins();
         this._updatePerspUniforms();
+    }
+
+    // Build a THREE.Points object for a set of data points (used by _rebuildDots).
+    _makeDotPoints(pts, opacity, sizeMult, tex = this._sphereTex) {
+        const _col = new THREE.Color();
+        const pos = new Float32Array(pts.length * 3);
+        const col = new Float32Array(pts.length * 3);
+        for (let i = 0; i < pts.length; i++) {
+            const p  = pts[i];
+            const wp = this._latLonToWorld(p.lat, p.lon);
+            pos[i*3]   = wp ? wp.x : 0;
+            pos[i*3+1] = wp ? this._signalToHeight(p.snr) : 0;
+            pos[i*3+2] = wp ? wp.z : 0;
+            if (p.col === 'direct' || p.col === 'unknown') {
+                col[i*3] = 1; col[i*3+1] = 1; col[i*3+2] = 1;   // white — ring texture carries the rim colour
+            } else {
+                _col.set(this.colorFor(p.col));
+                col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
+            }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+        const dotSize = this._sphereSize * sizeMult * 7;
+        const isLit = opacity >= 1.0;
+        const mat = new THREE.PointsMaterial({
+            map:             tex,
+            size:            dotSize,
+            sizeAttenuation: false,  // we apply our own dampened perspective below
+            vertexColors:    true,
+            // Keep everything in the transparent pass so renderOrder controls draw
+            // order within the same pass (opaque pass always renders before
+            // transparent regardless of renderOrder, breaking our layering).
+            transparent:     true,
+            opacity,
+            depthWrite:      isLit,  // lit balls write depth → occlude each other
+            alphaTest:       isLit ? 0.5 : 0.02,
+        });
+        // Dampened perspective: gl_PointSize = size * (refDist / -mvz)^0.5
+        // Standard perspective would use exponent 1.0; 0.5 halves the visual
+        // size difference between near and far dots in log space.
+        // uRefDist is updated every frame to controls.getDistance() so that
+        // the reference distance tracks the camera rather than being a fixed
+        // constant — otherwise high-scaled dots float closer to the camera
+        // than the target and appear enormous.
+        if (this._perspSize) {
+            const uRefDist = { value: this.controls.getDistance() };
+            mat.onBeforeCompile = shader => {
+                shader.uniforms.uRefDist = uRefDist;
+                shader.vertexShader = shader.vertexShader
+                    .replace('#include <common>',
+                             '#include <common>\nuniform float uRefDist;')
+                    .replace('gl_PointSize = size;',
+                             'gl_PointSize = size * pow(uRefDist / max(0.5, -mvPosition.z), 0.5);');
+            };
+            mat.userData.uRefDistUniform = uRefDist;
+        }
+        const mesh = new THREE.Points(geo, mat);
+        // Render order: lit dots (renderOrder 2) paint over lines (renderOrder 1)
+        // so the ball is always visually in front of its own guide line.
+        mesh.renderOrder = isLit ? 2 : 0;
+        mesh.userData.baseDotSize = dotSize;
+        return mesh;
+    }
+
+    // Build a dot mesh and register it for rendering + disposal.
+    _addDotPoints(pts, opacity, sizeMult, tex) {
+        if (!pts.length) return;
+        const m = this._makeDotPoints(pts, opacity, sizeMult, tex);
+        this._dotMeshes.push(m);
+        this._rxPointsGroup.add(m);
+    }
+
+    // Split a point set by sprite texture: real repeaters use the shaded sphere,
+    // the two pseudo columns ('direct'/'unknown') use white-filled rings.
+    _addDotGroup(pts, opacity) {
+        const normal = [], direct = [], unknown = [];
+        for (const p of pts) {
+            if (p.col === 'direct') direct.push(p);
+            else if (p.col === 'unknown') unknown.push(p);
+            else normal.push(p);
+        }
+        this._addDotPoints(normal,  opacity, 2.0, this._sphereTex);
+        this._addDotPoints(direct,  opacity, 2.0, this._ringTexDirect);
+        this._addDotPoints(unknown, opacity, 2.0, this._ringTexUnknown);
+    }
+
+    // Build the vertical guide lines (ground → signal height) for a point set.
+    _makeDotLines(pts, mat) {
+        if (!pts.length) return null;
+        const pos = new Float32Array(pts.length * 6);
+        for (let i = 0; i < pts.length; i++) {
+            const p  = pts[i];
+            const wp = this._latLonToWorld(p.lat, p.lon);
+            if (!wp) continue;
+            const h = this._signalToHeight(p.snr);
+            const j = i * 6;
+            pos[j]   = wp.x; pos[j+1] = 0; pos[j+2] = wp.z;
+            pos[j+3] = wp.x; pos[j+4] = h; pos[j+5] = wp.z;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        const seg = new THREE.LineSegments(geo, mat);
+        seg.renderOrder = 1;  // after dim dots (0), before lit balls (2)
+        seg.visible = this._showLines;
+        this._rxPointsGroup.add(seg);
+        return seg;
     }
 
     _scaleMarkerToScreen() {
