@@ -391,6 +391,7 @@ export class PacketStore {
      *   { buckets: [{ rawId, bIdx, time, count,
      *                 snrMin, snrMax, snrAvg, snrSum, snrN,
      *                 rssiMin, rssiMax, rssiAvg, rssiSum, rssiN,
+     *                 lastSnr, lastSnrT, lastRssi, lastRssiT,  // newest reading in bucket
      *                 lat, lon }],   // lat/lon = last seen position in the bucket
      *     width, lo }
      *
@@ -417,12 +418,13 @@ export class PacketStore {
                 g = { rawId: r.rawId, bIdx, count: 0,
                       snrMin: Infinity, snrMax: -Infinity, snrSum: 0, snrN: 0,
                       rssiMin: Infinity, rssiMax: -Infinity, rssiSum: 0, rssiN: 0,
+                      lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null,
                       lat: null, lon: null, lastTime: 0 };
                 groups.set(key, g);
             }
             g.count++;
-            if (r.snr != null) { g.snrN++; g.snrSum += r.snr; if (r.snr < g.snrMin) g.snrMin = r.snr; if (r.snr > g.snrMax) g.snrMax = r.snr; }
-            if (r.rssi != null) { g.rssiN++; g.rssiSum += r.rssi; if (r.rssi < g.rssiMin) g.rssiMin = r.rssi; if (r.rssi > g.rssiMax) g.rssiMax = r.rssi; }
+            if (r.snr != null) { g.snrN++; g.snrSum += r.snr; if (r.snr < g.snrMin) g.snrMin = r.snr; if (r.snr > g.snrMax) g.snrMax = r.snr; if (r.time >= g.lastSnrT) { g.lastSnrT = r.time; g.lastSnr = r.snr; } }
+            if (r.rssi != null) { g.rssiN++; g.rssiSum += r.rssi; if (r.rssi < g.rssiMin) g.rssiMin = r.rssi; if (r.rssi > g.rssiMax) g.rssiMax = r.rssi; if (r.time >= g.lastRssiT) { g.lastRssiT = r.time; g.lastRssi = r.rssi; } }
             if (r.lat != null && r.time >= g.lastTime) { g.lat = r.lat; g.lon = r.lon; g.lastTime = r.time; }
         });
         const out = [];
@@ -442,6 +444,12 @@ export class PacketStore {
                 rssiMax: g.rssiN ? g.rssiMax : null,
                 rssiAvg: g.rssiN ? g.rssiSum / g.rssiN : null,
                 rssiSum: g.rssiSum, rssiN: g.rssiN,
+                // Newest non-null SNR/RSSI in the bucket (by time) — the true
+                // "last" value, tracked the same way live ingestion does, so
+                // disk-restored Seen Repeaters rows show a real reading, not the
+                // bucket average. The times let callers fold further obs in.
+                lastSnr: g.lastSnr, lastSnrT: g.lastSnrT,
+                lastRssi: g.lastRssi, lastRssiT: g.lastRssiT,
                 lat: g.lat, lon: g.lon,
             });
         }

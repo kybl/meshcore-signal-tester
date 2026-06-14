@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=118';
-import { PacketStore } from './packet-store.js?v=15';
+import { PacketStore } from './packet-store.js?v=16';
 import { buildCsv, parseCsv } from './csv.js?v=1';
 import { Store } from './storage.js?v=1';
 
@@ -3765,13 +3765,6 @@ class MeshCoreApp {
         return Number.isInteger(v) ? String(v) : v.toFixed(1);
     }
 
-    // RSSI is integer dBm. A disk-restored "last" value can be a bucket average
-    // (see _restoreRepStatsFromBase), so round it for display.
-    _fmtRssi(v) {
-        if (v == null || !isFinite(v)) return '—';
-        return String(Math.round(v));
-    }
-
     _renderCharts() {
         if (this._selectedCol
             && !this._visibleChartPoints().some(p => p.col === this._selectedCol)
@@ -4880,8 +4873,9 @@ class MeshCoreApp {
     // the (incrementally maintained, Display-window) chart cache. Runs both on a
     // fresh base build (Display change / startup) and after every prune. Live
     // entries are exact and win; only count/maxes are widened from disk.
-    // Restored entries are bucket aggregates (lastSeen ≈ bucket midpoint, last
-    // SNR/RSSI ≈ newest bucket's average).
+    // Restored last SNR/RSSI are the real newest readings (the bucket records the
+    // last value per metric, like live ingestion); only lastSeen is approximate
+    // (≈ the newest bucket's midpoint).
     _restoreRepStatsFromBase() {
         const base = this._chartBase;
         if (!base) return;
@@ -4891,17 +4885,20 @@ class MeshCoreApp {
             let a = agg.get(col);
             if (!a) {
                 a = { count: 0, lastSeen: -1, maxSnr: null, maxRssi: null,
-                      lastSnr: null, lastRssi: null, minPrecision: Infinity };
+                      lastSnr: null, lastRssi: null, minPrecision: Infinity,
+                      _lastSnrT: -Infinity, _lastRssiT: -Infinity };
                 agg.set(col, a);
             }
             a.count += b.count;
             if (b.snrMax  != null && (a.maxSnr  == null || b.snrMax  > a.maxSnr))  a.maxSnr  = b.snrMax;
             if (b.rssiMax != null && (a.maxRssi == null || b.rssiMax > a.maxRssi)) a.maxRssi = b.rssiMax;
-            if (b.time > a.lastSeen) {
-                a.lastSeen = b.time;
-                a.lastSnr  = b.snrN  ? b.snrSum  / b.snrN  : null;
-                a.lastRssi = b.rssiN ? b.rssiSum / b.rssiN : null;
-            }
+            if (b.time > a.lastSeen) a.lastSeen = b.time;
+            // True last SNR/RSSI: the newest actual reading across buckets, each
+            // tracked by its own observation time, exactly as live ingestion keeps
+            // the last non-null value per metric (independent — the latest packet
+            // with an RSSI may differ from the latest with an SNR).
+            if (b.lastSnr  != null && b.lastSnrT  > a._lastSnrT)  { a._lastSnrT  = b.lastSnrT;  a.lastSnr  = b.lastSnr; }
+            if (b.lastRssi != null && b.lastRssiT > a._lastRssiT) { a._lastRssiT = b.lastRssiT; a.lastRssi = b.lastRssi; }
             const prec = this.idPrecision(b.rawId);
             if (prec < a.minPrecision) a.minPrecision = prec;
         }
@@ -4956,7 +4953,8 @@ class MeshCoreApp {
             if (!g) {
                 g = { rawId, bIdx, time: layer.lo + bIdx * layer.width + Math.floor(layer.width / 2),
                       count: 0, snrMin: null, snrMax: null, snrSum: 0, snrN: 0,
-                      rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0 };
+                      rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0,
+                      lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null };
                 layer.cells.set(key, g);
             }
             g.count++;
@@ -4964,11 +4962,13 @@ class MeshCoreApp {
                 g.snrSum += snr; g.snrN++;
                 if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
                 if (g.snrMax == null || snr > g.snrMax) g.snrMax = snr;
+                if (time >= (g.lastSnrT ?? -Infinity)) { g.lastSnrT = time; g.lastSnr = snr; }
             }
             if (rssi != null) {
                 g.rssiSum += rssi; g.rssiN++;
                 if (g.rssiMin == null || rssi < g.rssiMin) g.rssiMin = rssi;
                 if (g.rssiMax == null || rssi > g.rssiMax) g.rssiMax = rssi;
+                if (time >= (g.lastRssiT ?? -Infinity)) { g.lastRssiT = time; g.lastRssi = rssi; }
             }
             return bIdx;
         };
@@ -5661,8 +5661,8 @@ class MeshCoreApp {
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${msc}">${this._fmtSnr(d.maxSnr)}</td>
                 <td class="rl-num" style="color:${lsc}">${this._fmtSnr(d.lastSnr)}</td>
-                <td class="rl-num" style="color:${mrc}">${this._fmtRssi(d.maxRssi)}</td>
-                <td class="rl-num" style="color:${lrc}">${this._fmtRssi(d.lastRssi)}</td>
+                <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
+                <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
                 <td class="rl-time">${this._formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
