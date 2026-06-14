@@ -3364,13 +3364,18 @@ class MeshCoreApp {
             allRows = allRows.slice(0, this._tablePageSize);
         }
 
-        // Only include columns that actually appear in the visible rows (respects
-        // display cutoff). The disk snapshot can surface a historical column that
-        // isn't in the live model, so union it with repeaterColumns.
+        // Show every repeater that has data within the display window (the same
+        // predicate the Seen Repeaters table uses) as a column — not only those
+        // with a packet on the *current page* — so columns don't appear and
+        // disappear as you page through. The disk snapshot can also surface a
+        // historical column not in the live model, so keep any column present in
+        // this page's rows too. Empty columns sort to the end (column order
+        // follows repeaterColumns, by RX count).
         const activeColsInRows = new Set(allRows.flatMap(([, data]) => [...data.repeaters.keys()]));
         const colList = [...new Set([...this.repeaterColumns, ...activeColsInRows])];
+        const inWindow = c => !cutoff || (this.allRepeaters.get(c)?.lastSeen ?? -Infinity) >= cutoff;
         const visibleCols = colList
-            .filter(c => this._colMatchesRepFilter(c) && activeColsInRows.has(c));
+            .filter(c => this._colMatchesRepFilter(c) && (inWindow(c) || activeColsInRows.has(c)));
         this._visibleCols = visibleCols;   // columns actually rendered (used by the
                                            // detail colspan and the filter notice)
 
@@ -3758,6 +3763,13 @@ class MeshCoreApp {
     _fmtSnr(v) {
         if (v == null || !isFinite(v)) return '—';
         return Number.isInteger(v) ? String(v) : v.toFixed(1);
+    }
+
+    // RSSI is integer dBm. A disk-restored "last" value can be a bucket average
+    // (see _restoreRepStatsFromBase), so round it for display.
+    _fmtRssi(v) {
+        if (v == null || !isFinite(v)) return '—';
+        return String(Math.round(v));
     }
 
     _renderCharts() {
@@ -5649,8 +5661,8 @@ class MeshCoreApp {
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${msc}">${this._fmtSnr(d.maxSnr)}</td>
                 <td class="rl-num" style="color:${lsc}">${this._fmtSnr(d.lastSnr)}</td>
-                <td class="rl-num" style="color:${mrc}">${d.maxRssi ?? '—'}</td>
-                <td class="rl-num" style="color:${lrc}">${d.lastRssi ?? '—'}</td>
+                <td class="rl-num" style="color:${mrc}">${this._fmtRssi(d.maxRssi)}</td>
+                <td class="rl-num" style="color:${lrc}">${this._fmtRssi(d.lastRssi)}</td>
                 <td class="rl-time">${this._formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
