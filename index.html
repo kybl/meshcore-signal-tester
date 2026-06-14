@@ -340,7 +340,7 @@
 
             <div class="help-section-title">Getting started</div>
             <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection, or <b>Connect WiFi</b> in the Android app) and select your MeshCore device. Packet data appears automatically as the device picks up LoRa traffic. Previously used devices (Bluetooth, USB and WiFi) appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
-            <p>Use <b>Import CSV</b> / <b>Export CSV</b> to save the captured packets to a file and reload them later, and <b>Clear data</b> to wipe the current session. If an established connection drops unexpectedly — cable unplugged, device reset, or out of range — a full-screen <b>alarm</b> warns you that data collection has stopped (a deliberate disconnect won't trigger it).</p>
+            <p>Use <b>Import CSV</b> / <b>Export CSV</b> to save the captured packets to a file and reload them later, and <b>Clear data</b> to wipe the current session. Captured data is also saved automatically as you go, so if you reload the page or the app restarts it offers to resume the previous session. If an established connection drops unexpectedly — cable unplugged, device reset, or out of range — a full-screen <b>alarm</b> warns you that data collection has stopped (a deliberate disconnect won't trigger it).</p>
 
             <div class="help-section-title">What you can connect to</div>
             <p>The app auto-detects the device — you don't pick a type. A <b>companion radio</b> (Bluetooth, USB, or WiFi in the Android app) pushes every received packet fully decoded, which is the richest source. A <b>repeater</b> (USB only) instead exposes a text CLI the app drives; how much it can report depends on its firmware (see below).</p>
@@ -409,6 +409,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=290"></script>
+    <script type="module" src="app.js?v=291"></script>
 </body>
 </html>
