@@ -1715,8 +1715,10 @@ export class Signal3DMap {
         const center = this._worldToLatLon(this.controls.target.x, this.controls.target.z);
         if (!center) return null;
         // Target is clamped to y=0 so getDistance() ≈ camera-to-floor distance.
-        // Multiply by 1.5 to cover tilted views where visible area extends past the target.
-        const r = Math.max(1, this.controls.getDistance()) * (fovFactor(this.camera) / 2) * 1.5;
+        // Multiply by 1.5 to cover tilted views where visible area extends past the
+        // target. (No distance floor: at deep zoom it would overstate the view and
+        // make the detail overlay pick too low a tile zoom.)
+        const r = Math.max(1e-4, this.controls.getDistance()) * (fovFactor(this.camera) / 2) * 1.5;
         // Convert radius in world units → lon/lat delta using current tileBounds scale
         const { nx, ny, zoom } = this._tileBounds;
         const { w, h } = this._planeDim;
