@@ -1667,7 +1667,10 @@ export class Signal3DMap {
     }
 
     _updateHeightScale() {
-        const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
+        // scale.y ∝ camera distance keeps spires a roughly constant *screen*
+        // height across zoom. The floor only guards against zero (it must not bite
+        // before deep zoom, or spires balloon on screen once you pass it).
+        const ratio = Math.max(1e-6, this.controls.getDistance() / CAMERA_REF_DIST);
         this._rxPointsGroup.scale.y = ratio * 2;
     }
 
@@ -1953,7 +1956,10 @@ export class Signal3DMap {
                     .replace('#include <common>',
                              '#include <common>\nuniform float uRefDist;')
                     .replace('gl_PointSize = size;',
-                             'gl_PointSize = size * pow(uRefDist / max(0.5, -mvPosition.z), 0.5);');
+                             // Floor the depth relative to uRefDist (not a fixed 0.5) so the
+                             // dampening still holds when the whole scene is <0.5 units from
+                             // the camera at deep zoom; also caps foreground dots at ~4.5×.
+                             'gl_PointSize = size * pow(uRefDist / max(uRefDist * 0.05, -mvPosition.z), 0.5);');
             };
             mat.userData.uRefDistUniform = uRefDist;
         }
