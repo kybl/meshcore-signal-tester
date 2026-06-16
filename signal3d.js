@@ -1672,6 +1672,11 @@ export class Signal3DMap {
         // before deep zoom, or spires balloon on screen once you pass it).
         const ratio = Math.max(1e-6, this.controls.getDistance() / CAMERA_REF_DIST);
         this._rxPointsGroup.scale.y = ratio * 2;
+        // Sit the detail overlay just above the base map but below the lowest dot
+        // (MIN_HEIGHT·scale.y) and marker. A fixed offset can't do both: at deep
+        // zoom the dampened dots/markers are tiny, so a 0.02 overlay would hide
+        // them; tying it to scale.y keeps it clear of z-fighting yet under them.
+        if (this._overlayMesh) this._overlayMesh.position.y = this._rxPointsGroup.scale.y * 0.1;
     }
 
     _updatePerspUniforms() {
@@ -1791,7 +1796,7 @@ export class Signal3DMap {
             const mat  = new THREE.MeshBasicMaterial({ map: texture });
             const mesh = new THREE.Mesh(geo, mat);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.set(ocx, 0.02, ocz);   // 0.02 above base to avoid z-fighting
+            mesh.position.set(ocx, this._rxPointsGroup.scale.y * 0.1, ocz);   // just above base, below the dots (kept in sync by _updateHeightScale)
 
             this._removeOverlay();
             this._overlayMesh = mesh;
