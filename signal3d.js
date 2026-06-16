@@ -15,6 +15,14 @@ const SNR_GOOD       = 15;    // dB — top of the height scale (max height)
 const SNR_BAD        = -13;   // dB — bottom of the height scale (min height)
 const MAX_TILES_AXIS = 4;
 const TILE_PX        = 256;
+// Closest zoom shows roughly this much ground across the view, regardless of how
+// much area the (fixed-size) plane covers — so a long drive doesn't cap zoom at a
+// city-block view. minDistance is derived from it per map scale (see _applyZoomLimits).
+const ZOOM_MIN_VIEW_M = 30;
+// Markers (my-location cone, device, repeater pins) are sized to this fraction of
+// the view height (clamped to a sensible pixel range), so they don't look tiny
+// when the map is enlarged/fullscreen the way a fixed pixel size did.
+const MARKER_VIEW_FRAC = 0.10;
 // Reference camera distance: distance from origin when camera is at the initial
 // fit position (0.4r, 0.55r, 0.6r) with r = PLANE_SIZE.  Derived once so that
 // height/size scales are purely a function of current camera distance and never
@@ -311,7 +319,7 @@ export class Signal3DMap {
         this.renderer.setSize(w, h, false);
 
         this.scene  = new THREE.Scene();
-        this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 5000);
+        this.camera = new THREE.PerspectiveCamera(45, w / h, 0.05, 5000);
         this.camera.position.set(70, 90, 110);
 
         this.controls = new MapControls(this.camera, canvas);
@@ -1193,6 +1201,25 @@ export class Signal3DMap {
         return ((bb.maxLat - bb.minLat) * 111320) / h;
     }
 
+    // Set the closest zoom (controls.minDistance) from the map's real-world scale,
+    // so the deepest zoom shows ~ZOOM_MIN_VIEW_M across whether the plane covers a
+    // few hundred metres or tens of km. The plane is always PLANE_SIZE world units,
+    // so metres-per-world-unit grows with the area covered; without this, a large
+    // map could only zoom to a city-block view.
+    _applyZoomLimits() {
+        if (!this._tileBounds) return;
+        const { x0, y0, nx, ny, zoom } = this._tileBounds;
+        const lat = tileToLatLon(x0 + nx / 2, y0 + ny / 2, zoom).lat;
+        // Web-Mercator ground resolution: 156543.03 m/px at the equator, zoom 0.
+        const mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+        const realLongEdge = Math.max(nx, ny) * TILE_PX * mPerPx;   // metres across the plane's long edge
+        const mPerUnit = realLongEdge / PLANE_SIZE;
+        const ff = fovFactor(this.camera);
+        // Clamp: never closer than 0.07 (keeps the plane outside the near plane),
+        // never forced past the old 0.5 default on small maps.
+        this.controls.minDistance = Math.min(0.5, Math.max(0.07, ZOOM_MIN_VIEW_M / (mPerUnit * ff)));
+    }
+
     // Called by the host app when chart/legend selection changes.
     selectColumn(col) {
         this._infoPanelFromClick = false;   // always hide info panel on external selection
@@ -1401,6 +1428,7 @@ export class Signal3DMap {
             this._tileBounds  = { x0, y0, nx, ny, zoom };
             this._planeDim    = { w: planeW, h: planeH };
             this._lastMapKey = key;
+            this._applyZoomLimits();  // let zoom reach street level regardless of map extent
             this._removeOverlay();   // scale changed — overlay must be rebuilt
 
             this._rebuildDots();
@@ -1966,11 +1994,15 @@ export class Signal3DMap {
     _scaleMarkerToScreen() {
         const screenH = this.canvas.clientHeight || 1;
         const ff = fovFactor(this.camera);
+        // Target a fraction of the view height (clamped), not a fixed pixel count,
+        // so markers stay proportional on a small map and don't shrink to nothing
+        // when the map is enlarged / fullscreen.
+        const targetPx = Math.max(30, Math.min(140, MARKER_VIEW_FRAC * screenH));
         const scaleFor = (group, localH) => {
             const d = this.camera.position.distanceTo(group.position);
-            group.scale.setScalar(40 * d * ff / (localH * screenH));
+            group.scale.setScalar(targetPx * d * ff / (localH * screenH));
         };
-        // Cone local height = 2.8; target 40 CSS pixels tall on screen
+        // localH = each marker's model height; targetPx is its on-screen height.
         if (this._userMarker) scaleFor(this._userMarker, 2.8);
         if (this._deviceMarker) scaleFor(this._deviceMarker, 3.1);
         for (const g of this._pinGroups) {
