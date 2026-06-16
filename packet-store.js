@@ -48,10 +48,46 @@ function ps_part1by1(n) {
     return n >>> 0;
 }
 
+function ps_qx(lon) { return Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX))); }
+function ps_qy(lat) { return Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX))); }
+
 function ps_morton(lat, lon) {
-    const qx = Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX)));
-    const qy = Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX)));
-    return (ps_part1by1(qx) | (ps_part1by1(qy) << 1)) >>> 0;
+    return (ps_part1by1(ps_qx(lon)) | (ps_part1by1(ps_qy(lat)) << 1)) >>> 0;
+}
+
+// --- Z-order (Morton) range skipping --------------------------------------
+// A bbox maps to the code range [morton(SW), morton(NE)], but that linear range
+// also covers out-of-box points (the Z-order "staircase"). Scanning it whole is
+// O(dataset). BIGMIN gives the next code >= zcur that is back inside the box, so
+// the cursor can jump over the dead stretches → O(points in box). x lives on the
+// even bits, y on the odd bits (see ps_morton).
+
+// In `value`, set this dimension's bit at position p and clear its lower bits
+// (set=true → 100…0, the sub-tree min), or clear p and set the lower bits
+// (set=false → 011…1, the sub-tree max). Other bits are untouched.
+function ps_loadDim(value, p, set) {
+    let lower = 0;
+    for (let q = p - 2; q >= 0; q -= 2) lower = (lower | ((1 << q) >>> 0)) >>> 0;
+    const bitP = (1 << p) >>> 0;
+    const cleared = (value & (~((bitP | lower) >>> 0))) >>> 0;
+    return (set ? (cleared | bitP) : (cleared | lower)) >>> 0;
+}
+
+// Smallest Morton code >= zcur that lies within the box [zmin, zmax]
+// (zmin = morton(SW corner), zmax = morton(NE corner)); -1 if there is none.
+// Tropf & Herzog's BIGMIN, walking bits MSB→LSB.
+function ps_bigmin(zcur, zmin, zmax) {
+    let bm = -1, dmin = zmin >>> 0, dmax = zmax >>> 0;
+    for (let p = 31; p >= 0; p--) {
+        const bit = (1 << p) >>> 0;
+        const c = ((zcur & bit) ? 4 : 0) | ((dmin & bit) ? 2 : 0) | ((dmax & bit) ? 1 : 0);
+        if      (c === 1) { bm = ps_loadDim(dmin, p, true);  dmax = ps_loadDim(dmax, p, false); }
+        else if (c === 3) { return dmin >>> 0; }
+        else if (c === 4) { return bm; }
+        else if (c === 5) { dmin = ps_loadDim(dmin, p, true); }
+        // 0,7 → descend; 2,6 can't occur while dmin ≤ dmax per dimension
+    }
+    return bm;
 }
 
 export class PacketStore {
@@ -370,19 +406,42 @@ export class PacketStore {
     }
 
     _eachByBbox(bbox, fromTime, toTime, cb) {
-        const lo = ps_morton(bbox.minLat, bbox.minLon);
-        const hi = ps_morton(bbox.maxLat, bbox.maxLon);
+        const zmin = ps_morton(bbox.minLat, bbox.minLon);
+        const zmax = ps_morton(bbox.maxLat, bbox.maxLon);
+        const qx0 = ps_qx(bbox.minLon), qx1 = ps_qx(bbox.maxLon);
+        const qy0 = ps_qy(bbox.minLat), qy1 = ps_qy(bbox.maxLat);
         const tLo = Number.isFinite(fromTime) ? fromTime : -Infinity;
         const tHi = Number.isFinite(toTime) ? toTime : Infinity;
-        return this._chunkedScan('obs', 'mz',
-            IDBKeyRange.bound(Math.min(lo, hi), Math.max(lo, hi)),
-            r => {
-                if (r.lat == null || r.lon == null) return true;
-                if (r.lat < bbox.minLat || r.lat > bbox.maxLat ||
-                    r.lon < bbox.minLon || r.lon > bbox.maxLon ||
-                    r.time < tLo || r.time > tHi) return true;
-                return cb(r) !== false;
-            });
+        return new Promise((resolve, reject) => {
+            let tx;
+            try { tx = this.db.transaction('obs', 'readonly'); }
+            catch (e) { reject(e); return; }
+            const req = tx.objectStore('obs').index('mz').openCursor(IDBKeyRange.bound(zmin, zmax));
+            req.onsuccess = () => {
+                const cur = req.result;
+                if (!cur) { resolve(); return; }
+                const r = cur.value;
+                if (r.lat == null || r.lon == null) { cur.continue(); return; }
+                const qx = ps_qx(r.lon), qy = ps_qy(r.lat);
+                if (qx >= qx0 && qx <= qx1 && qy >= qy0 && qy <= qy1) {
+                    // Inside the box (Morton-wise): apply the exact lat/lon + time filter.
+                    if (r.lat >= bbox.minLat && r.lat <= bbox.maxLat &&
+                        r.lon >= bbox.minLon && r.lon <= bbox.maxLon &&
+                        r.time >= tLo && r.time <= tHi) {
+                        let go; try { go = cb(r); } catch (e) { reject(e); return; }
+                        if (go === false) { resolve(); return; }
+                    }
+                    cur.continue();
+                } else {
+                    // Out of box (Z-order spillover): jump to the next in-box code.
+                    const key = cur.key >>> 0;
+                    const nz = ps_bigmin(key, zmin, zmax);
+                    if (nz < 0 || nz <= key) { cur.continue(); return; }
+                    cur.continue(nz);
+                }
+            };
+            req.onerror = () => reject(req.error);
+        });
     }
 
     /**

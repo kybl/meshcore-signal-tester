@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=136';
-import { PacketStore } from './packet-store.js?v=16';
+import { PacketStore } from './packet-store.js?v=17';
 import { buildCsv, parseCsv } from './csv.js?v=1';
 import { Store } from './storage.js?v=1';
 
