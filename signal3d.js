@@ -472,12 +472,26 @@ export class Signal3DMap {
         const tick = () => {
             this._stepCameraAnim();
             this.controls.update();
+            this._updateNearPlane();
             this._maybeRebuildDots();
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
             requestAnimationFrame(tick);
         };
         tick();
+    }
+
+    // Keep the camera near plane proportional to the current view distance: small
+    // when zoomed in (so a very close minDistance on a large-extent map never
+    // clips the floor) and large when zoomed out (so depth precision stays good
+    // and dots don't z-fight the map). This is what lets minDistance scale all the
+    // way down for the closest zoom without a fixed lower clamp.
+    _updateNearPlane() {
+        const near = Math.max(0.002, this.controls.getDistance() * 0.02);
+        if (Math.abs(near - this.camera.near) > this.camera.near * 0.05) {
+            this.camera.near = near;
+            this.camera.updateProjectionMatrix();
+        }
     }
 
     _resize() {
@@ -1215,9 +1229,13 @@ export class Signal3DMap {
         const realLongEdge = Math.max(nx, ny) * TILE_PX * mPerPx;   // metres across the plane's long edge
         const mPerUnit = realLongEdge / PLANE_SIZE;
         const ff = fovFactor(this.camera);
-        // Clamp: never closer than 0.07 (keeps the plane outside the near plane),
-        // never forced past the old 0.5 default on small maps.
-        this.controls.minDistance = Math.min(0.5, Math.max(0.07, ZOOM_MIN_VIEW_M / (mPerUnit * ff)));
+        // World-unit distance for a ~ZOOM_MIN_VIEW_M-wide view. It scales with the
+        // map's metres-per-unit precisely so the *real* closest zoom is the same at
+        // any extent. Only an upper cap (0.5) remains, so small maps can still zoom
+        // even closer; there's no lower clamp — _updateNearPlane keeps the near
+        // plane out of the way however small this gets.
+        const desired = ZOOM_MIN_VIEW_M / (mPerUnit * ff);
+        this.controls.minDistance = Math.min(0.5, Math.max(0.002, desired));
     }
 
     // Called by the host app when chart/legend selection changes.
