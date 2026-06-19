@@ -25,6 +25,7 @@
             <span class="app-title">MeshCore Signal Tester</span>
             <a id="appVersion" class="app-version" href="https://github.com/kybl/meshcore-signal-tester/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version"></a>
             <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
+            <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀️</button>
             <div id="status" class="status disconnected">
                 <span id="statusText" class="status-text">Disconnected</span>
                 <button id="connectBtn" class="btn-primary btn-connect" data-sub="companion">Connect Bluetooth</button>
@@ -50,7 +51,6 @@
                 <label class="ttl-header-label">Text size<select id="uiScaleSelect" class="ttl-header-select"><option value="small" style="font-size:10px">Small</option><option value="normal" selected style="font-size:13px">Normal</option><option value="large" style="font-size:17px">Large</option><option value="larger" style="font-size:24px">Larger</option></select></label>
                 <label class="size-label">2D graphs dot size<input type="range" id="dotSizeInput" class="size-range" min="0.3" max="2.5" step="0.1" value="1"><span id="dotSizeVal" class="size-val">1</span></label>
                 <label class="sound-toggle"><input type="checkbox" id="keepScreenChk" checked> Keep screen on<span class="help-icon" data-help="keepscreen">?</span></label>
-                <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀️</button>
             </div>
             <div class="header-stats-row">
                 <div class="header-stats">
