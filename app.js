@@ -5912,16 +5912,26 @@ class MeshCoreApp {
         const baseFreq = 700;
         const scale = mode === 'long' ? 4 : mode === 'medium' ? 2 : 1;
 
-        const beep = (freq, start, dur) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.frequency.value = freq;
-            gain.gain.setValueAtTime(0.08, now + start);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
-            osc.start(now + start);
-            osc.stop(now + start + dur);
+        // A short bell/chime: a sine fundamental plus a few decaying partials —
+        // the octave and a couple of higher, slightly inharmonic ones give the
+        // "ding" shimmer — with a fast attack and an exponential ring-out. Much
+        // nicer than a bare tone while keeping the per-tone frequency variable.
+        const chime = (freq, start, dur) => {
+            const t = now + start;
+            const partials = [[1, 0.08], [2, 0.04], [3, 0.02], [4.2, 0.01]];
+            for (const [mult, peak] of partials) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq * mult;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                gain.gain.setValueAtTime(0.0001, t);
+                gain.gain.exponentialRampToValueAtTime(peak, t + 0.004);   // fast attack
+                gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);   // bell-like decay
+                osc.start(t);
+                osc.stop(t + dur + 0.03);
+            }
         };
 
         const dur = 0.05 * scale;
@@ -5932,8 +5942,8 @@ class MeshCoreApp {
         const total = dur + gap;
         const d1 = total / 3;
         const d2 = total * 2 / 3;
-        beep(baseFreq, 0, d1);
-        beep(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
+        chime(baseFreq, 0, d1);
+        chime(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
     }
 
     // An interrupted two-tone alarm (880-440-880-440-880-440 Hz) for the
