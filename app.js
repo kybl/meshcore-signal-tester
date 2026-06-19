@@ -5967,7 +5967,6 @@ class MeshCoreApp {
 
     _showDisconnectAlarm() {
         document.getElementById('disconnectAlarm')?.classList.remove('hidden');
-        this._playDisconnectAlarm();
     }
 
     _hideDisconnectAlarm() {
@@ -6001,7 +6000,8 @@ class MeshCoreApp {
         if (this._reconnectTries >= 5) {
             this._cancelAutoReconnect();
             this.updateStatus('Disconnected', 'disconnected');
-            this._showDisconnectAlarm();        // gave up — alert as usual
+            this._playDisconnectAlarm();        // gave up — sound + visual alert
+            this._showDisconnectAlarm();
             return;
         }
         this._scheduleReconnect(Math.min(8000, 2000 * 2 ** (this._reconnectTries - 1)));
@@ -6620,6 +6620,7 @@ class MeshCoreApp {
         this._intentionalDisconnect = false;
         if (this._reconnecting) return;   // a reconnect cycle already owns the recovery
         if (surprise) {
+            this._playDisconnectAlarm();   // audible cue on every unexpected drop (if sound on)
             if (this._autoReconnect && this._lastConnectedId) this._startAutoReconnect();
             else this._showDisconnectAlarm();
         }
