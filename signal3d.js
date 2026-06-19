@@ -1401,12 +1401,13 @@ export class Signal3DMap {
         const startZoom = Math.min(srcMaxZoom, this._tileBounds ? this._tileBounds.zoom : 19);
         const { zoom, tl, br } = this._fitZoomForBbox(minLon, maxLat, maxLon, minLat, startZoom);
 
-        // Asymmetric padding: proportional to data extent so elongated shapes don't waste tiles
+        // Fixed 1-tile margin around the data bbox. A margin that scaled with the
+        // bbox span (ceil(span/2), 1–2) flipped between 1 and 2 as the span
+        // fluctuated by a tile while walking, which pulsed the grid — a tile ahead
+        // would appear and then vanish a second later. A constant margin only
+        // changes the grid monotonically as you cross tile boundaries.
         const maxTile = Math.pow(2, zoom) - 1;
-        const tx = Math.floor(br.x) - Math.floor(tl.x) + 1;
-        const ty = Math.floor(br.y) - Math.floor(tl.y) + 1;
-        const padX = Math.max(1, Math.min(2, Math.ceil(tx / 2)));
-        const padY = Math.max(1, Math.min(2, Math.ceil(ty / 2)));
+        const padX = 1, padY = 1;
         const x0 = Math.max(0, Math.floor(tl.x) - padX);
         const y0 = Math.max(0, Math.floor(tl.y) - padY);
         const x1 = Math.min(maxTile, Math.floor(br.x) + padX);
