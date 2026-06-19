@@ -583,13 +583,7 @@ export class Signal3DMap {
                 const fix = this._gpsAccept(latitude, longitude, accuracy, pos.timestamp || Date.now());
                 if (!fix) return;
                 this._userLoc = { lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy };
-                this._locationReady();   // show the "Center on me" button
-                // Live accuracy readout (the raw fix's, so it reflects current GPS
-                // quality) shown next to the button — handy while driving/tuning.
-                if (this.statusEl) {
-                    this.statusEl.textContent = `±${Math.round(accuracy)} m`;
-                    this.statusEl.classList.remove('hidden');
-                }
+                this._locationReady();   // swap the status text for the "Center on me" button
                 if (this.emptyEl && !this._rxPoints.length) {
                     this.emptyEl.textContent = 'Waiting for data…';
                 }
