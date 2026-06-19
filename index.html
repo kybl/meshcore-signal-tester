@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=156">
+    <link rel="stylesheet" href="style.css?v=157">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -34,6 +34,7 @@
                 <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <button id="disconnectBtn" class="btn-pause btn-disconnect">Disconnect</button>
                 <span id="connectedDeviceName" class="connected-device-name"></span>
+                <label id="autoReconnectWrap" class="auto-reconnect-toggle" title="Reconnect automatically if the connection drops unexpectedly"><input type="checkbox" id="autoReconnectChk"> Auto-reconnect</label>
                 <div id="savedDevices" class="saved-devices hidden"></div>
             </div>
             <span id="batteryStatus" class="battery-status hidden"></span>
@@ -409,6 +410,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=329"></script>
+    <script type="module" src="app.js?v=330"></script>
 </body>
 </html>

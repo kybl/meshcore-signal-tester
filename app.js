@@ -405,7 +405,7 @@ class MeshCoreApp {
         document.getElementById('savedDevices')?.addEventListener('click', e => {
             const quickBtn = e.target.closest('.saved-btn');
             const forgetBtn = e.target.closest('.forget-btn');
-            if (quickBtn) this.quickConnect(quickBtn.dataset.id).catch(e => console.error('Quick connect failed:', e));
+            if (quickBtn) { this._cancelAutoReconnect(); this.quickConnect(quickBtn.dataset.id).catch(e => console.error('Quick connect failed:', e)); }
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
@@ -461,6 +461,19 @@ class MeshCoreApp {
                 this._keepScreenOn = keepScreenChk.checked;
                 Store.set('keepScreenOn', keepScreenChk.checked);
                 this._syncWakeLock();
+            });
+        }
+
+        // Auto-reconnect: retry the last device when an established connection
+        // drops unexpectedly (off by default).
+        const autoReconnectChk = document.getElementById('autoReconnectChk');
+        this._autoReconnect = Store.bool('autoReconnect', false);
+        if (autoReconnectChk) {
+            autoReconnectChk.checked = this._autoReconnect;
+            autoReconnectChk.addEventListener('change', () => {
+                this._autoReconnect = autoReconnectChk.checked;
+                Store.set('autoReconnect', autoReconnectChk.checked);
+                if (!this._autoReconnect) this._cancelAutoReconnect();
             });
         }
 
@@ -1129,6 +1142,7 @@ class MeshCoreApp {
     // --- Bluetooth connection ---
 
     async connectBluetooth() {
+        this._cancelAutoReconnect();
         if (!navigator.bluetooth) {
             alert('Web Bluetooth API is not available.\n\nRequirements:\n• Chrome or Edge browser\n• Page must be served over HTTPS or localhost');
             return;
@@ -1402,6 +1416,7 @@ class MeshCoreApp {
     // --- USB / Web Serial connection ---
 
     async connectUsb() {
+        this._cancelAutoReconnect();
         if (!navigator.serial) {
             alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
             return;
@@ -1419,6 +1434,7 @@ class MeshCoreApp {
     }
 
     async connectWifi() {
+        this._cancelAutoReconnect();
         // Raw TCP can't be opened from a browser; only the native Android host
         // can. Off-app, explain why and where it works (the button is shown
         // everywhere by request).
@@ -2330,6 +2346,7 @@ class MeshCoreApp {
             && !(liveName && d.transport === 'ble' && d.name === liveName));
         devices.push({ id: device.id, name, transport: 'ble' });
         Store.set('devices', JSON.stringify(devices));
+        this._lastConnectedId = device.id;   // for auto-reconnect
         this._renderSavedDevices();
         return name;
     }
@@ -2376,6 +2393,7 @@ class MeshCoreApp {
                 devices.push({ id, name, transport: 'wifi', host: info.host, port: info.port });
             }
             Store.set('devices', JSON.stringify(devices));
+            this._lastConnectedId = id;   // for auto-reconnect
             this._renderSavedDevices();
             return name;
         }
@@ -2395,6 +2413,7 @@ class MeshCoreApp {
             devices.push({ id, name, transport: 'serial', usbVendorId: vid, usbProductId: pid });
         }
         Store.set('devices', JSON.stringify(devices));
+        this._lastConnectedId = id;   // for auto-reconnect
         this._renderSavedDevices();
         return name;
     }
@@ -5955,6 +5974,45 @@ class MeshCoreApp {
         document.getElementById('disconnectAlarm')?.classList.add('hidden');
     }
 
+    // Auto-reconnect: after an unexpected drop, retry the last device a few times
+    // with backoff (reusing quickConnect, which handles every transport). Falls
+    // back to the disconnect alarm if it can't get back. Only the zero-friction
+    // paths (BLE getDevices / saved serial / WiFi) work without a user gesture.
+    _startAutoReconnect() {
+        if (this._reconnecting) return;
+        this._reconnecting = true;
+        this._reconnectTries = 0;
+        this.updateStatus('Reconnecting…', 'connecting');
+        this._scheduleReconnect(500);
+    }
+
+    _scheduleReconnect(delay) {
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(() => this._tryReconnect(), delay);
+    }
+
+    async _tryReconnect() {
+        if (!this._reconnecting) return;
+        if (this.device) { this._cancelAutoReconnect(); return; }   // already back (manual connect)
+        this._reconnectTries++;
+        try { await this.quickConnect(this._lastConnectedId); } catch (e) { console.warn('Auto-reconnect attempt failed:', e); }
+        if (!this._reconnecting) return;        // cancelled meanwhile
+        if (this.device) { this._reconnecting = false; this._reconnectTimer = null; return; }  // success
+        if (this._reconnectTries >= 5) {
+            this._cancelAutoReconnect();
+            this.updateStatus('Disconnected', 'disconnected');
+            this._showDisconnectAlarm();        // gave up — alert as usual
+            return;
+        }
+        this._scheduleReconnect(Math.min(8000, 2000 * 2 ** (this._reconnectTries - 1)));
+    }
+
+    _cancelAutoReconnect() {
+        this._reconnecting = false;
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+    }
+
     // --- BLE Device Battery ---
 
     _updateBleBatteryVoltage(milliVolts) {
@@ -6431,7 +6489,9 @@ class MeshCoreApp {
 
     async disconnect() {
         // The user explicitly asked to disconnect — suppress the surprise-
-        // disconnect alarm that onDisconnected() would otherwise raise.
+        // disconnect alarm that onDisconnected() would otherwise raise, and stop
+        // any auto-reconnect cycle.
+        this._cancelAutoReconnect();
         this._intentionalDisconnect = true;
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.transportKind === 'serial') {
@@ -6558,7 +6618,11 @@ class MeshCoreApp {
         const surprise = this._wasConnected && !this._intentionalDisconnect;
         this._wasConnected = false;
         this._intentionalDisconnect = false;
-        if (surprise) this._showDisconnectAlarm();
+        if (this._reconnecting) return;   // a reconnect cycle already owns the recovery
+        if (surprise) {
+            if (this._autoReconnect && this._lastConnectedId) this._startAutoReconnect();
+            else this._showDisconnectAlarm();
+        }
     }
 }
 

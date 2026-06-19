@@ -325,8 +325,20 @@ html.light-theme .status.importing {
    device is actually connected (green) or paused (yellow). */
 .status:not(.connected):not(.paused) #pauseBtn,
 .status:not(.connected):not(.paused) #disconnectBtn,
-.status:not(.connected):not(.paused) #connectedDeviceName {
+.status:not(.connected):not(.paused) #connectedDeviceName,
+.status:not(.connected):not(.paused) #autoReconnectWrap {
     display: none;
+}
+
+/* "Auto-reconnect" toggle — shown next to the connected device. */
+.auto-reconnect-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
 }
 
 .connected-device-name {
