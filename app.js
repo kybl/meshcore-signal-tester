@@ -467,8 +467,18 @@ class MeshCoreApp {
         // Auto-reconnect: retry the last device when an established connection
         // drops unexpectedly (off by default).
         const autoReconnectChk = document.getElementById('autoReconnectChk');
-        this._autoReconnect = Store.bool('autoReconnect', false);
-        if (autoReconnectChk) {
+        const autoReconnectWrap = document.getElementById('autoReconnectWrap');
+        const canAutoReconnect = this._canAutoReconnect();
+        this._autoReconnect = canAutoReconnect && Store.bool('autoReconnect', false);
+        // Hide the toggle entirely where a silent reconnect is impossible —
+        // most notably a mobile browser over Web Bluetooth, where every
+        // connection forces a user-gesture + system device picker and there is
+        // no getDevices() to reconnect quietly. Showing the option there would
+        // be misleading (it could never actually fire).
+        if (autoReconnectWrap && !canAutoReconnect) {
+            autoReconnectWrap.classList.add('hidden');
+        }
+        if (autoReconnectChk && canAutoReconnect) {
             autoReconnectChk.checked = this._autoReconnect;
             autoReconnectChk.addEventListener('change', () => {
                 this._autoReconnect = autoReconnectChk.checked;
@@ -5994,6 +6004,19 @@ class MeshCoreApp {
 
     _hideDisconnectAlarm() {
         document.getElementById('disconnectAlarm')?.classList.add('hidden');
+    }
+
+    // Whether a silent (no user gesture) reconnect is even possible here, which
+    // is what gates the Auto-reconnect toggle. The native Android app can always
+    // reconnect quietly (saved BLE address, USB permission, or a WiFi socket).
+    // In a plain browser it needs an API that hands back an already-authorised
+    // device without a picker: Web Bluetooth getDevices() (desktop Chrome only —
+    // mobile Chrome lacks it and forces requestDevice every time) or Web Serial.
+    _canAutoReconnect() {
+        if (window.__MESHCORE_NATIVE__) return true;
+        if (navigator.bluetooth?.getDevices) return true;
+        if (navigator.serial) return true;
+        return false;
     }
 
     // Auto-reconnect: after an unexpected drop, retry the last device a few times
