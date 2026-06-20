@@ -9,7 +9,7 @@ import { Store } from './storage.js?v=1';
 // forwarded to the Android wrapper). Bump this on a release alongside the
 // CHANGELOG and the Android versionName. Distinct from the per-asset ?v= cache
 // busters, which change on every edit.
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
 // burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow

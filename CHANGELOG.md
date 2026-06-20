@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-06-20
+
+### Added
+
+- **Auto-reconnect** — an optional toggle next to the connect buttons that
+  quietly retries the last device a few times after an unexpected drop before
+  raising the disconnect alarm. It only appears where a silent reconnect is
+  possible (the Android app, or desktop Chrome/Edge); it is hidden for
+  Bluetooth in a mobile browser, where every connection requires a manual
+  device-picker confirmation. An ⓘ icon explains this in place.
+- **More sound options** — a "disconnect only" mode that stays silent on
+  packets but still alarms on an unexpected disconnect, and a nicer bell-like
+  chime for the packet-received sound (keeping the signal-strength-dependent
+  pitch).
+
 ### Changed
 
 - **Location capture now starts automatically when you connect (Android).**
@@ -9,6 +24,12 @@
   is enough — GPS starts streaming and packets are geotagged from connect time.
   No more hunting for the 3D map's "Enable location" button, which now only
   acts as a fallback when the permission is missing or location is off.
+- The theme toggle moved up next to **Help**, and **Show help** is now just
+  **Help**. The help dialog gained a **Close** button at the bottom.
+
+### Fixed
+
+- 3D map tiles no longer briefly pulse/double up while panning or zooming.
 
 ## [1.2.0] - 2026-06-14
 
