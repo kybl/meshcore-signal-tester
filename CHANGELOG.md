@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.2.1] - 2026-06-20
+## [1.2.1] - 2026-06-21
 
 ### Added
 
@@ -15,7 +15,8 @@
 - **More sound options** — a "disconnect only" mode that stays silent on
   packets but still alarms on an unexpected disconnect, and a nicer bell-like
   chime for the packet-received sound (keeping the signal-strength-dependent
-  pitch).
+  pitch). The disconnect alarm now also sounds on every unexpected drop, not
+  just the first.
 
 ### Changed
 
@@ -24,12 +25,29 @@
   is enough — GPS starts streaming and packets are geotagged from connect time.
   No more hunting for the 3D map's "Enable location" button, which now only
   acts as a fallback when the permission is missing or location is off.
+- **Much steadier location on the 3D map.** One-off GPS outliers are now
+  rejected (no more sudden ~200 m jumps), and the marker dead-reckons through
+  the gap instead of freezing; on Android the app uses the GPS provider only
+  rather than mixing in coarser network locations.
+- **3D map zoom is now extent-independent** — you can zoom all the way to
+  street level even on a large map, and deep-zoom tile detail loads faster
+  (Z-order range skipping) without the dots or markers blowing up in size.
+- **3D camera framing refinements** — *Center on me* no longer snaps at the
+  end of its move, and framing a repeater leaves headroom above its spire.
 - The theme toggle moved up next to **Help**, and **Show help** is now just
   **Help**. The help dialog gained a **Close** button at the bottom.
 
 ### Fixed
 
+- **Seen Repeaters** showed rounded/averaged RSSI instead of the true last
+  value, and the last SNR/RSSI restored from disk could be an estimate rather
+  than the actual last reading — both now show the real last measurement.
+- **Received Packets** now always lists every repeater as a column, not only
+  the ones that happen to have a record on the current page.
+- 3D map selection no longer clears itself on its own (e.g. in the wide/All
+  display window).
 - 3D map tiles no longer briefly pulse/double up while panning or zooming.
+- Footer text now has proper contrast in light mode.
 
 ## [1.2.0] - 2026-06-14
 
