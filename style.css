@@ -1600,6 +1600,21 @@ header .help-icon.active {
 }
 .help-modal a:hover { text-decoration: underline; }
 
+.help-modal-close-btn {
+    display: block;
+    margin: 24px auto 4px;
+    padding: 10px 28px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #e6e8ec;
+    background: #3a3f4b;
+    border: 1px solid #4a505e;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.help-modal-close-btn:hover { background: #474d5b; }
+
 /* Light theme: restore the bright modal palette. */
 html.light-theme .help-modal { background: #fff; color: #333; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28); }
 html.light-theme .help-modal-close { color: #bbb; }
@@ -1613,6 +1628,8 @@ html.light-theme .help-dd,
 html.light-theme .help-list { color: #555; }
 html.light-theme .help-modal code { background: rgba(0, 0, 0, 0.06); }
 html.light-theme .help-modal a { color: #1565C0; }
+html.light-theme .help-modal-close-btn { color: #333; background: #e8eaed; border-color: #ccced3; }
+html.light-theme .help-modal-close-btn:hover { background: #dcdee2; }
 
 /* ── Filter bar & export ────────────────────────────── */
 

@@ -1113,6 +1113,10 @@ class MeshCoreApp {
             e.stopPropagation();
             closeHelp();
         });
+        document.getElementById('helpModalCloseBottom')?.addEventListener('click', e => {
+            e.stopPropagation();
+            closeHelp();
+        });
         helpModal?.addEventListener('click', e => {
             if (e.target === helpModal) closeHelp();
         });
