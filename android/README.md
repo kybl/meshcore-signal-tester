@@ -41,7 +41,7 @@ Android SDK installed and `ANDROID_HOME` / `local.properties` pointing at it.
 ```bash
 cd android
 ./gradlew assembleDebug
-# APK at app/build/outputs/apk/debug/app-debug.apk
+# APK at app/build/outputs/apk/debug/meshcore-signal-tester-debug.apk
 ```
 
 Or just open the `android/` folder in Android Studio and press Run. The web
