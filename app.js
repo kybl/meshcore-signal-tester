@@ -1166,13 +1166,13 @@ class MeshCoreApp {
         }
     }
 
-    async quickConnect(deviceId) {
+    async quickConnect(deviceId, opts = {}) {
         const saved = this.getSavedDevices().find(d => d.id === deviceId);
         if (saved?.transport === 'serial') {
-            return this.quickConnectSerial(saved);
+            return this.quickConnectSerial(saved, opts);
         }
         if (saved?.transport === 'wifi') {
-            return this.quickConnectWifi(saved);
+            return this.quickConnectWifi(saved, opts);
         }
 
         // Try getDevices() for zero-friction reconnect (Chrome 85+, may need flag)
@@ -1188,11 +1188,15 @@ class MeshCoreApp {
                 try {
                     await this.connectToDevice(device);
                 } catch (error) {
-                    this._handleConnectError(error, !!this.device);
+                    this._handleConnectError(error, !!this.device, opts.auto);
                 }
                 return;
             }
         }
+
+        // requestDevice needs a user gesture, so an auto-reconnect can't use it
+        // (it would throw a SecurityError and pop an alert on every attempt).
+        if (opts.auto) return;
 
         // Fall back to requestDevice — use saved name as filter so picker pre-selects it
         const name = saved?.name;
@@ -1215,9 +1219,9 @@ class MeshCoreApp {
         }
     }
 
-    async quickConnectSerial(saved) {
+    async quickConnectSerial(saved, opts = {}) {
         if (!navigator.serial) {
-            alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
+            if (!opts.auto) alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
             return;
         }
         try {
@@ -1242,11 +1246,15 @@ class MeshCoreApp {
 
             // No authorised match (first use on this machine, permission reset,
             // etc.) — fall back to the picker, exactly like the BLE path does.
-            if (!port) port = await navigator.serial.requestPort({ filters: [] });
+            // The picker needs a user gesture, so skip it in auto-reconnect.
+            if (!port) {
+                if (opts.auto) { this._resetConnectBtn(); return; }
+                port = await navigator.serial.requestPort({ filters: [] });
+            }
 
             await this.connectToSerialPort(port);
         } catch (error) {
-            this._handleConnectError(error, !!(this.serialPort || this.device));
+            this._handleConnectError(error, !!(this.serialPort || this.device), opts.auto);
         }
     }
 
@@ -1254,8 +1262,8 @@ class MeshCoreApp {
     // transport actually came up (tear it down) or never did (just reset the
     // button). NotFoundError = user cancelled the picker; InvalidStateError = BT
     // off (already prompted natively) — neither warrants an alert.
-    _handleConnectError(error, hasConnection) {
-        if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
+    _handleConnectError(error, hasConnection, silent = false) {
+        if (!silent && error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
             alert('Connection error: ' + error.message);
         }
         if (hasConnection) this.onDisconnected();
@@ -1504,25 +1512,25 @@ class MeshCoreApp {
 
     // Open a WiFi/TCP companion at host:port. Shared by the connect form and by
     // quick-reconnect of a saved WiFi device.
-    async _doWifiConnect(host, port) {
+    async _doWifiConnect(host, port, opts = {}) {
         try {
             this._beginConnectAttempt('wifi');
             this.updateStatus('Connecting…', 'connecting');
             const port_ = window.__mcMakeWifiPort(host, port);
             await this.connectToSerialPort(port_);
         } catch (error) {
-            alert('WiFi connection failed: ' + (error.message || error));
+            if (!opts.auto) alert('WiFi connection failed: ' + (error.message || error));
             if (this.serialPort || this.device) this.onDisconnected();
             else this._resetConnectBtn();
         }
     }
 
-    async quickConnectWifi(saved) {
+    async quickConnectWifi(saved, opts = {}) {
         if (!window.__MESHCORE_NATIVE__ || typeof window.__mcMakeWifiPort !== 'function') {
-            alert('This is a saved WiFi device — WiFi connection only works in the Android app.');
+            if (!opts.auto) alert('This is a saved WiFi device — WiFi connection only works in the Android app.');
             return;
         }
-        await this._doWifiConnect(saved.host, saved.port);
+        await this._doWifiConnect(saved.host, saved.port, opts);
     }
 
     async connectToSerialPort(port) {
@@ -6005,7 +6013,10 @@ class MeshCoreApp {
         if (!this._reconnecting) return;
         if (this.device) { this._cancelAutoReconnect(); return; }   // already back (manual connect)
         this._reconnectTries++;
-        try { await this.quickConnect(this._lastConnectedId); } catch (e) { console.warn('Auto-reconnect attempt failed:', e); }
+        // auto:true → only the zero-friction transports, no gesture-required
+        // picker and no error alerts (those would stack up modally).
+        this.updateStatus('Reconnecting…', 'connecting');
+        try { await this.quickConnect(this._lastConnectedId, { auto: true }); } catch (e) { console.warn('Auto-reconnect attempt failed:', e); }
         if (!this._reconnecting) return;        // cancelled meanwhile
         if (this.device) { this._reconnecting = false; this._reconnectTimer = null; return; }  // success
         if (this._reconnectTries >= 5) {
@@ -6015,6 +6026,9 @@ class MeshCoreApp {
             this._showDisconnectAlarm();
             return;
         }
+        // A failed attempt left the status at 'Disconnected'; restore the
+        // distinct 'Reconnecting…' so it doesn't look like a manual disconnect.
+        this.updateStatus('Reconnecting…', 'connecting');
         this._scheduleReconnect(Math.min(8000, 2000 * 2 ** (this._reconnectTries - 1)));
     }
 
