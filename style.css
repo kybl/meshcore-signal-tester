@@ -1431,6 +1431,11 @@ header .help-icon.active {
     z-index: 1001 !important;
 }
 
+/* Positioned in body-local coordinates (see showTip): position:fixed would be
+   mis-placed because <body> carries a transform: scale() (text-size / desktop
+   zoom), which makes it the containing block for fixed descendants. */
+#helpTip { position: absolute; }
+
 /* Help modal */
 .help-modal-overlay {
     position: fixed;

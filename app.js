@@ -1065,19 +1065,33 @@ class MeshCoreApp {
             if (!text || !tipEl) return;
             tipEl.textContent = text;
             tipEl.style.display = 'block';
-            const tipW = Math.min(260, window.innerWidth - 16);
+            // #helpTip is position:absolute inside <body>, which may carry a
+            // transform: scale() (text-size / desktop zoom — always ×1.3 on
+            // desktop). That makes <body> the containing block, so convert the
+            // icon's viewport rect into body-local (un-scaled, scroll-included)
+            // coordinates, exactly like the chart infobox does. Using viewport
+            // px directly here put the tip in the wrong place under the scale.
+            let scale = 1;
+            const tr = getComputedStyle(document.body).transform;
+            const m = tr && tr !== 'none' ? tr.match(/matrix\(([^)]+)\)/) : null;
+            if (m) scale = parseFloat(m[1].split(',')[0]) || 1;
+            const tipW = Math.min(260, document.body.clientWidth - 16);
             tipEl.style.maxWidth = `${tipW}px`;
             const r = icon.getBoundingClientRect();
             const tipH = tipEl.offsetHeight;
-            let left = r.left + r.width / 2 - tipW / 2;
-            left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+            const cx  = (r.left + r.width / 2 + window.scrollX) / scale;
+            const top = (r.top  + window.scrollY) / scale;
+            const bot = (r.bottom + window.scrollY) / scale;
+            let left = cx - tipW / 2;
+            left = Math.max(8, Math.min(left, document.body.clientWidth - tipW - 8));
             tipEl.style.left = `${left}px`;
-            // Default: float above the icon. If there's no room, flip below.
-            if (r.top < tipH + 12) {
-                tipEl.style.top = `${r.bottom + 8}px`;
+            // Float above the icon; flip below when there isn't room (the room
+            // check is in rendered viewport px, hence tipH * scale).
+            if (r.top < tipH * scale + 12) {
+                tipEl.style.top = `${bot + 8}px`;
                 tipEl.style.transform = 'none';
             } else {
-                tipEl.style.top = `${r.top - 8}px`;
+                tipEl.style.top = `${top - 8}px`;
                 tipEl.style.transform = 'translateY(-100%)';
             }
             icon.classList.add('active');
