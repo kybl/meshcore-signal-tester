@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sound Lab — MeshCore Signal Tester</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 16px 120px;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #14161b; color: #e6e8ec; line-height: 1.4;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #9aa3b2; font-size: 13px; margin: 0 0 20px; }
+  .card {
+    background: #1c1f27; border: 1px solid #2a2f3a; border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 12px; color: #8fa8f0; text-transform: uppercase; letter-spacing: .04em; }
+  .row { display: grid; grid-template-columns: 1fr; gap: 4px; margin-bottom: 14px; }
+  .row:last-child { margin-bottom: 0; }
+  .row .lab { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; }
+  .row .lab .name { color: #cdd3de; }
+  .row .lab .val { color: #8fa8f0; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .row .hint { color: #7d8696; font-size: 11px; }
+  input[type=range] { width: 100%; accent-color: #667eea; height: 26px; }
+  /* Partials table */
+  .partial { display: grid; grid-template-columns: 28px 70px 1fr 44px 30px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .partial input[type=number] { width: 100%; background: #14161b; color: #e6e8ec; border: 1px solid #2a2f3a; border-radius: 6px; padding: 5px 6px; font-size: 13px; }
+  .partial .pv { color: #8fa8f0; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  .partial .rm { background: none; border: none; color: #c0556b; font-size: 16px; cursor: pointer; padding: 0; }
+  .partial-head { color: #7d8696; font-size: 11px; }
+  button.btn {
+    background: #2a2f3a; color: #e6e8ec; border: 1px solid #3a4150; border-radius: 8px;
+    padding: 8px 14px; font-size: 14px; cursor: pointer;
+  }
+  button.btn:hover { background: #333a47; }
+  button.btn.primary { background: #4a5ed0; border-color: #5a6ee0; font-weight: 600; }
+  button.btn.primary:hover { background: #5468de; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .playbar {
+    position: fixed; left: 0; right: 0; bottom: 0; background: #1c1f27ee; backdrop-filter: blur(6px);
+    border-top: 1px solid #2a2f3a; padding: 12px 16px; display: flex; gap: 10px; align-items: center;
+  }
+  .playbar button.play { flex: 1; font-size: 17px; padding: 14px; background: #4a5ed0; border: none; color: #fff; border-radius: 10px; font-weight: 700; cursor: pointer; }
+  .playbar button.play:active { background: #3f51c0; }
+  .playbar label { font-size: 12px; color: #9aa3b2; display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+  pre { background: #0f1115; border: 1px solid #2a2f3a; border-radius: 8px; padding: 12px; overflow-x: auto; font-size: 12px; color: #b9c2d0; white-space: pre-wrap; }
+  a { color: #8fa8f0; }
+  .preset { display:flex; gap:8px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+  <h1>🔔 Sound Lab</h1>
+  <p class="sub">A tuning playground for the packet-received sound. Drag the sliders and tap <b>Play</b> (it auto-plays on change too). When it sounds right, copy the values at the bottom into <code>_playRxSound</code> in <code>app.js</code>.</p>
+
+  <div class="card">
+    <h2>Test conditions</h2>
+    <div class="row" data-ctl="snr" data-min="-20" data-max="20" data-step="1" data-val="0" data-unit=" dB">
+      <div class="lab"><span class="name">Test SNR (pitch of 2nd note)</span><span class="val"></span></div>
+      <div class="hint">0 dB = base pitch · ±10 dB = ±1 octave</div>
+    </div>
+    <div class="row">
+      <div class="lab"><span class="name">Length preset</span></div>
+      <div class="preset">
+        <button class="btn" data-ring="0.3">short</button>
+        <button class="btn" data-ring="0.5">medium</button>
+        <button class="btn" data-ring="0.8">long</button>
+      </div>
+    </div>
+    <div class="row" data-ctl="ring" data-min="0.1" data-max="1.5" data-step="0.05" data-val="0.3" data-unit=" s">
+      <div class="lab"><span class="name">Ring-out length</span><span class="val"></span></div>
+      <div class="hint">how long the final note rings</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Tone</h2>
+    <div class="row" data-ctl="baseFreq" data-min="300" data-max="1200" data-step="5" data-val="700" data-unit=" Hz">
+      <div class="lab"><span class="name">Base frequency</span><span class="val"></span></div>
+      <div class="hint">pitch of the fixed reference note</div>
+    </div>
+    <div class="row" data-ctl="gainScale" data-min="0.02" data-max="0.2" data-step="0.005" data-val="0.085" data-unit="">
+      <div class="lab"><span class="name">Volume</span><span class="val"></span></div>
+    </div>
+    <div class="row" data-ctl="attack" data-min="1" data-max="40" data-step="1" data-val="6" data-unit=" ms">
+      <div class="lab"><span class="name">Attack</span><span class="val"></span></div>
+      <div class="hint">shorter = more "ping" / click · longer = softer</div>
+    </div>
+    <div class="row" data-ctl="decayFactor" data-min="0" data-max="1.2" data-step="0.05" data-val="0.35" data-unit="">
+      <div class="lab"><span class="name">Upper-partial decay</span><span class="val"></span></div>
+      <div class="hint">0 = highs ring as long as fundamental (more shimmer) · higher = highs die sooner (duller)</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Brightness (lowpass filter)</h2>
+    <div class="row" data-ctl="lpFreq" data-min="1000" data-max="12000" data-step="100" data-val="6500" data-unit=" Hz">
+      <div class="lab"><span class="name">Cutoff</span><span class="val"></span></div>
+      <div class="hint">lower = warmer/muffled · higher = brighter/more crystalline</div>
+    </div>
+    <div class="row" data-ctl="lpQ" data-min="0" data-max="2" data-step="0.1" data-val="0.3" data-unit="">
+      <div class="lab"><span class="name">Resonance (Q)</span><span class="val"></span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Partials (harmonics)</h2>
+    <div class="partial partial-head"><span>on</span><span>×freq</span><span>amplitude</span><span></span><span></span></div>
+    <div id="partials"></div>
+    <button class="btn" id="addPartial" style="margin-top:6px;">+ Add partial</button>
+    <div class="hint" style="margin-top:8px;">×freq = harmonic multiplier (2 = octave, 3 = fifth above that…). Non-integer values (e.g. 4.01, 6.01) add glassy, slightly-detuned shimmer.</div>
+  </div>
+
+  <div class="card">
+    <h2>Two-note shape</h2>
+    <div class="row" data-ctl="refVol" data-min="0" data-max="1" data-step="0.05" data-val="0.5" data-unit="">
+      <div class="lab"><span class="name">Reference-note volume</span><span class="val"></span></div>
+      <div class="hint">0 = single note only (just the SNR-pitched one)</div>
+    </div>
+    <div class="row" data-ctl="refRingFrac" data-min="0.1" data-max="1" data-step="0.05" data-val="0.5" data-unit="×">
+      <div class="lab"><span class="name">Reference-note length</span><span class="val"></span></div>
+      <div class="hint">fraction of the ring-out length</div>
+    </div>
+    <div class="row" data-ctl="onsetFrac" data-min="0" data-max="0.6" data-step="0.02" data-val="0.18" data-unit="×">
+      <div class="lab"><span class="name">2nd-note delay</span><span class="val"></span></div>
+      <div class="hint">0 = both notes together (chord) · larger = "di-iing"</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Values for app.js</h2>
+    <div class="toolbar" style="margin-bottom:10px;">
+      <button class="btn" id="copyBtn">Copy</button>
+      <button class="btn" id="resetBtn">Reset to current app defaults</button>
+    </div>
+    <pre id="out"></pre>
+  </div>
+
+  <div class="playbar">
+    <button class="play" id="playBtn">▶ Play test sound</button>
+    <button class="btn" id="burstBtn">Burst ×5</button>
+    <label><input type="checkbox" id="autoPlay" checked> auto</label>
+  </div>
+
+<script>
+const DEFAULTS = {
+  snr: 0, ring: 0.3, baseFreq: 700, gainScale: 0.085, attack: 6,
+  decayFactor: 0.35, lpFreq: 6500, lpQ: 0.3, refVol: 0.5, refRingFrac: 0.5, onsetFrac: 0.18,
+  partials: [[1,1.0],[2,0.5],[3,0.24],[4.01,0.13],[6.01,0.05]],
+};
+
+let ctx = null;
+const params = {};
+
+// ---- Build the simple slider rows from their data-* attributes ----
+const rows = [...document.querySelectorAll('.row[data-ctl]')];
+for (const row of rows) {
+  const key = row.dataset.ctl;
+  const min = +row.dataset.min, max = +row.dataset.max, step = +row.dataset.step;
+  const unit = row.dataset.unit || '';
+  const input = document.createElement('input');
+  input.type = 'range'; input.min = min; input.max = max; input.step = step;
+  input.value = row.dataset.val;
+  row.appendChild(input);
+  const valEl = row.querySelector('.val');
+  params[key] = +input.value;
+  const show = () => { valEl.textContent = (+input.value) + unit; };
+  show();
+  input.addEventListener('input', () => { params[key] = +input.value; show(); updateOut(); });
+  input.addEventListener('change', () => maybePlay());
+  row._input = input; row._unit = unit; row._show = show;
+}
+function setSlider(key, v) {
+  const row = rows.find(r => r.dataset.ctl === key);
+  if (!row) return;
+  row._input.value = v; params[key] = +row._input.value; row._show();
+}
+
+// ---- Partials editor ----
+const partialsEl = document.getElementById('partials');
+function renderPartials(list) {
+  partialsEl.innerHTML = '';
+  list.forEach((p, i) => {
+    const div = document.createElement('div');
+    div.className = 'partial';
+    div.innerHTML =
+      '<input type="checkbox" checked>' +
+      '<input type="number" step="0.01" min="0.5" value="' + p[0] + '" class="mult">' +
+      '<input type="range" min="0" max="1" step="0.01" value="' + p[1] + '" class="amp">' +
+      '<span class="pv"></span>' +
+      '<button class="rm" title="remove">✕</button>';
+    const [chk, mult, amp] = div.querySelectorAll('input');
+    const pv = div.querySelector('.pv');
+    const upd = () => { pv.textContent = (+amp.value).toFixed(2); updateOut(); };
+    upd();
+    amp.addEventListener('input', upd);
+    amp.addEventListener('change', maybePlay);
+    mult.addEventListener('input', updateOut);
+    mult.addEventListener('change', maybePlay);
+    chk.addEventListener('change', () => { updateOut(); maybePlay(); });
+    div.querySelector('.rm').addEventListener('click', () => { div.remove(); updateOut(); maybePlay(); });
+    partialsEl.appendChild(div);
+  });
+}
+function readPartials() {
+  return [...partialsEl.querySelectorAll('.partial')]
+    .filter(d => d.querySelector('input[type=checkbox]').checked)
+    .map(d => [ +d.querySelector('.mult').value, +d.querySelector('.amp').value ]);
+}
+document.getElementById('addPartial').addEventListener('click', () => {
+  const div = document.createElement('div');
+  div.className = 'partial';
+  div.innerHTML =
+    '<input type="checkbox" checked>' +
+    '<input type="number" step="0.01" min="0.5" value="8" class="mult">' +
+    '<input type="range" min="0" max="1" step="0.01" value="0.03" class="amp">' +
+    '<span class="pv">0.03</span>' +
+    '<button class="rm">✕</button>';
+  const [chk, mult, amp] = div.querySelectorAll('input');
+  const pv = div.querySelector('.pv');
+  amp.addEventListener('input', () => { pv.textContent = (+amp.value).toFixed(2); updateOut(); });
+  amp.addEventListener('change', maybePlay);
+  mult.addEventListener('input', updateOut);
+  mult.addEventListener('change', maybePlay);
+  chk.addEventListener('change', () => { updateOut(); maybePlay(); });
+  div.querySelector('.rm').addEventListener('click', () => { div.remove(); updateOut(); maybePlay(); });
+  partialsEl.appendChild(div);
+  updateOut();
+});
+
+// ---- Synthesis (mirrors _playRxSound in app.js) ----
+function playDing(snrOverride) {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') ctx.resume();
+  const now = ctx.currentTime;
+  const p = params, partials = readPartials();
+  const snr = (snrOverride == null) ? p.snr : snrOverride;
+  const ring = p.ring;
+
+  const out = ctx.createBiquadFilter();
+  out.type = 'lowpass';
+  out.frequency.value = p.lpFreq;
+  out.Q.value = p.lpQ;
+  out.connect(ctx.destination);
+
+  const bell = (freq, start, dur, vol) => {
+    const t = now + start;
+    for (const [mult, amp] of partials) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq * mult;
+      osc.connect(gain); gain.connect(out);
+      const peak = vol * amp * p.gainScale;
+      const pdur = dur / (1 + (mult - 1) * p.decayFactor);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + p.attack / 1000);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + pdur);
+      osc.start(t);
+      osc.stop(t + pdur + 0.05);
+    }
+  };
+
+  const onset = ring * p.onsetFrac;
+  if (p.refVol > 0) bell(p.baseFreq, 0, ring * p.refRingFrac, p.refVol);
+  bell(p.baseFreq * Math.pow(2, snr / 10), onset, ring, 1.0);
+}
+
+function maybePlay() { if (document.getElementById('autoPlay').checked) playDing(); }
+
+document.getElementById('playBtn').addEventListener('click', () => playDing());
+document.getElementById('burstBtn').addEventListener('click', () => {
+  const snrs = [0, 8, -6, 14, -12];
+  snrs.forEach((s, i) => setTimeout(() => playDing(s), i * 450));
+});
+
+// ---- Output snippet ----
+function updateOut() {
+  const p = params, partials = readPartials();
+  const pa = '[' + partials.map(x => '[' + x[0] + ', ' + x[1] + ']').join(', ') + ']';
+  document.getElementById('out').textContent =
+`// _playRxSound parameters
+baseFreq      = ${p.baseFreq}            // Hz (fixed reference note)
+ring          = ${p.ring}            // s  (map to short/medium/long)
+lowpass freq  = ${p.lpFreq}, Q = ${p.lpQ}
+attack        = ${(p.attack/1000).toFixed(3)}        // s  (t + ${(p.attack/1000).toFixed(3)})
+gainScale     = ${p.gainScale}          // peak = vol * amp * gainScale
+decayFactor   = ${p.decayFactor}           // pdur = dur / (1 + (mult-1) * decayFactor)
+partials      = ${pa}
+refVol        = ${p.refVol}            // reference-note volume
+refRingFrac   = ${p.refRingFrac}            // reference-note length = ring * refRingFrac
+onsetFrac     = ${p.onsetFrac}           // 2nd-note delay = ring * onsetFrac
+`;
+}
+
+function copy() {
+  navigator.clipboard?.writeText(document.getElementById('out').textContent);
+  const b = document.getElementById('copyBtn'); const t = b.textContent;
+  b.textContent = 'Copied ✓'; setTimeout(() => b.textContent = t, 1200);
+}
+document.getElementById('copyBtn').addEventListener('click', copy);
+
+function resetAll() {
+  for (const k of Object.keys(DEFAULTS)) {
+    if (k === 'partials') continue;
+    setSlider(k, DEFAULTS[k]);
+  }
+  renderPartials(DEFAULTS.partials.map(p => p.slice()));
+  updateOut();
+}
+document.getElementById('resetBtn').addEventListener('click', resetAll);
+
+// Length presets
+document.querySelectorAll('[data-ring]').forEach(b =>
+  b.addEventListener('click', () => { setSlider('ring', +b.dataset.ring); updateOut(); playDing(); }));
+
+// init
+renderPartials(DEFAULTS.partials.map(p => p.slice()));
+updateOut();
+</script>
+</body>
+</html>
