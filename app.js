@@ -5968,22 +5968,21 @@ class MeshCoreApp {
         const ring = mode === 'long' ? 0.8 : mode === 'medium' ? 0.5 : 0.3;
 
         // A lowpass tames only the very top so it stays a bell, not a harsh
-        // tick — but set high enough that the upper partials still ring through
-        // and give the sound its clear, crystalline "glockenspiel" shimmer.
+        // tick — set high so the upper partials ring through and give the sound
+        // its clear, crystalline "glockenspiel" shimmer. (Tuned in sound-lab.html.)
         const out = ctx.createBiquadFilter();
         out.type = 'lowpass';
-        out.frequency.value = 6500;
+        out.frequency.value = 10700;
         out.Q.value = 0.3;
         out.connect(ctx.destination);
 
-        // One struck bell note: a mostly-harmonic stack with a touch of high,
-        // lightly-detuned shimmer for a glassy bell tone. Soft attack (no onset
-        // click) and an exponential ring-out; upper partials decay a bit faster
-        // than the fundamental — but slowly enough that the shimmer lingers,
-        // which is what reads as "crystalline" rather than dull.
+        // One struck bell note: fundamental + octave + a touch of detuned high
+        // shimmer (4.01×) over a sub-octave (0.5×) for body. Very fast attack
+        // gives a clear "ping"; partials ring out together (low decayFactor) so
+        // the shimmer lingers, which reads as crystalline rather than dull.
         const bell = (freq, start, dur, vol) => {
             const t = now + start;
-            const partials = [[1, 1.0], [2, 0.5], [3, 0.24], [4.01, 0.13], [6.01, 0.05]];
+            const partials = [[1, 1.0], [2, 0.5], [4.01, 0.13], [0.5, 0.38]];
             for (const [mult, amp] of partials) {
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
@@ -5992,9 +5991,9 @@ class MeshCoreApp {
                 osc.connect(gain);
                 gain.connect(out);
                 const peak = vol * amp * 0.085;
-                const pdur = dur / (1 + (mult - 1) * 0.35);   // higher partials die a bit sooner
+                const pdur = dur / (1 + (mult - 1) * 0.05);   // upper partials ring almost as long
                 gain.gain.setValueAtTime(0.0001, t);
-                gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.006);
+                gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.001);
                 gain.gain.exponentialRampToValueAtTime(0.0001, t + pdur);
                 osc.start(t);
                 osc.stop(t + pdur + 0.05);
