@@ -5963,40 +5963,48 @@ class MeshCoreApp {
         if (ctx.state === 'suspended') ctx.resume();
         const now = ctx.currentTime;
         const baseFreq = 700;
-        const scale = mode === 'long' ? 4 : mode === 'medium' ? 2 : 1;
 
-        // A short bell/chime: a sine fundamental plus a few decaying partials —
-        // the octave and a couple of higher, slightly inharmonic ones give the
-        // "ding" shimmer — with a fast attack and an exponential ring-out. Much
-        // nicer than a bare tone while keeping the per-tone frequency variable.
-        const chime = (freq, start, dur) => {
+        // Ring-out length grows with the chosen mode (short / medium / long).
+        const ring = mode === 'long' ? 0.8 : mode === 'medium' ? 0.5 : 0.3;
+
+        // A gentle lowpass over the whole sound rounds off the highs, so it
+        // reads as a warm bell rather than a metallic "tin lid" tick.
+        const out = ctx.createBiquadFilter();
+        out.type = 'lowpass';
+        out.frequency.value = 3000;
+        out.Q.value = 0.2;
+        out.connect(ctx.destination);
+
+        // One struck bell note: a purely harmonic stack (no clangy inharmonic
+        // partials), each partial with a soft attack — no onset click — and an
+        // exponential ring-out. Upper partials fade faster than the fundamental,
+        // like a real bell, so the timbre softens as it decays.
+        const bell = (freq, start, dur, vol) => {
             const t = now + start;
-            const partials = [[1, 0.08], [2, 0.04], [3, 0.02], [4.2, 0.01]];
-            for (const [mult, peak] of partials) {
+            const partials = [[1, 1.0], [2, 0.4], [3, 0.12]];
+            for (const [mult, amp] of partials) {
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.type = 'sine';
                 osc.frequency.value = freq * mult;
                 osc.connect(gain);
-                gain.connect(ctx.destination);
+                gain.connect(out);
+                const peak = vol * amp * 0.10;
+                const pdur = dur / (1 + (mult - 1) * 0.6);   // higher partials die sooner
                 gain.gain.setValueAtTime(0.0001, t);
-                gain.gain.exponentialRampToValueAtTime(peak, t + 0.004);   // fast attack
-                gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);   // bell-like decay
+                gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.008);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t + pdur);
                 osc.start(t);
-                osc.stop(t + dur + 0.03);
+                osc.stop(t + pdur + 0.05);
             }
         };
 
-        const dur = 0.05 * scale;
-        const gap = 0.08 * scale;
-        // The two tones run back-to-back over one window: the first tone takes
-        // 1/3 of the time, the second (pitched by SNR) the remaining 2/3.
-        // SNR 0 dB = base pitch; ±10 dB = ±1 octave.
-        const total = dur + gap;
-        const d1 = total / 3;
-        const d2 = total * 2 / 3;
-        chime(baseFreq, 0, d1);
-        chime(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
+        // Two notes: a brief, quieter reference ding, then the SNR-pitched note
+        // that rings out. SNR 0 dB = base pitch; ±10 dB = ±1 octave. A small
+        // overlap makes it a gentle "di-iing" instead of two separate ticks.
+        const onset = ring * 0.18;
+        bell(baseFreq, 0, ring * 0.5, 0.5);
+        bell(baseFreq * Math.pow(2, (snr ?? 0) / 10), onset, ring, 1.0);
     }
 
     // An interrupted two-tone alarm (880-440-880-440-880-440 Hz) for the
