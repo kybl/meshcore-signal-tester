@@ -133,6 +133,8 @@ class MeshCoreApp {
         this._chartZoomLayer  = null;            // finer buckets over the zoom window {cells, width, lo, from, to}
         this._sentChartAt     = 0;               // time the sent layer reflects
         this._chartArrTimer   = null;            // coalesces bucket upserts into one array rebuild
+        this._chartBaseBuilding = false;         // a _rebuildChartBase() is in flight (self-heal guard)
+        this._chartBaseHealAt = 0;               // last self-heal attempt, to debounce retries
         this._renderCacheAt   = 0;               // time the table's disk page reflects; newer rows are the tail
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this.MAP_TARGET_DOTS  = 2500;            // dot budget for the map grid layers
@@ -4888,11 +4890,34 @@ class MeshCoreApp {
     //   - zoom:  on zoom-in / zoom-window change (finer buckets over the window).
     // Zooming OUT needs no disk at all — the base stays maintained by upserts.
 
+    // Re-establish the wide/All chart bucket cache if it is missing during live
+    // capture. That cache is the ONLY source the charts read in a wide window
+    // (see _visibleChartPoints), and _upsertChartCell cannot fold into a null
+    // base — so if a build ever fails (the catch below) or is dropped, nothing
+    // else would rebuild it until the next Display change, freezing the charts
+    // at their last state while disk and the 3D map keep filling. Self-heal,
+    // debounced and non-overlapping, so capture recovers on its own.
+    _ensureChartBase() {
+        if (!this._storeReady || this._chartBaseBuilding) return;
+        if (Date.now() - this._chartBaseHealAt < 1000) return;
+        this._chartBaseHealAt = Date.now();
+        this._chartBaseBuilding = true;
+        this._rebuildChartBase().finally(() => { this._chartBaseBuilding = false; });
+    }
+
     async _rebuildChartBase() {
         if (!this._storeReady) return;
-        const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
+        // Standalone callers (escape valve, self-heal) may have unflushed writes;
+        // flush so the rebuilt base includes the packets that triggered it.
+        await this._flushWrites();
+        // Pin the window this build is for; if Display changes while we await disk
+        // a newer build owns the base, so discard this (possibly different-window)
+        // result rather than clobbering it.
+        const lifetime = this.DISPLAY_LIFETIME;
+        const from = isFinite(lifetime) ? Date.now() - lifetime : -Infinity;
         try {
             const { buckets, width, lo } = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
+            if (this.DISPLAY_LIFETIME !== lifetime) return;
             const cells = new Map();
             for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
             this._chartBase = { cells, width, lo };
@@ -5016,7 +5041,7 @@ class MeshCoreApp {
             return bIdx;
         };
         const base = this._chartBase;
-        if (!base) return;   // built shortly by _refreshWideView; the point is on disk
+        if (!base) { this._ensureChartBase(); return; }   // self-heal; the point is on disk
         const bIdx = fold(base);
         // "All" keeps a fixed bucket width from its build, so a long session can
         // outgrow the bucket budget — rebuild once with a wider bucket when the
@@ -5024,7 +5049,7 @@ class MeshCoreApp {
         // live bucket count stays ~constant via expiry, so no rebuild is needed.)
         if (!isFinite(this.DISPLAY_LIFETIME) && bIdx > this.DOWNSAMPLE_BUCKETS * 3) {
             this._chartBase = null;
-            this._rebuildChartBase();
+            this._ensureChartBase();
             return;
         }
         const zl = this._chartZoomLayer;
@@ -5404,6 +5429,10 @@ class MeshCoreApp {
             this.store.pruneOlderThan(now - this.HASH_LIFETIME)
                 .then(n => this._afterDiskPrune(n));
         }
+        // Safety net: if the wide/All chart cache went missing (a failed rebuild)
+        // it would otherwise stay null until the next Display change, freezing the
+        // charts. Re-establish it here too, in case no packet arrives to do so.
+        if (this._storeReady && !this._chartBase) this._ensureChartBase();
         const lifetime = this._ramWindowMs();
         const toRemove = [];
         for (const [hash, data] of this.hashData.entries()) {
