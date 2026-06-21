@@ -6050,10 +6050,19 @@ class MeshCoreApp {
     // is what gates the Auto-reconnect toggle. The native Android app can always
     // reconnect quietly (saved BLE address, USB permission, or a WiFi socket).
     // In a plain browser it needs an API that hands back an already-authorised
-    // device without a picker: Web Bluetooth getDevices() (desktop Chrome only —
-    // mobile Chrome lacks it and forces requestDevice every time) or Web Serial.
+    // device without a picker: Web Bluetooth getDevices() or Web Serial.
+    //
+    // The catch: mobile Chrome *exposes* getDevices() but it returns nothing
+    // usable, so every BLE connection still forces the system picker — feature
+    // detection alone can't tell that apart. So on a mobile browser we treat a
+    // silent reconnect as impossible and hide the toggle (the native app is
+    // unaffected — it returns early above).
     _canAutoReconnect() {
         if (window.__MESHCORE_NATIVE__) return true;
+        const ua = navigator.userAgent || '';
+        const mobileWeb = navigator.userAgentData?.mobile === true
+            || /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+        if (mobileWeb) return false;
         if (navigator.bluetooth?.getDevices) return true;
         if (navigator.serial) return true;
         return false;
