@@ -5967,21 +5967,23 @@ class MeshCoreApp {
         // Ring-out length grows with the chosen mode (short / medium / long).
         const ring = mode === 'long' ? 0.8 : mode === 'medium' ? 0.5 : 0.3;
 
-        // A gentle lowpass over the whole sound rounds off the highs, so it
-        // reads as a warm bell rather than a metallic "tin lid" tick.
+        // A lowpass tames only the very top so it stays a bell, not a harsh
+        // tick — but set high enough that the upper partials still ring through
+        // and give the sound its clear, crystalline "glockenspiel" shimmer.
         const out = ctx.createBiquadFilter();
         out.type = 'lowpass';
-        out.frequency.value = 3000;
-        out.Q.value = 0.2;
+        out.frequency.value = 6500;
+        out.Q.value = 0.3;
         out.connect(ctx.destination);
 
-        // One struck bell note: a purely harmonic stack (no clangy inharmonic
-        // partials), each partial with a soft attack — no onset click — and an
-        // exponential ring-out. Upper partials fade faster than the fundamental,
-        // like a real bell, so the timbre softens as it decays.
+        // One struck bell note: a mostly-harmonic stack with a touch of high,
+        // lightly-detuned shimmer for a glassy bell tone. Soft attack (no onset
+        // click) and an exponential ring-out; upper partials decay a bit faster
+        // than the fundamental — but slowly enough that the shimmer lingers,
+        // which is what reads as "crystalline" rather than dull.
         const bell = (freq, start, dur, vol) => {
             const t = now + start;
-            const partials = [[1, 1.0], [2, 0.4], [3, 0.12]];
+            const partials = [[1, 1.0], [2, 0.5], [3, 0.24], [4.01, 0.13], [6.01, 0.05]];
             for (const [mult, amp] of partials) {
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
@@ -5989,10 +5991,10 @@ class MeshCoreApp {
                 osc.frequency.value = freq * mult;
                 osc.connect(gain);
                 gain.connect(out);
-                const peak = vol * amp * 0.10;
-                const pdur = dur / (1 + (mult - 1) * 0.6);   // higher partials die sooner
+                const peak = vol * amp * 0.085;
+                const pdur = dur / (1 + (mult - 1) * 0.35);   // higher partials die a bit sooner
                 gain.gain.setValueAtTime(0.0001, t);
-                gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.008);
+                gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.006);
                 gain.gain.exponentialRampToValueAtTime(0.0001, t + pdur);
                 osc.start(t);
                 osc.stop(t + pdur + 0.05);
