@@ -1,0 +1,36 @@
+// Vendored copy of usb-serial-for-android (see README.md / LICENSE.txt).
+//
+// This is a trimmed, self-contained build script for the library's runtime
+// source only — we deliberately do NOT reuse upstream's build.gradle so that:
+//   * there is no JitPack / maven-publish involvement (the whole point of
+//     vendoring: the app builds purely from source, which F-Droid requires);
+//   * compileSdk / Java version / minSdk stay aligned with the app module
+//     instead of upstream's own (which targets a newer SDK than our AGP).
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.hoho.android.usbserial'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 26
+        consumerProguardFiles 'proguard-rules.pro'
+    }
+
+    buildFeatures {
+        // Ch34x/Prolific drivers reference com.hoho.android.usbserial.BuildConfig.DEBUG
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    // Only runtime dependency the library source actually uses (IntDef etc.).
+    implementation 'androidx.annotation:annotation:1.9.1'
+}

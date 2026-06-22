@@ -10,10 +10,11 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // usb-serial-for-android is published via JitPack
-        maven { url 'https://jitpack.io' }
     }
 }
 
 rootProject.name = "MeshCoreSignalTester"
 include ':app'
+// Vendored usb-serial-for-android (built from source — see
+// usbSerialForAndroid/README.md), replacing the former JitPack dependency.
+include ':usbSerialForAndroid'

@@ -15,7 +15,9 @@ just show the page. Instead:
 - **Native USB serial** (`SerialManager.kt`) owns the USB host connection via
   the [`usb-serial-for-android`](https://github.com/mik3y/usb-serial-for-android)
   library (CDC-ACM, CP21xx, CH34x, FTDI, Prolific), so a companion plugged in
-  over USB-C works just like a Bluetooth one.
+  over USB-C works just like a Bluetooth one. The library is **vendored** as a
+  source module in [`usbSerialForAndroid/`](usbSerialForAndroid/README.md) and
+  built from source (no JitPack), so the whole app builds purely from source.
 - **Native GPS** (`LocationHelper.kt`) streams fixes from the framework
   `LocationManager` (no Google Play Services needed).
 - A **foreground service** (`MeshcoreService.kt`) holds a partial wake lock and
