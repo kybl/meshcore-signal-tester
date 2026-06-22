@@ -34,6 +34,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -134,9 +135,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Hide/show the system bars while an HTML element is in fullscreen.
+    // Hide/show the system bars while an HTML element is in fullscreen. The
+    // window stays edge-to-edge (decorFitsSystemWindows = false, set once in
+    // onCreate); hiding the bars makes the WebView's system-bar insets collapse
+    // to zero, so its padding goes away and it fills the whole screen.
     private fun setImmersiveFullscreen(on: Boolean) {
-        WindowCompat.setDecorFitsSystemWindows(window, !on)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         if (on) {
             controller.hide(WindowInsetsCompat.Type.systemBars())
@@ -166,6 +169,25 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         webView = WebView(this)
+        // Draw edge to edge (enforced on Android 15 / targetSdk 35, where the
+        // window's statusBarColor / navigationBarColor are ignored) and keep the
+        // web UI inside the safe area by padding the WebView with the system-bar
+        // and display-cutout insets. The dark window background shows behind the
+        // bars; system-bar icons are light to stay legible on it. When an HTML
+        // element enters fullscreen the bars are hidden, the insets collapse to
+        // zero, and the WebView fills the whole screen (see setImmersiveFullscreen).
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, webView).run {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
         setContentView(webView)
 
         jsApi = JsApi(webView)

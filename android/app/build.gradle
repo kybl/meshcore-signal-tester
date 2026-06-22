@@ -14,12 +14,12 @@ def appVersionName = (project.findProperty("appVersionName")?.toString()?.trim()
 
 android {
     namespace 'cz.kyblsoft.meshcore'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         applicationId "cz.kyblsoft.meshcore"
         minSdk 26
-        targetSdk 34
+        targetSdk 35
         versionCode appVersionCode ? appVersionCode.toInteger() : 3
         versionName appVersionName ?: "1.2.0"
     }
