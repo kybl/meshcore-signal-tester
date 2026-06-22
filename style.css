@@ -1714,8 +1714,14 @@ html.light-theme .msg-filter-clear:hover {
 }
 
 .rep-filter-bar .rep-filter-input {
-    flex: 0 1 180px;
+    flex: 0 1 auto;
+    width: 110px;
+    min-width: 70px;
     max-width: 220px;
+    /* Where supported (Chromium 123+), grow with the typed content instead of
+       reserving a fixed width; min/max keep it sane. Older browsers fall back
+       to the small fixed width above. */
+    field-sizing: content;
 }
 
 .filter-applied-indicator {
