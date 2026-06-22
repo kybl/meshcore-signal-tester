@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=161">
+    <link rel="stylesheet" href="style.css?v=162">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -98,9 +98,11 @@
                     <span class="help-icon" data-help="rep-filter">?</span>
                     <button id="repFilterClear" class="msg-filter-clear hidden" title="Show all repeaters">✕</button>
                     <span id="repFilterApplied" class="filter-applied-indicator hidden">Filter applied</span>
-                    <button id="discoverBtn" class="btn-pause discover-btn" title="Send DISCOVER_REQ — nearby nodes reply with their public key and the uplink SNR they measured (firmware ≥ v1.10)">Discover nodes</button>
-                    <span class="help-icon" data-help="discover">?</span>
                 </div>
+            <div class="ping-bar">
+                <button id="discoverBtn" class="btn-pause" title="Send DISCOVER_REQ — nearby nodes reply with their public key and the uplink SNR they measured (firmware ≥ v1.10)">Discover nodes</button>
+                <span class="ping-hint">Sends a discovery request — nearby nodes reply with their public key and the SNR they measured for your signal.<span class="help-icon" data-help="discover">?</span></span>
+            </div>
             <div class="section-wrap" id="repeaterWrap">
                 <div class="section-header">
                     <span class="section-title">Seen repeaters</span>
