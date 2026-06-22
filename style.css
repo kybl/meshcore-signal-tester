@@ -1699,9 +1699,13 @@ html.light-theme .msg-filter-clear:hover {
 .rep-filter-bar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
-    padding: 14px 0 6px;
+    padding: 14px 0 8px;
 }
+
+/* Discover lives on the same row, pushed to the right edge. */
+.rep-filter-bar .discover-btn { margin-left: auto; }
 
 .rep-filter-label {
     color: var(--text-secondary);
@@ -2485,19 +2489,6 @@ html.light-theme .contacts-loading { color: #1a6080; }
     color: #8cc;
     font-style: italic;
     margin-left: 12px;
-}
-.ping-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 4px 0 8px;
-}
-.ping-hint {
-    font-size: 12px;
-    color: #aab;
-}
-html.light-theme .ping-hint {
-    color: #444;
 }
 .theme-toggle-btn {
     background: rgba(40,40,60,0.75);
