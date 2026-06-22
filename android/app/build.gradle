@@ -3,6 +3,15 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Version is overridable from the command line / CI so a release build can
+// stamp a strictly-increasing versionCode (Google Play and IzzyOnDroid both
+// reject an upload whose versionCode is not higher than the previous one) and
+// a versionName taken from the git tag. Pass -PappVersionCode=… / -PappVersionName=…
+// or the matching ORG_GRADLE_PROJECT_appVersionCode / …Name env vars. The
+// fallbacks below are used for normal local/debug builds.
+def appVersionCode = (project.findProperty("appVersionCode")?.toString()?.trim()) ?: ""
+def appVersionName = (project.findProperty("appVersionName")?.toString()?.trim()) ?: ""
+
 android {
     namespace 'cz.kyblsoft.meshcore'
     compileSdk 34
@@ -11,8 +20,8 @@ android {
         applicationId "cz.kyblsoft.meshcore"
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName "1.2.0"
+        versionCode appVersionCode ? appVersionCode.toInteger() : 3
+        versionName appVersionName ?: "1.2.0"
     }
 
     signingConfigs {
