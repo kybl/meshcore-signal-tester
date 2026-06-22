@@ -6,55 +6,34 @@
 
 ### Added
 
-- **Auto-reconnect** — an optional toggle next to the connect buttons that
-  quietly retries the last device a few times after an unexpected drop before
-  raising the disconnect alarm. It only appears where a silent reconnect is
-  possible (the Android app, or desktop Chrome/Edge); it is hidden for
-  Bluetooth in a mobile browser, where every connection requires a manual
-  device-picker confirmation. An ⓘ icon explains this in place.
-- **More sound options** — a "disconnect only" mode that stays silent on
-  packets but still alarms on an unexpected disconnect, and a nicer bell-like
-  chime for the packet-received sound (keeping the signal-strength-dependent
-  pitch). The disconnect alarm now also sounds on every unexpected drop, not
-  just the first.
+- **Auto-reconnect** — an optional toggle that automatically retries the last
+  device after an unexpected drop, before the disconnect alarm. Shown only
+  where it can actually work (not for Bluetooth in a mobile browser).
+- **Nicer packet sound** — a pleasant bell whose pitch still tracks signal
+  strength, plus a new "disconnect only" sound mode. The disconnect alarm now
+  sounds on every unexpected drop.
 
 ### Changed
 
-- **Location capture now starts automatically when you connect (Android).**
-  Granting the location permission during the Bluetooth/USB/WiFi connect flow
-  is enough — GPS starts streaming and packets are geotagged from connect time.
-  No more hunting for the 3D map's "Enable location" button, which now only
-  acts as a fallback when the permission is missing or location is off.
-- **Much steadier location on the 3D map.** One-off GPS outliers are now
-  rejected (no more sudden ~200 m jumps), and the marker dead-reckons through
-  the gap instead of freezing; on Android the app uses the GPS provider only
-  rather than mixing in coarser network locations.
-- **3D map zoom is now extent-independent** — you can zoom all the way to
-  street level even on a large map, and deep-zoom tile detail loads faster
-  (Z-order range skipping) without the dots or markers blowing up in size.
-- **3D camera framing refinements** — *Center on me* no longer snaps at the
-  end of its move, and framing a repeater leaves headroom above its spire.
-- The theme toggle moved up next to **Help**, and **Show help** is now just
-  **Help**. The help dialog gained a **Close** button at the bottom.
-- The page footer now includes a **Changelog** link.
+- **Location now starts automatically when you connect (Android)** — no need to
+  tap the 3D map's "Enable location" button anymore.
+- **Steadier location on the 3D map** — occasional GPS jumps (sudden ~200 m
+  hops) are filtered out.
+- **3D map zooms in to street level** even on large maps, and deep zoom is
+  smoother.
+- **3D camera framing** — "Center on me" no longer jerks at the end of its move,
+  and repeaters are framed with a little headroom above them.
 
 ### Fixed
 
-- **2D signal charts could stop updating** in a wide / **All** Display window —
-  new points stopped appearing (and Seen Repeaters showed only the most recent
-  hour) until you switched the Display window and back. The chart cache now
-  self-heals, so it keeps up on its own.
-- **Help (?) tooltips could appear detached from their icon**, in the wrong
-  place, on desktop and at larger text sizes (anything with a page zoom). They
-  now anchor correctly to the icon.
-- **Seen Repeaters** showed rounded/averaged RSSI instead of the true last
-  value, and the last SNR/RSSI restored from disk could be an estimate rather
-  than the actual last reading — both now show the real last measurement.
-- **Received Packets** now always lists every repeater as a column, not only
-  the ones that happen to have a record on the current page.
-- 3D map selection no longer clears itself on its own (e.g. in the wide/All
-  display window).
-- 3D map tiles no longer briefly pulse/double up while panning or zooming.
+- 2D charts could stop updating with Display set to **All**, until you switched
+  the Display window and back.
+- Help (?) tooltips could appear away from their icon.
+- Seen Repeaters now shows the true last RSSI/SNR, not a rounded/averaged value.
+- Received Packets always lists every repeater as a column, not only the ones on
+  the current page.
+- 3D map selection no longer clears itself on its own.
+- 3D map tiles no longer flicker while panning or zooming.
 - Footer text now has proper contrast in light mode.
 
 ## [1.2.0] - 2026-06-14
