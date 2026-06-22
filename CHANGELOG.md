@@ -36,9 +36,17 @@
   end of its move, and framing a repeater leaves headroom above its spire.
 - The theme toggle moved up next to **Help**, and **Show help** is now just
   **Help**. The help dialog gained a **Close** button at the bottom.
+- The page footer now includes a **Changelog** link.
 
 ### Fixed
 
+- **2D signal charts could stop updating** in a wide / **All** Display window —
+  new points stopped appearing (and Seen Repeaters showed only the most recent
+  hour) until you switched the Display window and back. The chart cache now
+  self-heals, so it keeps up on its own.
+- **Help (?) tooltips could appear detached from their icon**, in the wrong
+  place, on desktop and at larger text sizes (anything with a page zoom). They
+  now anchor correctly to the icon.
 - **Seen Repeaters** showed rounded/averaged RSSI instead of the true last
   value, and the last SNR/RSSI restored from disk could be an estimate rather
   than the actual last reading — both now show the real last measurement.
