@@ -15,6 +15,9 @@ def appVersionName = (project.findProperty("appVersionName")?.toString()?.trim()
 android {
     namespace 'cz.kyblsoft.meshcore'
     compileSdk 35
+    // Pin the build-tools version explicitly (reproducible builds) instead of
+    // letting AGP pick its default.
+    buildToolsVersion '35.0.0'
 
     defaultConfig {
         applicationId "cz.kyblsoft.meshcore"

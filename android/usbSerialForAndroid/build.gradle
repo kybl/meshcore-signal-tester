@@ -13,6 +13,7 @@ plugins {
 android {
     namespace 'com.hoho.android.usbserial'
     compileSdk 35
+    buildToolsVersion '35.0.0'
 
     defaultConfig {
         minSdk 26
