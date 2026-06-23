@@ -115,7 +115,10 @@ capture with the screen off works over USB too — the foreground service's
 
 ## Package
 
-`cz.kyblsoft.meshcore`
+`cz.kyblsoft.meshcore.signaltester`
+
+(The Kotlin source package and the Android `applicationId` share this name. The
+`cz.kyblsoft.meshcore` prefix is reserved as a namespace for other MeshCore apps.)
 
 ## Author
 

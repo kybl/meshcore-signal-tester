@@ -1,4 +1,4 @@
-package cz.kyblsoft.meshcore
+package cz.kyblsoft.meshcore.signaltester
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
@@ -254,7 +254,7 @@ class SerialManager(private val context: Context, private val js: JsApi) {
     }
 
     companion object {
-        private const val ACTION_USB_PERMISSION = "cz.kyblsoft.meshcore.USB_PERMISSION"
+        private const val ACTION_USB_PERMISSION = "cz.kyblsoft.meshcore.signaltester.USB_PERMISSION"
         private const val WRITE_TIMEOUT_MS = 2000
     }
 }

@@ -1,4 +1,4 @@
-package cz.kyblsoft.meshcore
+package cz.kyblsoft.meshcore.signaltester
 
 import android.util.Base64
 import java.io.OutputStream
