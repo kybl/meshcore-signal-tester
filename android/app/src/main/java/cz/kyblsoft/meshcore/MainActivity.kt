@@ -648,9 +648,12 @@ class MainActivity : AppCompatActivity() {
             AlertDialog.Builder(this)
                 .setTitle("Allow location all the time")
                 .setMessage(
-                    "To record your GPS position while the screen is off, " +
-                    "this app needs the \"Allow all the time\" location permission.\n\n" +
-                    "Tap \"Grant Permission\" and choose \"Allow all the time\" in the next screen."
+                    "MeshCore Signal Tester collects location (GPS) data to tag received " +
+                    "packets with where they were received and to show them on the map — " +
+                    "including in the background, even when the app is closed or not in use, " +
+                    "so capture keeps working with the screen off. This data stays on your " +
+                    "device.\n\n" +
+                    "Tap \"Grant Permission\" and choose \"Allow all the time\" on the next screen."
                 )
                 .setPositiveButton("Grant Permission") { _, _ ->
                     requestBackgroundLocation.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)

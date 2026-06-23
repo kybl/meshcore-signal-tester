@@ -42,6 +42,54 @@
         }, true);
     }
 
+    // ---- native version + open-source licenses ---------------------------
+    // Show the actually-installed APK version (with its versionCode) in the
+    // header, and add an "Open-source licenses" note to the Help/About panel
+    // for the native library bundled only in the Android build. Runs on `load`
+    // so it lands after app.js's own init has set the web version; every step
+    // is guarded so a DOM change can never break the app.
+    if (window.AndroidScreen && window.AndroidScreen.appVersion) {
+        window.addEventListener('load', function () {
+            try {
+                var info = {};
+                try { info = JSON.parse(window.AndroidScreen.appVersion() || '{}'); } catch (_) {}
+                if (info && info.name) {
+                    var verEl = document.getElementById('appVersion');
+                    if (verEl) {
+                        verEl.textContent = 'v' + info.name;
+                        verEl.title = 'Version ' + info.name +
+                            (info.code != null ? ' (build ' + info.code + ')' : '');
+                    }
+                }
+            } catch (_) {}
+
+            try {
+                if (document.getElementById('ossLicenses')) return;
+                var titles = document.querySelectorAll('.help-section-title');
+                var about = null;
+                for (var i = 0; i < titles.length; i++) {
+                    if ((titles[i].textContent || '').trim() === 'About') { about = titles[i]; break; }
+                }
+                if (about && about.parentElement) {
+                    var h = document.createElement('div');
+                    h.className = 'help-section-title';
+                    h.id = 'ossLicenses';
+                    h.textContent = 'Open-source licenses';
+                    var p = document.createElement('p');
+                    p.innerHTML = 'The Android app bundles ' +
+                        '<a href="https://github.com/mik3y/usb-serial-for-android" ' +
+                        'target="_blank" rel="noopener">usb-serial-for-android</a> ' +
+                        '(MIT License, © 2011–2013 Google Inc., © 2013 Mike Wakerly) ' +
+                        'for USB connections. Full license texts are in the ' +
+                        '<a href="https://github.com/kybl/meshcore-signal-tester" ' +
+                        'target="_blank" rel="noopener">source repository</a>.';
+                    about.parentElement.appendChild(h);
+                    about.parentElement.appendChild(p);
+                }
+            } catch (_) {}
+        });
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     function norm(u) {

@@ -2,11 +2,13 @@ package cz.kyblsoft.meshcore
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import org.json.JSONObject
 
 class ScreenBridge(private val activity: MainActivity) {
 
@@ -42,5 +44,18 @@ class ScreenBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun setStatus(text: String) {
         MeshcoreService.updateStatus(activity.applicationContext, text)
+    }
+
+    /** Native APK version as JSON {"name":"1.2.0","code":3} so the web UI can
+     *  show the real installed build (and its versionCode) instead of the web
+     *  app's own version constant. */
+    @JavascriptInterface
+    fun appVersion(): String = try {
+        val pi = activity.packageManager.getPackageInfo(activity.packageName, 0)
+        val code = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode
+                   else @Suppress("DEPRECATION") pi.versionCode.toLong()
+        JSONObject().put("name", pi.versionName ?: "").put("code", code).toString()
+    } catch (e: Exception) {
+        "{}"
     }
 }
