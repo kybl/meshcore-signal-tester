@@ -24,11 +24,15 @@ class LocationHelper(context: Context, private val js: JsApi) : LocationListener
         if (active) return
         try {
             var any = false
+            // Use GPS alone for live updates. Registering GPS *and* NETWORK at the
+            // same time interleaves precise GPS fixes with coarse cell/wifi ones
+            // (often hundreds of metres off — underpasses, tunnels), which makes
+            // the marker jump back and forth. Fall back to NETWORK only when GPS
+            // is unavailable, so the two streams are never mixed.
             if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, Looper.getMainLooper())
                 any = true
-            }
-            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            } else if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 0f, this, Looper.getMainLooper())
                 any = true
             }

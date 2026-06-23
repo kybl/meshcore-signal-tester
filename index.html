@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=155">
+    <link rel="stylesheet" href="style.css?v=162">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -13,7 +13,7 @@
         else if(_s==="large")document.documentElement.classList.add("ui-large");
         else if(_s==="larger")document.documentElement.classList.add("ui-larger");
     }catch(e){}</script>
-    <script src="native-bridge.js?v=8"></script>
+    <script src="native-bridge.js?v=10"></script>
     <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js?v=1" } }
     </script>
@@ -24,7 +24,8 @@
             <img src="logo.svg" class="app-logo" alt="">
             <span class="app-title">MeshCore Signal Tester</span>
             <a id="appVersion" class="app-version" href="https://github.com/kybl/meshcore-signal-tester/blob/main/CHANGELOG.md" target="_blank" rel="noopener" title="What's new in this version"></a>
-            <button class="help-btn" id="helpBtn" aria-label="Help / About">Show help</button>
+            <button class="help-btn" id="helpBtn" aria-label="Help / About">Help</button>
+            <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀️</button>
             <div id="status" class="status disconnected">
                 <span id="statusText" class="status-text">Disconnected</span>
                 <button id="connectBtn" class="btn-primary btn-connect" data-sub="companion">Connect Bluetooth</button>
@@ -33,6 +34,7 @@
                 <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <button id="disconnectBtn" class="btn-pause btn-disconnect">Disconnect</button>
                 <span id="connectedDeviceName" class="connected-device-name"></span>
+                <label id="autoReconnectWrap" class="auto-reconnect-toggle"><input type="checkbox" id="autoReconnectChk"> Auto-reconnect<span class="help-icon" data-help="auto-reconnect">i</span></label>
                 <div id="savedDevices" class="saved-devices hidden"></div>
             </div>
             <span id="batteryStatus" class="battery-status hidden"></span>
@@ -45,12 +47,11 @@
                 <label class="ttl-header-label">Auto-remove<select id="ttlSelect" class="ttl-header-select"><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="900">15 min</option><option value="3600">1 h</option><option value="10800">3 h</option><option value="43200">12 h</option><option value="Infinity" selected>Never</option></select><span class="help-icon" data-help="ttl">?</span></label>
             </div>
             <div class="header-row header-row-tools">
-                <label class="sound-toggle">🔊 Sound<select id="soundSelect" class="ttl-header-select"><option value="off" selected>off</option><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select><span class="help-icon" data-help="sound">?</span></label>
+                <label class="sound-toggle">🔊 Sound<select id="soundSelect" class="ttl-header-select"><option value="off" selected>off</option><option value="disconnect">disconnect only</option><option value="short">short</option><option value="medium">medium</option><option value="long">long</option></select><span class="help-icon" data-help="sound">?</span></label>
                 <label class="ttl-header-label">Display<select id="hideSelect" class="ttl-header-select"><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="900" selected>15 min</option><option value="3600">1 h</option><option value="10800">3 h</option><option value="43200">12 h</option><option value="all">All</option></select><span class="help-icon" data-help="display">?</span></label>
                 <label class="ttl-header-label">Text size<select id="uiScaleSelect" class="ttl-header-select"><option value="small" style="font-size:10px">Small</option><option value="normal" selected style="font-size:13px">Normal</option><option value="large" style="font-size:17px">Large</option><option value="larger" style="font-size:24px">Larger</option></select></label>
                 <label class="size-label">2D graphs dot size<input type="range" id="dotSizeInput" class="size-range" min="0.3" max="2.5" step="0.1" value="1"><span id="dotSizeVal" class="size-val">1</span></label>
                 <label class="sound-toggle"><input type="checkbox" id="keepScreenChk" checked> Keep screen on<span class="help-icon" data-help="keepscreen">?</span></label>
-                <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle light/dark theme">☀️</button>
             </div>
             <div class="header-stats-row">
                 <div class="header-stats">
@@ -285,6 +286,8 @@
         <a href="#" id="footerHelp">Help</a>
         <span class="footer-sep">|</span>
         <a href="https://github.com/kybl/meshcore-signal-tester" target="_blank" rel="noopener">Source code</a>
+        <span class="footer-sep">|</span>
+        <a href="https://github.com/kybl/meshcore-signal-tester/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
     </footer>
 
     <div id="chartTooltip" class="chart-tooltip"></div>
@@ -341,6 +344,7 @@
             <div class="help-section-title">Getting started</div>
             <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection, or <b>Connect WiFi</b> in the Android app) and select your MeshCore device. Packet data appears automatically as the device picks up LoRa traffic. Previously used devices (Bluetooth, USB and WiFi) appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
             <p>Use <b>Import CSV</b> / <b>Export CSV</b> to save the captured packets to a file and reload them later, and <b>Clear data</b> to wipe the current session. Captured data is also saved automatically as you go, so if you reload the page or the app restarts it offers to resume the previous session. If an established connection drops unexpectedly — cable unplugged, device reset, or out of range — a full-screen <b>alarm</b> warns you that data collection has stopped (a deliberate disconnect won't trigger it).</p>
+            <p>Tick <b>Auto-reconnect</b> (next to the connect buttons) to have the app quietly retry the last device a few times after such an unexpected drop, instead of alarming straight away. This only appears where a reconnect can happen <i>without</i> a manual confirmation: the Android app (Bluetooth, USB or WiFi), or desktop Chrome/Edge (Bluetooth or USB). It is deliberately hidden for <b>Bluetooth in a mobile browser</b>, because there the browser forces a system device picker on every single connection for privacy reasons — so a silent reconnect is simply not possible.</p>
 
             <div class="help-section-title">What you can connect to</div>
             <p>The app auto-detects the device — you don't pick a type. A <b>companion radio</b> (Bluetooth, USB, or WiFi in the Android app) pushes every received packet fully decoded, which is the richest source. A <b>repeater</b> (USB only) instead exposes a text CLI the app drives; how much it can report depends on its firmware (see below).</p>
@@ -397,6 +401,7 @@
             <div class="help-section-title">About</div>
             <p>MeshCore Signal Tester was created by <a href="https://alesjanda.cz" target="_blank" rel="noopener">Aleš Janda</a>. If you have feedback, found a bug, or just want to say hi — feel free to reach out at <a href="mailto:ales.janda@kyblsoft.cz">ales.janda@kyblsoft.cz</a>.</p>
             <p>The app was developed with the help of <a href="https://claude.ai/code" target="_blank" rel="noopener">Claude Code</a>.</p>
+            <button class="help-modal-close-btn" id="helpModalCloseBottom">Close</button>
         </div>
     </div>
 
@@ -409,6 +414,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=292"></script>
+    <script type="module" src="app.js?v=346"></script>
 </body>
 </html>

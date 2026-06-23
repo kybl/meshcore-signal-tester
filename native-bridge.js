@@ -157,6 +157,30 @@
         }
     };
 
+    // A tiny EventTarget-like mixin: a private listener bag plus
+    // add/removeEventListener and _dispatch. Object.assign it onto a polyfilled
+    // object (BLE characteristic/device, serial/wifi port). _dispatch invokes
+    // each listener with `this` bound to the host object, so always call it as
+    // host._dispatch(type, ev).
+    function eventTargetMixin() {
+        var listeners = {};
+        return {
+            addEventListener: function (type, cb) {
+                (listeners[type] = listeners[type] || []).push(cb);
+            },
+            removeEventListener: function (type, cb) {
+                var arr = listeners[type] || [], i = arr.indexOf(cb);
+                if (i >= 0) arr.splice(i, 1);
+            },
+            _dispatch: function (type, ev) {
+                var host = this;
+                (listeners[type] || []).slice().forEach(function (cb) {
+                    try { cb.call(host, ev); } catch (e) { console.error(e); }
+                });
+            }
+        };
+    }
+
     // ---- object registries ----------------------------------------------
 
     var _devices = {};            // id -> device proxy
@@ -168,24 +192,11 @@
         var k = charKey(devId, svc, chr);
         if (_chars[k]) return _chars[k];
 
-        var listeners = {};
         var ch = {
             uuid: chr,
             value: null,
             properties: {},
             service: null,
-            addEventListener: function (type, cb) {
-                (listeners[type] = listeners[type] || []).push(cb);
-            },
-            removeEventListener: function (type, cb) {
-                var arr = listeners[type] || [], i = arr.indexOf(cb);
-                if (i >= 0) arr.splice(i, 1);
-            },
-            _dispatch: function (type, ev) {
-                (listeners[type] || []).slice().forEach(function (cb) {
-                    try { cb.call(ch, ev); } catch (e) { console.error(e); }
-                });
-            },
             writeValueWithoutResponse: function (data) {
                 return call(function (id) {
                     window.AndroidBle.write(id, devId, svc, chr, bytesToB64(data), false);
@@ -219,6 +230,7 @@
                 }).then(function () { return ch; });
             }
         };
+        Object.assign(ch, eventTargetMixin());
         _chars[k] = ch;
         return ch;
     }
@@ -245,24 +257,11 @@
             return _devices[info.id];
         }
 
-        var deviceListeners = {};
-        var device = {
+        var device = Object.assign({
             id: info.id,
             name: info.name || '',
-            _services: null,
-            addEventListener: function (type, cb) {
-                (deviceListeners[type] = deviceListeners[type] || []).push(cb);
-            },
-            removeEventListener: function (type, cb) {
-                var arr = deviceListeners[type] || [], i = arr.indexOf(cb);
-                if (i >= 0) arr.splice(i, 1);
-            },
-            _dispatch: function (type, ev) {
-                (deviceListeners[type] || []).slice().forEach(function (cb) {
-                    try { cb.call(device, ev); } catch (e) { console.error(e); }
-                });
-            }
-        };
+            _services: null
+        }, eventTargetMixin());
 
         var server = {
             device: device,
@@ -345,6 +344,41 @@
     // getInfo, a readable.getReader() with read()/releaseLock(), a
     // writable.getWriter() with write()/releaseLock(), and a 'disconnect' event.
 
+    // Shared read-stream machinery for the serial and WiFi port proxies: a queue
+    // of byte chunks plus pending read() resolvers, exposed as a Web-Streams-like
+    // reader. deliverData/deliverDone are driven by the native data/close
+    // callbacks; reset() re-arms a cached proxy for reconnect.
+    function makeReadStream() {
+        var readQueue = [];    // Uint8Array chunks waiting to be read
+        var readWaiters = [];  // pending read() resolvers
+        var closed = false;
+
+        function deliverData(bytes) {
+            if (readWaiters.length) readWaiters.shift()({ value: bytes, done: false });
+            else readQueue.push(bytes);
+        }
+        // Resolve any in-flight/future read() with done so app.js's read loop
+        // exits cleanly (on releaseLock, close, or device disconnect).
+        function deliverDone() {
+            closed = true;
+            while (readWaiters.length) readWaiters.shift()({ value: undefined, done: true });
+        }
+
+        var reader = {
+            read: function () {
+                if (readQueue.length) return Promise.resolve({ value: readQueue.shift(), done: false });
+                if (closed) return Promise.resolve({ value: undefined, done: true });
+                return new Promise(function (resolve) { readWaiters.push(resolve); });
+            },
+            cancel: function () { deliverDone(); return Promise.resolve(); },
+            releaseLock: function () { deliverDone(); }
+        };
+
+        function reset() { closed = false; readQueue.length = 0; readWaiters.length = 0; }
+
+        return { reader: reader, deliverData: deliverData, deliverDone: deliverDone, reset: reset };
+    }
+
     if (typeof window.AndroidSerial !== 'undefined') {
         var _serialPorts = {}; // portId -> SerialPort proxy
 
@@ -352,31 +386,8 @@
             var existing = _serialPorts[info.portId];
             if (existing) { existing._info = info; return existing; }
 
-            var portListeners = {};
-            var readQueue = [];    // Uint8Array chunks waiting to be read
-            var readWaiters = [];  // pending read() resolvers
-            var closed = false;
-
-            function deliverData(bytes) {
-                if (readWaiters.length) readWaiters.shift()({ value: bytes, done: false });
-                else readQueue.push(bytes);
-            }
-            // Resolve any in-flight/future read() with done so app.js's read loop
-            // exits cleanly (on releaseLock, close, or device disconnect).
-            function deliverDone() {
-                closed = true;
-                while (readWaiters.length) readWaiters.shift()({ value: undefined, done: true });
-            }
-
-            var reader = {
-                read: function () {
-                    if (readQueue.length) return Promise.resolve({ value: readQueue.shift(), done: false });
-                    if (closed) return Promise.resolve({ value: undefined, done: true });
-                    return new Promise(function (resolve) { readWaiters.push(resolve); });
-                },
-                cancel: function () { deliverDone(); return Promise.resolve(); },
-                releaseLock: function () { deliverDone(); }
-            };
+            var stream = makeReadStream();
+            var reader = stream.reader;
 
             var writer = {
                 write: function (data) {
@@ -398,34 +409,21 @@
                 get writable() { return { getWriter: function () { return writer; } }; },
                 open: function (options) {
                     // Reset stream state so a cached proxy works on reconnect.
-                    closed = false;
-                    readQueue.length = 0;
-                    readWaiters.length = 0;
+                    stream.reset();
                     var baud = (options && options.baudRate) || 115200;
                     return call(function (id) {
                         window.AndroidSerial.open(id, info.portId, baud);
                     });
                 },
                 close: function () {
-                    deliverDone();
+                    stream.deliverDone();
                     try { window.AndroidSerial.close(info.portId); } catch (e) {}
                     return Promise.resolve();
                 },
-                addEventListener: function (type, cb) {
-                    (portListeners[type] = portListeners[type] || []).push(cb);
-                },
-                removeEventListener: function (type, cb) {
-                    var a = portListeners[type] || [], i = a.indexOf(cb);
-                    if (i >= 0) a.splice(i, 1);
-                },
-                _dispatch: function (type, ev) {
-                    (portListeners[type] || []).slice().forEach(function (cb) {
-                        try { cb.call(port, ev); } catch (e) { console.error(e); }
-                    });
-                },
-                _onData: deliverData,
-                _onClosed: deliverDone
+                _onData: stream.deliverData,
+                _onClosed: stream.deliverDone
             };
+            Object.assign(port, eventTargetMixin());
             _serialPorts[info.portId] = port;
             return port;
         }
@@ -476,27 +474,9 @@
         var _wifiPort = null;
 
         window.__mcMakeWifiPort = function (host, tcpPort) {
-            var readQueue = [], readWaiters = [], closed = false, opened = false;
-            var listeners = {};
-
-            function deliverData(bytes) {
-                if (readWaiters.length) readWaiters.shift()({ value: bytes, done: false });
-                else readQueue.push(bytes);
-            }
-            function deliverDone() {
-                closed = true;
-                while (readWaiters.length) readWaiters.shift()({ value: undefined, done: true });
-            }
-
-            var reader = {
-                read: function () {
-                    if (readQueue.length) return Promise.resolve({ value: readQueue.shift(), done: false });
-                    if (closed) return Promise.resolve({ value: undefined, done: true });
-                    return new Promise(function (resolve) { readWaiters.push(resolve); });
-                },
-                cancel: function () { deliverDone(); return Promise.resolve(); },
-                releaseLock: function () { deliverDone(); }
-            };
+            var opened = false;
+            var stream = makeReadStream();
+            var reader = stream.reader;
             var writer = {
                 write: function (data) {
                     return call(function (id) {
@@ -512,31 +492,20 @@
                 get writable() { return { getWriter: function () { return writer; } }; },
                 open: function () {
                     if (opened) return Promise.resolve();
-                    closed = false; readQueue.length = 0; readWaiters.length = 0;
+                    stream.reset();
                     return call(function (id) {
                         window.AndroidWifi.open(id, host, tcpPort);
                     }).then(function () { opened = true; });
                 },
                 close: function () {
-                    deliverDone();
+                    stream.deliverDone();
                     try { window.AndroidWifi.close(); } catch (e) {}
                     return Promise.resolve();
                 },
-                addEventListener: function (type, cb) {
-                    (listeners[type] = listeners[type] || []).push(cb);
-                },
-                removeEventListener: function (type, cb) {
-                    var a = listeners[type] || [], i = a.indexOf(cb);
-                    if (i >= 0) a.splice(i, 1);
-                },
-                _dispatch: function (type, ev) {
-                    (listeners[type] || []).slice().forEach(function (cb) {
-                        try { cb.call(port, ev); } catch (e) { console.error(e); }
-                    });
-                },
-                _onData: deliverData,
-                _onClosed: deliverDone
+                _onData: stream.deliverData,
+                _onClosed: stream.deliverDone
             };
+            Object.assign(port, eventTargetMixin());
             _wifiPort = port;
             return port;
         };

@@ -55,14 +55,14 @@ class BleManager(private val context: Context, private val js: JsApi) {
             // prompt, mirroring the requestDevice ("Connect Bluetooth") path.
             connectReqId = null
             if (adapter != null) main.post { Toast.makeText(context, "Please turn on Bluetooth", Toast.LENGTH_LONG).show() }
-            js.resolve(reqId, false, err("InvalidStateError", "Bluetooth is off"))
+            js.resolve(reqId, false, errJson(BridgeError.INVALID_STATE, "Bluetooth is off"))
             return
         }
         val dev: BluetoothDevice = try {
             adapter.getRemoteDevice(address)
         } catch (e: Exception) {
             connectReqId = null
-            js.resolve(reqId, false, err("NotFoundError", "Invalid device address"))
+            js.resolve(reqId, false, errJson(BridgeError.NOT_FOUND, "Invalid device address"))
             return
         }
         main.post {
@@ -109,7 +109,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
         try {
             op()
         } catch (e: Exception) {
-            failPending("NetworkError", e.message ?: "operation failed")
+            failPending(BridgeError.NETWORK, e.message ?: "operation failed")
         }
     }
 
@@ -127,7 +127,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
         val r = pendingReqId
         pendingReqId = null
         opBusy = false
-        if (r != null) js.resolve(r, false, err(name, message))
+        if (r != null) js.resolve(r, false, errJson(name, message))
         drain()
     }
 
@@ -147,9 +147,9 @@ class BleManager(private val context: Context, private val js: JsApi) {
 
     fun write(reqId: String, serviceUuid: String, charUuid: String, base64: String, withResponse: Boolean) {
         enqueue(reqId) {
-            val g = gatt ?: return@enqueue failPending("NetworkError", "not connected")
+            val g = gatt ?: return@enqueue failPending(BridgeError.NETWORK, "not connected")
             val ch = findChar(serviceUuid, charUuid)
-                ?: return@enqueue failPending("NotFoundError", "characteristic not found")
+                ?: return@enqueue failPending(BridgeError.NOT_FOUND, "characteristic not found")
             val data = Base64.decode(base64, Base64.DEFAULT)
             val type = if (withResponse) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                        else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
@@ -163,25 +163,25 @@ class BleManager(private val context: Context, private val js: JsApi) {
                     g.writeCharacteristic(ch)
                 }
             }
-            if (!ok) failPending("NetworkError", "writeCharacteristic rejected")
+            if (!ok) failPending(BridgeError.NETWORK, "writeCharacteristic rejected")
             // success arrives in onCharacteristicWrite
         }
     }
 
     fun read(reqId: String, serviceUuid: String, charUuid: String) {
         enqueue(reqId) {
-            val g = gatt ?: return@enqueue failPending("NetworkError", "not connected")
+            val g = gatt ?: return@enqueue failPending(BridgeError.NETWORK, "not connected")
             val ch = findChar(serviceUuid, charUuid)
-                ?: return@enqueue failPending("NotFoundError", "characteristic not found")
-            if (!g.readCharacteristic(ch)) failPending("NetworkError", "readCharacteristic rejected")
+                ?: return@enqueue failPending(BridgeError.NOT_FOUND, "characteristic not found")
+            if (!g.readCharacteristic(ch)) failPending(BridgeError.NETWORK, "readCharacteristic rejected")
         }
     }
 
     fun setNotifications(reqId: String, serviceUuid: String, charUuid: String, enable: Boolean) {
         enqueue(reqId) {
-            val g = gatt ?: return@enqueue failPending("NetworkError", "not connected")
+            val g = gatt ?: return@enqueue failPending(BridgeError.NETWORK, "not connected")
             val ch = findChar(serviceUuid, charUuid)
-                ?: return@enqueue failPending("NotFoundError", "characteristic not found")
+                ?: return@enqueue failPending(BridgeError.NOT_FOUND, "characteristic not found")
             g.setCharacteristicNotification(ch, enable)
             val cccd = ch.getDescriptor(CCCD_UUID)
             if (cccd == null) {
@@ -199,7 +199,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
                     g.writeDescriptor(cccd)
                 }
             }
-            if (!ok) failPending("NetworkError", "writeDescriptor rejected")
+            if (!ok) failPending(BridgeError.NETWORK, "writeDescriptor rejected")
             // success arrives in onDescriptorWrite
         }
     }
@@ -228,7 +228,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
                     val wasConnecting = connectReqId
                     if (wasConnecting != null) {
                         connectReqId = null
-                        js.resolve(wasConnecting, false, err("NetworkError", "GATT disconnected (status $status)"))
+                        js.resolve(wasConnecting, false, errJson(BridgeError.NETWORK, "GATT disconnected (status $status)"))
                     } else {
                         deviceAddress?.let { js.bleDisconnected(it) }
                     }
@@ -246,7 +246,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
             val reqId = connectReqId ?: return
             connectReqId = null
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                js.resolve(reqId, false, err("NetworkError", "service discovery failed ($status)"))
+                js.resolve(reqId, false, errJson(BridgeError.NETWORK, "service discovery failed ($status)"))
                 return
             }
             val services = JSONObject()
@@ -260,12 +260,12 @@ class BleManager(private val context: Context, private val js: JsApi) {
 
         override fun onCharacteristicWrite(g: BluetoothGatt, ch: BluetoothGattCharacteristic, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) completePending(null)
-            else failPending("NetworkError", "write failed ($status)")
+            else failPending(BridgeError.NETWORK, "write failed ($status)")
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) completePending(null)
-            else failPending("NetworkError", "descriptor write failed ($status)")
+            else failPending(BridgeError.NETWORK, "descriptor write failed ($status)")
         }
 
         // Read — API < 33
@@ -285,7 +285,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
                 val b64 = Base64.encodeToString(value ?: ByteArray(0), Base64.NO_WRAP)
                 completePending(JSONObject().put("value", b64).toString())
             } else {
-                failPending("NetworkError", "read failed ($status)")
+                failPending(BridgeError.NETWORK, "read failed ($status)")
             }
         }
 
@@ -306,9 +306,6 @@ class BleManager(private val context: Context, private val js: JsApi) {
             js.bleNotify(deviceAddress ?: "", serviceUuid.toString(), charUuid.toString(), b64)
         }
     }
-
-    private fun err(name: String, message: String): String =
-        JSONObject().put("name", name).put("message", message).toString()
 
     companion object {
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")

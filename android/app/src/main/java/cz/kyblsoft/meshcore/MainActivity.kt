@@ -80,6 +80,9 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
         MeshcoreService.start(this)
+        // Connect-flow grant doubles as the trigger to start GPS capture, so the
+        // map geotags packets from connect time without a separate button tap.
+        if (hasLocationPermission()) jsApi.locationPermissionGranted()
         _onPermsGranted?.invoke()
         _onPermsGranted = null
     }
@@ -408,11 +411,7 @@ class MainActivity : AppCompatActivity() {
 
     // ---- permission gate (called at connect/scan time) ------------------
 
-    fun hasLocationPermission(): Boolean =
-        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED ||
-        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+    fun hasLocationPermission(): Boolean = Permissions.hasLocation(this)
 
     // Location-only permission request for the map's "Enable location" button.
     // Deliberately does not start the foreground service (see requestLocationPerm).
@@ -426,22 +425,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun ensureConnectPermissions(includeBluetooth: Boolean = true, onGranted: () -> Unit) {
-        val needed = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-        if (includeBluetooth && Build.VERSION.SDK_INT >= 31) {
-            needed += Manifest.permission.BLUETOOTH_SCAN
-            needed += Manifest.permission.BLUETOOTH_CONNECT
-        }
-        if (Build.VERSION.SDK_INT >= 33) {
-            needed += Manifest.permission.POST_NOTIFICATIONS
-        }
-        val missing = needed.filter {
+        val missing = Permissions.connectPermissions(includeBluetooth).filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isEmpty()) {
             MeshcoreService.start(this)
+            // Already held — start GPS capture now (mirrors the post-prompt path).
+            jsApi.locationPermissionGranted()
             onGranted()
         } else {
             _onPermsGranted = onGranted
@@ -466,7 +456,7 @@ class MainActivity : AppCompatActivity() {
                 "No USB serial device found. Plug in your device and tap Connect USB again.",
                 Toast.LENGTH_LONG
             ).show()
-            jsApi.resolve(reqId, false, errJson("NotFoundError", "No USB serial devices found"))
+            jsApi.resolve(reqId, false, errJson(BridgeError.NOT_FOUND,"No USB serial devices found"))
             return
         }
         // A single device goes straight to the system USB permission prompt;
@@ -480,10 +470,10 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Select USB device")
             .setItems(labels) { _, which -> serial.requestPermission(reqId, drivers[which]) }
             .setNegativeButton("Cancel") { _, _ ->
-                jsApi.resolve(reqId, false, errJson("NotFoundError", "User cancelled device selection"))
+                jsApi.resolve(reqId, false, errJson(BridgeError.NOT_FOUND,"User cancelled device selection"))
             }
             .setOnCancelListener {
-                jsApi.resolve(reqId, false, errJson("NotFoundError", "User cancelled device selection"))
+                jsApi.resolve(reqId, false, errJson(BridgeError.NOT_FOUND,"User cancelled device selection"))
             }
             .show()
     }
@@ -494,19 +484,19 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            jsApi.resolve(reqId, false, errJson("SecurityError", "Bluetooth scan permission not granted"))
+            jsApi.resolve(reqId, false, errJson(BridgeError.SECURITY,"Bluetooth scan permission not granted"))
             return
         }
 
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         if (adapter == null || !adapter.isEnabled) {
             Toast.makeText(this, "Please turn on Bluetooth", Toast.LENGTH_LONG).show()
-            jsApi.resolve(reqId, false, errJson("NotFoundError", "Bluetooth is off"))
+            jsApi.resolve(reqId, false, errJson(BridgeError.NOT_FOUND,"Bluetooth is off"))
             return
         }
         val scanner = adapter.bluetoothLeScanner
         if (scanner == null) {
-            jsApi.resolve(reqId, false, errJson("NotFoundError", "BLE scanner unavailable"))
+            jsApi.resolve(reqId, false, errJson(BridgeError.NOT_FOUND,"BLE scanner unavailable"))
             return
         }
 
@@ -571,7 +561,7 @@ class MainActivity : AppCompatActivity() {
         pickerResolved = true
         stopScan()
         // Matches the web app's expectation: user cancellation = NotFoundError.
-        jsApi.resolve(reqId, false, errJson("NotFoundError", "User cancelled device selection"))
+        jsApi.resolve(reqId, false, errJson(BridgeError.NOT_FOUND,"User cancelled device selection"))
         pickerDialog = null
     }
 
@@ -677,7 +667,4 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
         return out
     }
-
-    private fun errJson(name: String, message: String): String =
-        JSONObject().put("name", name).put("message", message).toString()
 }

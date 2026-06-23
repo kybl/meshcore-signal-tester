@@ -48,10 +48,46 @@ function ps_part1by1(n) {
     return n >>> 0;
 }
 
+function ps_qx(lon) { return Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX))); }
+function ps_qy(lat) { return Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX))); }
+
 function ps_morton(lat, lon) {
-    const qx = Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX)));
-    const qy = Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX)));
-    return (ps_part1by1(qx) | (ps_part1by1(qy) << 1)) >>> 0;
+    return (ps_part1by1(ps_qx(lon)) | (ps_part1by1(ps_qy(lat)) << 1)) >>> 0;
+}
+
+// --- Z-order (Morton) range skipping --------------------------------------
+// A bbox maps to the code range [morton(SW), morton(NE)], but that linear range
+// also covers out-of-box points (the Z-order "staircase"). Scanning it whole is
+// O(dataset). BIGMIN gives the next code >= zcur that is back inside the box, so
+// the cursor can jump over the dead stretches → O(points in box). x lives on the
+// even bits, y on the odd bits (see ps_morton).
+
+// In `value`, set this dimension's bit at position p and clear its lower bits
+// (set=true → 100…0, the sub-tree min), or clear p and set the lower bits
+// (set=false → 011…1, the sub-tree max). Other bits are untouched.
+function ps_loadDim(value, p, set) {
+    let lower = 0;
+    for (let q = p - 2; q >= 0; q -= 2) lower = (lower | ((1 << q) >>> 0)) >>> 0;
+    const bitP = (1 << p) >>> 0;
+    const cleared = (value & (~((bitP | lower) >>> 0))) >>> 0;
+    return (set ? (cleared | bitP) : (cleared | lower)) >>> 0;
+}
+
+// Smallest Morton code >= zcur that lies within the box [zmin, zmax]
+// (zmin = morton(SW corner), zmax = morton(NE corner)); -1 if there is none.
+// Tropf & Herzog's BIGMIN, walking bits MSB→LSB.
+function ps_bigmin(zcur, zmin, zmax) {
+    let bm = -1, dmin = zmin >>> 0, dmax = zmax >>> 0;
+    for (let p = 31; p >= 0; p--) {
+        const bit = (1 << p) >>> 0;
+        const c = ((zcur & bit) ? 4 : 0) | ((dmin & bit) ? 2 : 0) | ((dmax & bit) ? 1 : 0);
+        if      (c === 1) { bm = ps_loadDim(dmin, p, true);  dmax = ps_loadDim(dmax, p, false); }
+        else if (c === 3) { return dmin >>> 0; }
+        else if (c === 4) { return bm; }
+        else if (c === 5) { dmin = ps_loadDim(dmin, p, true); }
+        // 0,7 → descend; 2,6 can't occur while dmin ≤ dmax per dimension
+    }
+    return bm;
 }
 
 export class PacketStore {
@@ -149,6 +185,46 @@ export class PacketStore {
         });
     }
 
+    // Wrap a single IDBRequest as a Promise of its result.
+    _req(request) {
+        return new Promise((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // Run a one-request readonly read against `storeName`. `fn(store)` returns
+    // the IDBRequest to await; its result is passed through `map`. Any failure
+    // (no db, transaction/request error) resolves to `fallback`, so reads never
+    // throw — every caller previously hand-rolled this same try/Promise/catch.
+    async _read(storeName, fn, fallback, map = (x) => x) {
+        if (!this.db) return fallback;
+        try {
+            const tx = this.db.transaction(storeName, 'readonly');
+            return map(await this._req(fn(tx.objectStore(storeName))));
+        } catch (_) {
+            return fallback;
+        }
+    }
+
+    // Run a readwrite transaction against `storeName`. `fn(store)` queues the
+    // writes; the transaction is awaited to completion. Any failure (no db,
+    // transaction/request error) routes through _onWriteError and resolves to
+    // false, so writes never throw — every writer previously hand-rolled this
+    // same guard/try/_txComplete/catch. Returns true on commit.
+    async _write(storeName, fn) {
+        if (!this.db) return false;
+        try {
+            const tx = this.db.transaction(storeName, 'readwrite');
+            fn(tx.objectStore(storeName));
+            await this._txComplete(tx);
+            return true;
+        } catch (e) {
+            this._onWriteError(e);
+            return false;
+        }
+    }
+
     // ---- writes -----------------------------------------------------------
 
     /** Append observation records. Each:
@@ -158,20 +234,14 @@ export class PacketStore {
      *  field changes), so it must live here, not in the per-hash record.
      *  `seq` is assigned by the store. Returns the records or [] on failure. */
     async putObs(records) {
-        if (!this.db || !records || !records.length) return [];
-        try {
-            const tx = this.db.transaction('obs', 'readwrite');
-            const os = tx.objectStore('obs');
+        if (!records || !records.length) return [];
+        const ok = await this._write('obs', os => {
             for (const r of records) {
                 if (r.mz == null && r.lat != null && r.lon != null) r.mz = ps_morton(r.lat, r.lon);
                 os.add(r);
             }
-            await this._txComplete(tx);
-            return records;
-        } catch (e) {
-            this._onWriteError(e);
-            return [];
-        }
+        });
+        return ok ? records : [];
     }
 
     /** Store the path-invariant per-hash payload once: {hash, firstSeen, type, meta}.
@@ -181,70 +251,35 @@ export class PacketStore {
      *  be reconstructed from an observation's rawHex on demand, so it isn't stored.
      *  Uses put() so re-ingest of the same hash is harmless (last write wins). */
     async putHash(rec) {
-        if (!this.db || !rec) return;
-        try {
-            const tx = this.db.transaction('hashes', 'readwrite');
-            tx.objectStore('hashes').put(rec);
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        if (!rec) return;
+        await this._write('hashes', os => os.put(rec));
     }
 
     /** Batched putHash: all records in one transaction. Used by the debounced
      *  write flush so a burst of new hashes doesn't cost one transaction each. */
     async putHashes(records) {
-        if (!this.db || !records || !records.length) return;
-        try {
-            const tx = this.db.transaction('hashes', 'readwrite');
-            const os = tx.objectStore('hashes');
-            for (const r of records) os.put(r);
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        if (!records || !records.length) return;
+        await this._write('hashes', os => { for (const r of records) os.put(r); });
     }
 
     async getHash(hash) {
-        if (!this.db) return null;
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('hashes', 'readonly');
-                const r = tx.objectStore('hashes').get(hash);
-                r.onsuccess = () => resolve(r.result ?? null);
-                r.onerror = () => reject(r.error);
-            });
-        } catch (_) { return null; }
+        return this._read('hashes', os => os.get(hash), null, r => r ?? null);
     }
 
     /** Append outgoing-SNR records: {time, snr, rawId, label}. */
     async putSent(records) {
-        if (!this.db || !records || !records.length) return;
-        try {
-            const tx = this.db.transaction('sent', 'readwrite');
-            const os = tx.objectStore('sent');
-            for (const r of records) os.add(r);
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        if (!records || !records.length) return;
+        await this._write('sent', os => { for (const r of records) os.add(r); });
     }
 
     // ---- small key/value state (column model, aggregates, totals) ---------
 
     async setKV(k, v) {
-        if (!this.db) return;
-        try {
-            const tx = this.db.transaction('kv', 'readwrite');
-            tx.objectStore('kv').put({ k, v });
-            await this._txComplete(tx);
-        } catch (e) { this._onWriteError(e); }
+        await this._write('kv', os => os.put({ k, v }));
     }
 
     async getKV(k) {
-        if (!this.db) return undefined;
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('kv', 'readonly');
-                const r = tx.objectStore('kv').get(k);
-                r.onsuccess = () => resolve(r.result ? r.result.v : undefined);
-                r.onerror = () => reject(r.error);
-            });
-        } catch (_) { return undefined; }
+        return this._read('kv', os => os.get(k), undefined, r => r ? r.v : undefined);
     }
 
     // ---- reads ------------------------------------------------------------
@@ -371,19 +406,42 @@ export class PacketStore {
     }
 
     _eachByBbox(bbox, fromTime, toTime, cb) {
-        const lo = ps_morton(bbox.minLat, bbox.minLon);
-        const hi = ps_morton(bbox.maxLat, bbox.maxLon);
+        const zmin = ps_morton(bbox.minLat, bbox.minLon);
+        const zmax = ps_morton(bbox.maxLat, bbox.maxLon);
+        const qx0 = ps_qx(bbox.minLon), qx1 = ps_qx(bbox.maxLon);
+        const qy0 = ps_qy(bbox.minLat), qy1 = ps_qy(bbox.maxLat);
         const tLo = Number.isFinite(fromTime) ? fromTime : -Infinity;
         const tHi = Number.isFinite(toTime) ? toTime : Infinity;
-        return this._chunkedScan('obs', 'mz',
-            IDBKeyRange.bound(Math.min(lo, hi), Math.max(lo, hi)),
-            r => {
-                if (r.lat == null || r.lon == null) return true;
-                if (r.lat < bbox.minLat || r.lat > bbox.maxLat ||
-                    r.lon < bbox.minLon || r.lon > bbox.maxLon ||
-                    r.time < tLo || r.time > tHi) return true;
-                return cb(r) !== false;
-            });
+        return new Promise((resolve, reject) => {
+            let tx;
+            try { tx = this.db.transaction('obs', 'readonly'); }
+            catch (e) { reject(e); return; }
+            const req = tx.objectStore('obs').index('mz').openCursor(IDBKeyRange.bound(zmin, zmax));
+            req.onsuccess = () => {
+                const cur = req.result;
+                if (!cur) { resolve(); return; }
+                const r = cur.value;
+                if (r.lat == null || r.lon == null) { cur.continue(); return; }
+                const qx = ps_qx(r.lon), qy = ps_qy(r.lat);
+                if (qx >= qx0 && qx <= qx1 && qy >= qy0 && qy <= qy1) {
+                    // Inside the box (Morton-wise): apply the exact lat/lon + time filter.
+                    if (r.lat >= bbox.minLat && r.lat <= bbox.maxLat &&
+                        r.lon >= bbox.minLon && r.lon <= bbox.maxLon &&
+                        r.time >= tLo && r.time <= tHi) {
+                        let go; try { go = cb(r); } catch (e) { reject(e); return; }
+                        if (go === false) { resolve(); return; }
+                    }
+                    cur.continue();
+                } else {
+                    // Out of box (Z-order spillover): jump to the next in-box code.
+                    const key = cur.key >>> 0;
+                    const nz = ps_bigmin(key, zmin, zmax);
+                    if (nz < 0 || nz <= key) { cur.continue(); return; }
+                    cur.continue(nz);
+                }
+            };
+            req.onerror = () => reject(req.error);
+        });
     }
 
     /**
@@ -392,6 +450,7 @@ export class PacketStore {
      *   { buckets: [{ rawId, bIdx, time, count,
      *                 snrMin, snrMax, snrAvg, snrSum, snrN,
      *                 rssiMin, rssiMax, rssiAvg, rssiSum, rssiN,
+     *                 lastSnr, lastSnrT, lastRssi, lastRssiT,  // newest reading in bucket
      *                 lat, lon }],   // lat/lon = last seen position in the bucket
      *     width, lo }
      *
@@ -418,12 +477,13 @@ export class PacketStore {
                 g = { rawId: r.rawId, bIdx, count: 0,
                       snrMin: Infinity, snrMax: -Infinity, snrSum: 0, snrN: 0,
                       rssiMin: Infinity, rssiMax: -Infinity, rssiSum: 0, rssiN: 0,
+                      lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null,
                       lat: null, lon: null, lastTime: 0 };
                 groups.set(key, g);
             }
             g.count++;
-            if (r.snr != null) { g.snrN++; g.snrSum += r.snr; if (r.snr < g.snrMin) g.snrMin = r.snr; if (r.snr > g.snrMax) g.snrMax = r.snr; }
-            if (r.rssi != null) { g.rssiN++; g.rssiSum += r.rssi; if (r.rssi < g.rssiMin) g.rssiMin = r.rssi; if (r.rssi > g.rssiMax) g.rssiMax = r.rssi; }
+            if (r.snr != null) { g.snrN++; g.snrSum += r.snr; if (r.snr < g.snrMin) g.snrMin = r.snr; if (r.snr > g.snrMax) g.snrMax = r.snr; if (r.time >= g.lastSnrT) { g.lastSnrT = r.time; g.lastSnr = r.snr; } }
+            if (r.rssi != null) { g.rssiN++; g.rssiSum += r.rssi; if (r.rssi < g.rssiMin) g.rssiMin = r.rssi; if (r.rssi > g.rssiMax) g.rssiMax = r.rssi; if (r.time >= g.lastRssiT) { g.lastRssiT = r.time; g.lastRssi = r.rssi; } }
             if (r.lat != null && r.time >= g.lastTime) { g.lat = r.lat; g.lon = r.lon; g.lastTime = r.time; }
         });
         const out = [];
@@ -443,6 +503,12 @@ export class PacketStore {
                 rssiMax: g.rssiN ? g.rssiMax : null,
                 rssiAvg: g.rssiN ? g.rssiSum / g.rssiN : null,
                 rssiSum: g.rssiSum, rssiN: g.rssiN,
+                // Newest non-null SNR/RSSI in the bucket (by time) — the true
+                // "last" value, tracked the same way live ingestion does, so
+                // disk-restored Seen Repeaters rows show a real reading, not the
+                // bucket average. The times let callers fold further obs in.
+                lastSnr: g.lastSnr, lastSnrT: g.lastSnrT,
+                lastRssi: g.lastRssi, lastRssiT: g.lastRssiT,
                 lat: g.lat, lon: g.lon,
             });
         }
@@ -527,16 +593,10 @@ export class PacketStore {
     /** Count hash records, optionally only those first seen at/after `fromTime`
      *  (the table's display window). */
     async countHashes(fromTime) {
-        if (!this.db) return 0;
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('hashes', 'readonly');
-                const idx = tx.objectStore('hashes').index('firstSeen');
-                const r = Number.isFinite(fromTime) ? idx.count(IDBKeyRange.lowerBound(fromTime)) : idx.count();
-                r.onsuccess = () => resolve(r.result);
-                r.onerror = () => reject(r.error);
-            });
-        } catch (_) { return 0; }
+        return this._read('hashes', os => {
+            const idx = os.index('firstSeen');
+            return Number.isFinite(fromTime) ? idx.count(IDBKeyRange.lowerBound(fromTime)) : idx.count();
+        }, 0);
     }
 
     /** Newest-first page of hash records (ordered by firstSeen descending),
@@ -587,15 +647,7 @@ export class PacketStore {
 
     /** All observations of one hash (every path/repeater it arrived by). */
     async obsForHash(hash) {
-        if (!this.db) return [];
-        try {
-            return await new Promise((resolve, reject) => {
-                const tx = this.db.transaction('obs', 'readonly');
-                const req = tx.objectStore('obs').index('hash').getAll(hash);
-                req.onsuccess = () => resolve(req.result || []);
-                req.onerror = () => reject(req.error);
-            });
-        } catch (_) { return []; }
+        return this._read('obs', os => os.index('hash').getAll(hash), [], r => r || []);
     }
 
     // ---- maintenance ------------------------------------------------------

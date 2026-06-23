@@ -1,13 +1,15 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=114';
-import { PacketStore } from './packet-store.js?v=13';
+import { Signal3DMap } from './signal3d.js?v=138';
+import { PacketStore } from './packet-store.js?v=17';
+import { buildCsv, parseCsv } from './csv.js?v=1';
+import { Store } from './storage.js?v=1';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
 // CHANGELOG and the Android versionName. Distinct from the per-asset ?v= cache
 // busters, which change on every edit.
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
 // burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow
@@ -27,30 +29,6 @@ const REP_L_MIN = 42, REP_L_MAX = 60;   // lightness range (%) — readable band
 const REP_DARK_BUMP = 18;               // dark theme adds this to lightness
 
 
-
-// Tiny localStorage wrapper: swallows quota/privacy errors and coerces types.
-// Booleans are stored as 'true'/'false'; numbers as their string form.
-const Store = {
-    get(key, fallback = null) {
-        try { const v = localStorage.getItem(key); return v === null ? fallback : v; }
-        catch { return fallback; }
-    },
-    set(key, value) {
-        try { localStorage.setItem(key, value); } catch { /* private mode / quota */ }
-    },
-    num(key, fallback) {
-        const n = parseFloat(this.get(key));
-        return Number.isFinite(n) ? n : fallback;
-    },
-    bool(key, fallback) {
-        const v = this.get(key);
-        return v === null ? fallback : (v === 'true' || v === '1');
-    },
-    json(key, fallback) {
-        try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); }
-        catch { return fallback; }
-    },
-};
 
 // Inner padding (px) of the SVG signal charts: left (y-axis labels), right,
 // top, bottom (x-axis labels). Shared by render, click hit-testing and tooltip.
@@ -155,6 +133,8 @@ class MeshCoreApp {
         this._chartZoomLayer  = null;            // finer buckets over the zoom window {cells, width, lo, from, to}
         this._sentChartAt     = 0;               // time the sent layer reflects
         this._chartArrTimer   = null;            // coalesces bucket upserts into one array rebuild
+        this._chartBaseBuilding = false;         // a _rebuildChartBase() is in flight (self-heal guard)
+        this._chartBaseHealAt = 0;               // last self-heal attempt, to debounce retries
         this._renderCacheAt   = 0;               // time the table's disk page reflects; newer rows are the tail
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this.MAP_TARGET_DOTS  = 2500;            // dot budget for the map grid layers
@@ -224,6 +204,19 @@ class MeshCoreApp {
     }
 
     initUI() {
+        this._setupChartArea();
+        this._setupCollapsibleSections();
+        this._setupConnectionUi();
+        this._setupTableInteractions();
+        this._setupControls();
+        this._setupFiltersAndNotices();
+        this._initHelpSystem();
+        this._initWifiModal();
+        this._initSignalMap();
+        this._initDebug();
+    }
+
+    _setupChartArea() {
         this.connectBtn = document.getElementById('connectBtn');
         this.statusEl = document.getElementById('status');
         this.statusTextEl = document.getElementById('statusText');
@@ -239,34 +232,8 @@ class MeshCoreApp {
         }
 
         // Custom resize handles — large touch target below each chart
-        document.querySelectorAll('.chart-svg-wrap').forEach(wrap => {
-            const handle = document.createElement('div');
-            handle.className = 'chart-resize-handle';
-            wrap.insertAdjacentElement('afterend', handle);
-            let startY = 0, startH = 0;
-            const onMove = e => {
-                const cy = e.touches ? e.touches[0].clientY : e.clientY;
-                wrap.style.height = Math.max(80, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
-            };
-            const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('touchmove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                document.removeEventListener('touchend', onUp);
-            };
-            handle.addEventListener('mousedown', e => {
-                e.preventDefault();
-                startY = e.clientY; startH = wrap.offsetHeight;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-            });
-            handle.addEventListener('touchstart', e => {
-                e.preventDefault();
-                startY = e.touches[0].clientY; startH = wrap.offsetHeight;
-                document.addEventListener('touchmove', onMove, { passive: false });
-                document.addEventListener('touchend', onUp);
-            }, { passive: false });
-        });
+        document.querySelectorAll('.chart-svg-wrap').forEach(
+            wrap => this._attachResizeHandle(wrap, 'chart-resize-handle', 80));
         setInterval(() => {
             if (!this._chartFrozenAt) this._scheduleChartRender();
             if (isFinite(this.DISPLAY_LIFETIME)) {
@@ -276,7 +243,9 @@ class MeshCoreApp {
             }
             this._updateStats();
         }, 2000);
+    }
 
+    _setupCollapsibleSections() {
         // Collapsible sections — clicking anywhere in the header row toggles
         document.querySelectorAll('.section-header').forEach(header => {
             const btn = header.querySelector('.collapse-btn');
@@ -295,6 +264,9 @@ class MeshCoreApp {
                 updateHint(collapsed);
             });
         });
+    }
+
+    _setupConnectionUi() {
         this.msgTableHead = document.getElementById('msgTableHead');
         this.msgTableBody = document.getElementById('msgTableBody');
         this.emptyState = document.getElementById('emptyState');
@@ -333,7 +305,9 @@ class MeshCoreApp {
         document.getElementById('disconnectBtn')?.addEventListener('click', () => this.disconnect());
 
         document.getElementById('disconnectAlarmClose')?.addEventListener('click', () => this._hideDisconnectAlarm());
+    }
 
+    _setupTableInteractions() {
         // Pair-hover: hovering RSSI or SNR highlights both cells for that repeater
         if (this.msgTableBody) {
             this.msgTableBody.addEventListener('mouseover', e => {
@@ -427,11 +401,13 @@ class MeshCoreApp {
             const col = th.dataset.col;
             this._selectRepeater(col === this._selectedCol ? null : col);
         });
+    }
 
+    _setupControls() {
         document.getElementById('savedDevices')?.addEventListener('click', e => {
             const quickBtn = e.target.closest('.saved-btn');
             const forgetBtn = e.target.closest('.forget-btn');
-            if (quickBtn) this.quickConnect(quickBtn.dataset.id).catch(e => console.error('Quick connect failed:', e));
+            if (quickBtn) { this._cancelAutoReconnect(); this.quickConnect(quickBtn.dataset.id).catch(e => console.error('Quick connect failed:', e)); }
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
@@ -487,6 +463,29 @@ class MeshCoreApp {
                 this._keepScreenOn = keepScreenChk.checked;
                 Store.set('keepScreenOn', keepScreenChk.checked);
                 this._syncWakeLock();
+            });
+        }
+
+        // Auto-reconnect: retry the last device when an established connection
+        // drops unexpectedly (off by default).
+        const autoReconnectChk = document.getElementById('autoReconnectChk');
+        const autoReconnectWrap = document.getElementById('autoReconnectWrap');
+        const canAutoReconnect = this._canAutoReconnect();
+        this._autoReconnect = canAutoReconnect && Store.bool('autoReconnect', false);
+        // Hide the toggle entirely where a silent reconnect is impossible —
+        // most notably a mobile browser over Web Bluetooth, where every
+        // connection forces a user-gesture + system device picker and there is
+        // no getDevices() to reconnect quietly. Showing the option there would
+        // be misleading (it could never actually fire).
+        if (autoReconnectWrap && !canAutoReconnect) {
+            autoReconnectWrap.classList.add('hidden');
+        }
+        if (autoReconnectChk && canAutoReconnect) {
+            autoReconnectChk.checked = this._autoReconnect;
+            autoReconnectChk.addEventListener('change', () => {
+                this._autoReconnect = autoReconnectChk.checked;
+                Store.set('autoReconnect', autoReconnectChk.checked);
+                if (!this._autoReconnect) this._cancelAutoReconnect();
             });
         }
 
@@ -574,7 +573,9 @@ class MeshCoreApp {
                 this._renderRepTable();
             });
         }
+    }
 
+    _setupFiltersAndNotices() {
         this.packetRateEl   = document.getElementById('packetRate');
         this.msgFilterCountEl = document.getElementById('msgFilterCount');
 
@@ -718,11 +719,6 @@ class MeshCoreApp {
                 e.returnValue = '';
             }
         });
-
-        this._initHelpSystem();
-        this._initWifiModal();
-        this._initSignalMap();
-        this._initDebug();
     }
 
     _initDebug() {
@@ -763,40 +759,45 @@ class MeshCoreApp {
         inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inject(); } });
     }
 
+    // Append a drag-to-resize handle below `target` that adjusts its height
+    // between `minHeight` and the viewport. Shared by the signal charts and the
+    // 3D map container.
+    _attachResizeHandle(target, handleClass, minHeight) {
+        const handle = document.createElement('div');
+        handle.className = handleClass;
+        target.insertAdjacentElement('afterend', handle);
+        let startY = 0, startH = 0;
+        const onMove = e => {
+            const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            target.style.height = Math.max(minHeight, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('touchmove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.removeEventListener('touchend', onUp);
+        };
+        handle.addEventListener('mousedown', e => {
+            e.preventDefault();
+            startY = e.clientY; startH = target.offsetHeight;
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+        handle.addEventListener('touchstart', e => {
+            e.preventDefault();
+            startY = e.touches[0].clientY; startH = target.offsetHeight;
+            document.addEventListener('touchmove', onMove, { passive: false });
+            document.addEventListener('touchend', onUp);
+        }, { passive: false });
+    }
+
     _initSignalMap() {
         const canvas = document.getElementById('mapCanvas');
         if (!canvas) return;
 
         // Resize handle — same pattern as chart resize handles
         const mapContainer = document.querySelector('.map-container');
-        if (mapContainer) {
-            const handle = document.createElement('div');
-            handle.className = 'map-resize-handle';
-            mapContainer.insertAdjacentElement('afterend', handle);
-            let startY = 0, startH = 0;
-            const onMove = e => {
-                const cy = e.touches ? e.touches[0].clientY : e.clientY;
-                mapContainer.style.height = Math.max(200, Math.min(window.innerHeight - 80, startH + cy - startY)) + 'px';
-            };
-            const onUp = () => {
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('touchmove', onMove);
-                document.removeEventListener('mouseup', onUp);
-                document.removeEventListener('touchend', onUp);
-            };
-            handle.addEventListener('mousedown', e => {
-                e.preventDefault();
-                startY = e.clientY; startH = mapContainer.offsetHeight;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-            });
-            handle.addEventListener('touchstart', e => {
-                e.preventDefault();
-                startY = e.touches[0].clientY; startH = mapContainer.offsetHeight;
-                document.addEventListener('touchmove', onMove, { passive: false });
-                document.addEventListener('touchend', onUp);
-            }, { passive: false });
-        }
+        if (mapContainer) this._attachResizeHandle(mapContainer, 'map-resize-handle', 200);
 
         const sourceSel = document.getElementById('mapSourceSelect');
         const savedSource = Store.get('mapSource', '');
@@ -893,11 +894,24 @@ class MeshCoreApp {
             return;
         }
 
+        // Native wrapper calls this the moment the location permission becomes
+        // available (granted during the BLE/USB/WiFi connect flow). Start the
+        // map's GPS watch right away so capture is geotagged from connect time —
+        // no detour to the 3D map's "Enable location" button. startWatching()
+        // guards against a double-start, so repeated calls are harmless.
+        window.__mcLocationPermissionGranted = () => {
+            this.signalMap?.startWatching?.();
+        };
+
         sourceSel?.addEventListener('change', () => {
             this.signalMap.setMapSource(sourceSel.value);
             Store.set('mapSource', sourceSel.value);
         });
 
+        this._setupMapSettings();
+    }
+
+    _setupMapSettings() {
         // Settings gear panel
         const settingsBtn   = document.getElementById('mapSettingsBtn');
         const settingsPanel = document.getElementById('mapSettingsPanel');
@@ -1010,7 +1024,7 @@ class MeshCoreApp {
             'contact-no-gps':
                 'The owner of this node hasn\'t configured its position.',
             'sound':
-                'off = silent. short / medium / long play a two-tone beep of increasing duration (long is 4× short) on each new packet. The first tone (1/3 of the beep) is a fixed 700 Hz click; the second tone (2/3) shifts pitch with SNR — higher SNR → higher pitch. When a repeater filter is active, the alert sounds only for packets from the filtered repeater(s). Setting is remembered across sessions.',
+                'off = silent. disconnect only = no per-packet sound, just an alarm if the connection drops unexpectedly. short / medium / long play a two-note bell/chime of increasing duration (long is 4× short) on each new packet. The first note (1/3 of the sound) is a fixed 700 Hz tone; the second note (2/3) shifts pitch with SNR — higher SNR → higher pitch. When a repeater filter is active, the sound plays only for packets from the filtered repeater(s). Any non-off setting also sounds an alarm when an established connection drops unexpectedly. Setting is remembered across sessions.',
             'ttl':
                 'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import) — but note that when Auto-remove is "Never", the Display window below also bounds how much is held in memory, so the heap can\'t grow without limit on long runs.',
             'display':
@@ -1018,7 +1032,7 @@ class MeshCoreApp {
             'keepscreen':
                 'This could be necessary in a mobile browser to keep collection running — when the screen turns off, the browser suspends JavaScript and stops capturing. In the Android app, collection runs in a background service so the screen can be off without losing data — unless the system\'s battery optimization is active and kills the service. Setting is remembered across sessions.',
             'repeater':
-                '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Click a row to select that repeater — dims others in all views (charts, Received packets, 3D map); click again to deselect. Click a column header to sort by that field; click again to reverse. See "Show help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
+                '"direct" = flood-routed packet received at first hop. Otherwise the ID of the last forwarding repeater. Click a row to select that repeater — dims others in all views (charts, Received packets, 3D map); click again to deselect. Click a column header to sort by that field; click again to reverse. See "Help" → Repeater ID prefix resolution for how partial IDs and collision labels work.',
             'chart-snr':
                 'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map; click again or elsewhere to deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, SNR/RSSI and time in a small box; click the box to dismiss it. Circles (●) = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover. Zoom the time axis with the mouse wheel, by dragging across a region, or by pinching with two fingers; once zoomed, pan with a one-finger drag or a horizontal (or Shift+) wheel. Double-click or Reset zoom to return to the full view.',
             'chart-interact':
@@ -1039,6 +1053,8 @@ class MeshCoreApp {
                 'Shows the connected device\'s own position on the map (a blue antenna marker). While this is on, the app keeps asking the radio for its location, which means more constant work and can drain the battery faster. If you don\'t need it, turn it off.',
             'discover':
                 'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
+            'auto-reconnect':
+                'When the connection to the device drops unexpectedly (out of range, device reset, cable unplugged), automatically retry the last device a few times before raising the disconnect alarm. This option only appears where a silent reconnect is possible: the Android app (Bluetooth, USB or WiFi) or desktop Chrome/Edge. It is hidden for Bluetooth in a mobile browser, because there the browser forces a manual device-picker confirmation on every connection for privacy reasons — so it can never reconnect on its own.',
         };
 
         const tipEl = document.getElementById('helpTip');
@@ -1049,19 +1065,33 @@ class MeshCoreApp {
             if (!text || !tipEl) return;
             tipEl.textContent = text;
             tipEl.style.display = 'block';
-            const tipW = Math.min(260, window.innerWidth - 16);
+            // #helpTip is position:absolute inside <body>, which may carry a
+            // transform: scale() (text-size / desktop zoom — always ×1.3 on
+            // desktop). That makes <body> the containing block, so convert the
+            // icon's viewport rect into body-local (un-scaled, scroll-included)
+            // coordinates, exactly like the chart infobox does. Using viewport
+            // px directly here put the tip in the wrong place under the scale.
+            let scale = 1;
+            const tr = getComputedStyle(document.body).transform;
+            const m = tr && tr !== 'none' ? tr.match(/matrix\(([^)]+)\)/) : null;
+            if (m) scale = parseFloat(m[1].split(',')[0]) || 1;
+            const tipW = Math.min(260, document.body.clientWidth - 16);
             tipEl.style.maxWidth = `${tipW}px`;
             const r = icon.getBoundingClientRect();
             const tipH = tipEl.offsetHeight;
-            let left = r.left + r.width / 2 - tipW / 2;
-            left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+            const cx  = (r.left + r.width / 2 + window.scrollX) / scale;
+            const top = (r.top  + window.scrollY) / scale;
+            const bot = (r.bottom + window.scrollY) / scale;
+            let left = cx - tipW / 2;
+            left = Math.max(8, Math.min(left, document.body.clientWidth - tipW - 8));
             tipEl.style.left = `${left}px`;
-            // Default: float above the icon. If there's no room, flip below.
-            if (r.top < tipH + 12) {
-                tipEl.style.top = `${r.bottom + 8}px`;
+            // Float above the icon; flip below when there isn't room (the room
+            // check is in rendered viewport px, hence tipH * scale).
+            if (r.top < tipH * scale + 12) {
+                tipEl.style.top = `${bot + 8}px`;
                 tipEl.style.transform = 'none';
             } else {
-                tipEl.style.top = `${r.top - 8}px`;
+                tipEl.style.top = `${top - 8}px`;
                 tipEl.style.transform = 'translateY(-100%)';
             }
             icon.classList.add('active');
@@ -1111,6 +1141,10 @@ class MeshCoreApp {
             e.stopPropagation();
             closeHelp();
         });
+        document.getElementById('helpModalCloseBottom')?.addEventListener('click', e => {
+            e.stopPropagation();
+            closeHelp();
+        });
         helpModal?.addEventListener('click', e => {
             if (e.target === helpModal) closeHelp();
         });
@@ -1140,6 +1174,7 @@ class MeshCoreApp {
     // --- Bluetooth connection ---
 
     async connectBluetooth() {
+        this._cancelAutoReconnect();
         if (!navigator.bluetooth) {
             alert('Web Bluetooth API is not available.\n\nRequirements:\n• Chrome or Edge browser\n• Page must be served over HTTPS or localhost');
             return;
@@ -1159,21 +1194,17 @@ class MeshCoreApp {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!this.device);
         }
     }
 
-    async quickConnect(deviceId) {
+    async quickConnect(deviceId, opts = {}) {
         const saved = this.getSavedDevices().find(d => d.id === deviceId);
         if (saved?.transport === 'serial') {
-            return this.quickConnectSerial(saved);
+            return this.quickConnectSerial(saved, opts);
         }
         if (saved?.transport === 'wifi') {
-            return this.quickConnectWifi(saved);
+            return this.quickConnectWifi(saved, opts);
         }
 
         // Try getDevices() for zero-friction reconnect (Chrome 85+, may need flag)
@@ -1189,15 +1220,15 @@ class MeshCoreApp {
                 try {
                     await this.connectToDevice(device);
                 } catch (error) {
-                    if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                        alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-                    }
-                    if (this.device) this.onDisconnected();
-                    else this._resetConnectBtn();
+                    this._handleConnectError(error, !!this.device, opts.auto);
                 }
                 return;
             }
         }
+
+        // requestDevice needs a user gesture, so an auto-reconnect can't use it
+        // (it would throw a SecurityError and pop an alert on every attempt).
+        if (opts.auto) return;
 
         // Fall back to requestDevice — use saved name as filter so picker pre-selects it
         const name = saved?.name;
@@ -1216,17 +1247,13 @@ class MeshCoreApp {
             });
             await this.connectToDevice(device);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!this.device);
         }
     }
 
-    async quickConnectSerial(saved) {
+    async quickConnectSerial(saved, opts = {}) {
         if (!navigator.serial) {
-            alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
+            if (!opts.auto) alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
             return;
         }
         try {
@@ -1251,16 +1278,28 @@ class MeshCoreApp {
 
             // No authorised match (first use on this machine, permission reset,
             // etc.) — fall back to the picker, exactly like the BLE path does.
-            if (!port) port = await navigator.serial.requestPort({ filters: [] });
+            // The picker needs a user gesture, so skip it in auto-reconnect.
+            if (!port) {
+                if (opts.auto) { this._resetConnectBtn(); return; }
+                port = await navigator.serial.requestPort({ filters: [] });
+            }
 
             await this.connectToSerialPort(port);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.serialPort || this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!(this.serialPort || this.device), opts.auto);
         }
+    }
+
+    // Shared handler for a failed connect attempt. `hasConnection` says whether a
+    // transport actually came up (tear it down) or never did (just reset the
+    // button). NotFoundError = user cancelled the picker; InvalidStateError = BT
+    // off (already prompted natively) — neither warrants an alert.
+    _handleConnectError(error, hasConnection, silent = false) {
+        if (!silent && error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
+            alert('Connection error: ' + error.message);
+        }
+        if (hasConnection) this.onDisconnected();
+        else this._resetConnectBtn();
     }
 
     _resetConnectBtn() {
@@ -1417,6 +1456,7 @@ class MeshCoreApp {
     // --- USB / Web Serial connection ---
 
     async connectUsb() {
+        this._cancelAutoReconnect();
         if (!navigator.serial) {
             alert('Web Serial API is not available.\n\nRequirements:\n• Chrome, Edge, or Opera (desktop)\n• Page must be served over HTTPS or localhost');
             return;
@@ -1429,15 +1469,12 @@ class MeshCoreApp {
             const port = await navigator.serial.requestPort({ filters: [] });
             await this.connectToSerialPort(port);
         } catch (error) {
-            if (error.name !== 'NotFoundError' && error.name !== 'InvalidStateError') {
-                alert('Connection error: ' + error.message);   // InvalidStateError = BT off; already prompted natively
-            }
-            if (this.serialPort || this.device) this.onDisconnected();
-            else this._resetConnectBtn();
+            this._handleConnectError(error, !!(this.serialPort || this.device));
         }
     }
 
     async connectWifi() {
+        this._cancelAutoReconnect();
         // Raw TCP can't be opened from a browser; only the native Android host
         // can. Off-app, explain why and where it works (the button is shown
         // everywhere by request).
@@ -1507,25 +1544,25 @@ class MeshCoreApp {
 
     // Open a WiFi/TCP companion at host:port. Shared by the connect form and by
     // quick-reconnect of a saved WiFi device.
-    async _doWifiConnect(host, port) {
+    async _doWifiConnect(host, port, opts = {}) {
         try {
             this._beginConnectAttempt('wifi');
             this.updateStatus('Connecting…', 'connecting');
             const port_ = window.__mcMakeWifiPort(host, port);
             await this.connectToSerialPort(port_);
         } catch (error) {
-            alert('WiFi connection failed: ' + (error.message || error));
+            if (!opts.auto) alert('WiFi connection failed: ' + (error.message || error));
             if (this.serialPort || this.device) this.onDisconnected();
             else this._resetConnectBtn();
         }
     }
 
-    async quickConnectWifi(saved) {
+    async quickConnectWifi(saved, opts = {}) {
         if (!window.__MESHCORE_NATIVE__ || typeof window.__mcMakeWifiPort !== 'function') {
-            alert('This is a saved WiFi device — WiFi connection only works in the Android app.');
+            if (!opts.auto) alert('This is a saved WiFi device — WiFi connection only works in the Android app.');
             return;
         }
-        await this._doWifiConnect(saved.host, saved.port);
+        await this._doWifiConnect(saved.host, saved.port, opts);
     }
 
     async connectToSerialPort(port) {
@@ -2349,6 +2386,7 @@ class MeshCoreApp {
             && !(liveName && d.transport === 'ble' && d.name === liveName));
         devices.push({ id: device.id, name, transport: 'ble' });
         Store.set('devices', JSON.stringify(devices));
+        this._lastConnectedId = device.id;   // for auto-reconnect
         this._renderSavedDevices();
         return name;
     }
@@ -2395,6 +2433,7 @@ class MeshCoreApp {
                 devices.push({ id, name, transport: 'wifi', host: info.host, port: info.port });
             }
             Store.set('devices', JSON.stringify(devices));
+            this._lastConnectedId = id;   // for auto-reconnect
             this._renderSavedDevices();
             return name;
         }
@@ -2414,6 +2453,7 @@ class MeshCoreApp {
             devices.push({ id, name, transport: 'serial', usbVendorId: vid, usbProductId: pid });
         }
         Store.set('devices', JSON.stringify(devices));
+        this._lastConnectedId = id;   // for auto-reconnect
         this._renderSavedDevices();
         return name;
     }
@@ -3109,6 +3149,22 @@ class MeshCoreApp {
         return { lat: l?.lat ?? null, lon: l?.lon ?? null };
     }
 
+    // Fold one observation into the per-repeater running stats (RX count, max/last
+    // SNR & RSSI, last-seen, and the finest id precision seen for this column).
+    _recordRepeaterStat(canonicalKey, repeater, now, snr, rssi) {
+        const rawPrec  = this.idPrecision(repeater);
+        const existing = this.allRepeaters.get(canonicalKey);
+        this.allRepeaters.set(canonicalKey, {
+            lastSeen:     now,
+            count:        (existing?.count ?? 0) + 1,
+            maxSnr:  snr  != null ? Math.max(existing?.maxSnr  ?? -Infinity, snr)  : (existing?.maxSnr  ?? null),
+            maxRssi: rssi != null ? Math.max(existing?.maxRssi ?? -Infinity, rssi) : (existing?.maxRssi ?? null),
+            lastSnr:  snr  != null ? snr  : (existing?.lastSnr  ?? null),
+            lastRssi: rssi != null ? rssi : (existing?.lastRssi ?? null),
+            minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
+        });
+    }
+
     _ingestPacket(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null, opts = {}) {
         if (!this._collecting && !opts.importing && !opts.forceIngest) return;
         const wasAtBottom = !opts.importing && this._isAtPageBottom();
@@ -3155,17 +3211,7 @@ class MeshCoreApp {
             }
         }
 
-        const rawPrec  = this.idPrecision(repeater);
-        const existing = this.allRepeaters.get(canonicalKey);
-        this.allRepeaters.set(canonicalKey, {
-            lastSeen:     now,
-            count:        (existing?.count ?? 0) + 1,
-            maxSnr:  snr  != null ? Math.max(existing?.maxSnr  ?? -Infinity, snr)  : (existing?.maxSnr  ?? null),
-            maxRssi: rssi != null ? Math.max(existing?.maxRssi ?? -Infinity, rssi) : (existing?.maxRssi ?? null),
-            lastSnr:  snr  != null ? snr  : (existing?.lastSnr  ?? null),
-            lastRssi: rssi != null ? rssi : (existing?.lastRssi ?? null),
-            minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
-        });
+        this._recordRepeaterStat(canonicalKey, repeater, now, snr, rssi);
         if (snr != null || rssi != null) {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
             // Fold it into the chart bucket cache so the charts show it without a
@@ -3377,13 +3423,18 @@ class MeshCoreApp {
             allRows = allRows.slice(0, this._tablePageSize);
         }
 
-        // Only include columns that actually appear in the visible rows (respects
-        // display cutoff). The disk snapshot can surface a historical column that
-        // isn't in the live model, so union it with repeaterColumns.
+        // Show every repeater that has data within the display window (the same
+        // predicate the Seen Repeaters table uses) as a column — not only those
+        // with a packet on the *current page* — so columns don't appear and
+        // disappear as you page through. The disk snapshot can also surface a
+        // historical column not in the live model, so keep any column present in
+        // this page's rows too. Empty columns sort to the end (column order
+        // follows repeaterColumns, by RX count).
         const activeColsInRows = new Set(allRows.flatMap(([, data]) => [...data.repeaters.keys()]));
         const colList = [...new Set([...this.repeaterColumns, ...activeColsInRows])];
+        const inWindow = c => !cutoff || (this.allRepeaters.get(c)?.lastSeen ?? -Infinity) >= cutoff;
         const visibleCols = colList
-            .filter(c => this._colMatchesRepFilter(c) && activeColsInRows.has(c));
+            .filter(c => this._colMatchesRepFilter(c) && (inWindow(c) || activeColsInRows.has(c)));
         this._visibleCols = visibleCols;   // columns actually rendered (used by the
                                            // detail colspan and the filter notice)
 
@@ -3419,26 +3470,7 @@ class MeshCoreApp {
             rows = rows.filter(([, data]) => [...data.repeaters.keys()].some(narrowFn));
         }
 
-        // Rebuild header when column set changes
-        const colKey = visibleCols.join(',');
-        if (colKey !== this._lastColKey) {
-            this._lastColKey = colKey;
-            const repHeaders = visibleCols.map(r => {
-                const cName = this._contactNameForCol(r);
-                const nameTag = cName ? `<br><span class="col-contact-name">${this._escHtml(cName)}</span>` : '';
-                return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
-            }).join('');
-            const subHeaders = visibleCols.map(() =>
-                `<th class="msg-sub-snr">SNR</th><th class="msg-sub-rssi">RSSI</th>`
-            ).join('');
-            this.msgTableHead.innerHTML = `
-                <tr>
-                    <th class="msg-col-rx-head" rowspan="2">RX log<span class="help-icon" data-help="msg-type">?</span></th>
-                    ${repHeaders}
-                </tr>
-                <tr>${subHeaders}</tr>
-            `;
-        }
+        this._renderMsgTableHeader(visibleCols);
 
         // Filter count badge
         if (this.msgFilterCountEl) {
@@ -3451,6 +3483,44 @@ class MeshCoreApp {
             this._buildMsgRow(hash, data, visibleCols)
         ).join('');
 
+        this._reinsertOpenDetailRows(openDetails);
+
+        this._applyMsgTableSelection();
+
+        if (flashHash) {
+            const row = document.getElementById(`row-${flashHash}`);
+            if (row) row.classList.add('row-new');
+        }
+    }
+
+    // Rebuild the packet-table header (repeater columns + SNR/RSSI sub-row) only
+    // when the visible column set changes, keyed on _lastColKey.
+    _renderMsgTableHeader(visibleCols) {
+        const colKey = visibleCols.join(',');
+        if (colKey === this._lastColKey) return;
+        this._lastColKey = colKey;
+        const repHeaders = visibleCols.map(r => {
+            const cName = this._contactNameForCol(r);
+            const nameTag = cName ? `<br><span class="col-contact-name">${this._escHtml(cName)}</span>` : '';
+            return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
+        }).join('');
+        const subHeaders = visibleCols.map(() =>
+            `<th class="msg-sub-snr">SNR</th><th class="msg-sub-rssi">RSSI</th>`
+        ).join('');
+        // Indentation inside this template literal is intentionally preserved
+        // byte-for-byte from the original inline version (it becomes innerHTML).
+        this.msgTableHead.innerHTML = `
+                <tr>
+                    <th class="msg-col-rx-head" rowspan="2">RX log<span class="help-icon" data-help="msg-type">?</span></th>
+                    ${repHeaders}
+                </tr>
+                <tr>${subHeaders}</tr>
+            `;
+    }
+
+    // Re-attach detail rows that were open before a table rebuild. `openDetails`
+    // maps hash → column (or null), captured before msgTableBody was replaced.
+    _reinsertOpenDetailRows(openDetails) {
         for (const [hash, col] of openDetails) {
             if (!this._tableSource().has(hash) && !this.hashData.has(hash)) continue;
             // Drop detail for a column that is now filtered out
@@ -3470,13 +3540,6 @@ class MeshCoreApp {
                 this.msgTableBody.querySelectorAll(`[data-hash="${hash}"][data-col="${col}"]`)
                     .forEach(el => el.classList.add('sig-active'));
             }
-        }
-
-        this._applyMsgTableSelection();
-
-        if (flashHash) {
-            const row = document.getElementById(`row-${flashHash}`);
-            if (row) row.classList.add('row-new');
         }
     }
 
@@ -4197,6 +4260,45 @@ class MeshCoreApp {
 
         const parts = [];
 
+        // Bundle the geometry/scale/theme context so the grid and data-series
+        // builders take one parameter instead of ~20. The transforms (xOf/yOf)
+        // and valOf are captured as-is.
+        const geom = {
+            W, H, pl, pr, pt, pb, cw, ch, tMin, tMax, tRange, yMin, yMax, yStep, yRange,
+            xOf, yOf, valOf, isDark, gridMinor, gridMajor, gridAxis, labelFill, dotStroke,
+        };
+        this._pushChartGrid(parts, geom, type);
+        this._pushChartSeries(parts, geom, type, pts, sentPts, hasData);
+
+        if (!hasData) {
+            const msg = noneSelected ? 'Select Incoming or Outgoing above' : 'Waiting for data…';
+            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">${msg}</text>`);
+        }
+
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.innerHTML = parts.join('');
+
+        // Find the most recent point per column, then sort best → worst
+        const lastByCol = new Map();
+        for (const p of pts) {
+            if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
+        }
+        const visible = [...lastByCol.keys()].sort((a, b) => {
+            const pa = lastByCol.get(a), pb = lastByCol.get(b);
+            const va = type === 'rssi' ? pa.rssi : pa.snr;
+            const vb = type === 'rssi' ? pb.rssi : pb.snr;
+            if (vb == null && va == null) return 0;
+            if (vb == null) return -1;
+            if (va == null) return 1;
+            return vb - va;
+        });
+
+    }
+
+    // Append the static chart frame (Y/X gridlines + labels + axes) to `parts`.
+    _pushChartGrid(parts, geom, type) {
+        const { pl, cw, pt, ch, tMin, tMax, tRange, yMin, yMax, yStep, xOf, yOf,
+                gridMinor, gridMajor, gridAxis, labelFill } = geom;
         // Y grid + labels (major every yStep, minor every yStep/2)
         const yMinorStep = yStep / 2;
         for (let y = yMin + yMinorStep; y < yMax; y += yStep) {
@@ -4239,7 +4341,12 @@ class MeshCoreApp {
         // Axes
         parts.push(`<line x1="${pl}" y1="${pt}" x2="${pl}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
         parts.push(`<line x1="${pl}" y1="${pt + ch}" x2="${pl + cw}" y2="${pt + ch}" stroke="${gridAxis}" stroke-width="1"/>`);
+    }
 
+    // Append the clipped data layer (noise floor, per-repeater lines, dots and
+    // outgoing-SNR stars) to `parts`.
+    _pushChartSeries(parts, geom, type, pts, sentPts, hasData) {
+        const { pl, pt, cw, ch, tMin, tMax, xOf, yOf, valOf, dotStroke } = geom;
         // Clip the data layer (noise floor, lines, dots, stars) to the plot rect so
         // that when zoomed in, points outside the X window don't spill over the
         // axes/labels. Grid, axes and labels stay outside the clip.
@@ -4338,30 +4445,6 @@ class MeshCoreApp {
         }
 
         parts.push(`</g>`);   // close the clipped data layer
-
-        if (!hasData) {
-            const msg = noneSelected ? 'Select Incoming or Outgoing above' : 'Waiting for data…';
-            parts.push(`<text x="${(pl + cw / 2).toFixed(1)}" y="${(pt + ch / 2).toFixed(1)}" text-anchor="middle" font-size="11" fill="${labelFill}">${msg}</text>`);
-        }
-
-        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-        svg.innerHTML = parts.join('');
-
-        // Find the most recent point per column, then sort best → worst
-        const lastByCol = new Map();
-        for (const p of pts) {
-            if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
-        }
-        const visible = [...lastByCol.keys()].sort((a, b) => {
-            const pa = lastByCol.get(a), pb = lastByCol.get(b);
-            const va = type === 'rssi' ? pa.rssi : pa.snr;
-            const vb = type === 'rssi' ? pb.rssi : pb.snr;
-            if (vb == null && va == null) return 0;
-            if (vb == null) return -1;
-            if (va == null) return 1;
-            return vb - va;
-        });
-
     }
 
     _decimateChartPts(colPts, tMin, tMax, pixelWidth, type) {
@@ -4821,11 +4904,34 @@ class MeshCoreApp {
     //   - zoom:  on zoom-in / zoom-window change (finer buckets over the window).
     // Zooming OUT needs no disk at all — the base stays maintained by upserts.
 
+    // Re-establish the wide/All chart bucket cache if it is missing during live
+    // capture. That cache is the ONLY source the charts read in a wide window
+    // (see _visibleChartPoints), and _upsertChartCell cannot fold into a null
+    // base — so if a build ever fails (the catch below) or is dropped, nothing
+    // else would rebuild it until the next Display change, freezing the charts
+    // at their last state while disk and the 3D map keep filling. Self-heal,
+    // debounced and non-overlapping, so capture recovers on its own.
+    _ensureChartBase() {
+        if (!this._storeReady || this._chartBaseBuilding) return;
+        if (Date.now() - this._chartBaseHealAt < 1000) return;
+        this._chartBaseHealAt = Date.now();
+        this._chartBaseBuilding = true;
+        this._rebuildChartBase().finally(() => { this._chartBaseBuilding = false; });
+    }
+
     async _rebuildChartBase() {
         if (!this._storeReady) return;
-        const from = isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : -Infinity;
+        // Standalone callers (escape valve, self-heal) may have unflushed writes;
+        // flush so the rebuilt base includes the packets that triggered it.
+        await this._flushWrites();
+        // Pin the window this build is for; if Display changes while we await disk
+        // a newer build owns the base, so discard this (possibly different-window)
+        // result rather than clobbering it.
+        const lifetime = this.DISPLAY_LIFETIME;
+        const from = isFinite(lifetime) ? Date.now() - lifetime : -Infinity;
         try {
             const { buckets, width, lo } = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
+            if (this.DISPLAY_LIFETIME !== lifetime) return;
             const cells = new Map();
             for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
             this._chartBase = { cells, width, lo };
@@ -4849,8 +4955,9 @@ class MeshCoreApp {
     // the (incrementally maintained, Display-window) chart cache. Runs both on a
     // fresh base build (Display change / startup) and after every prune. Live
     // entries are exact and win; only count/maxes are widened from disk.
-    // Restored entries are bucket aggregates (lastSeen ≈ bucket midpoint, last
-    // SNR/RSSI ≈ newest bucket's average).
+    // Restored last SNR/RSSI are the real newest readings (the bucket records the
+    // last value per metric, like live ingestion); only lastSeen is approximate
+    // (≈ the newest bucket's midpoint).
     _restoreRepStatsFromBase() {
         const base = this._chartBase;
         if (!base) return;
@@ -4860,17 +4967,20 @@ class MeshCoreApp {
             let a = agg.get(col);
             if (!a) {
                 a = { count: 0, lastSeen: -1, maxSnr: null, maxRssi: null,
-                      lastSnr: null, lastRssi: null, minPrecision: Infinity };
+                      lastSnr: null, lastRssi: null, minPrecision: Infinity,
+                      _lastSnrT: -Infinity, _lastRssiT: -Infinity };
                 agg.set(col, a);
             }
             a.count += b.count;
             if (b.snrMax  != null && (a.maxSnr  == null || b.snrMax  > a.maxSnr))  a.maxSnr  = b.snrMax;
             if (b.rssiMax != null && (a.maxRssi == null || b.rssiMax > a.maxRssi)) a.maxRssi = b.rssiMax;
-            if (b.time > a.lastSeen) {
-                a.lastSeen = b.time;
-                a.lastSnr  = b.snrN  ? b.snrSum  / b.snrN  : null;
-                a.lastRssi = b.rssiN ? b.rssiSum / b.rssiN : null;
-            }
+            if (b.time > a.lastSeen) a.lastSeen = b.time;
+            // True last SNR/RSSI: the newest actual reading across buckets, each
+            // tracked by its own observation time, exactly as live ingestion keeps
+            // the last non-null value per metric (independent — the latest packet
+            // with an RSSI may differ from the latest with an SNR).
+            if (b.lastSnr  != null && b.lastSnrT  > a._lastSnrT)  { a._lastSnrT  = b.lastSnrT;  a.lastSnr  = b.lastSnr; }
+            if (b.lastRssi != null && b.lastRssiT > a._lastRssiT) { a._lastRssiT = b.lastRssiT; a.lastRssi = b.lastRssi; }
             const prec = this.idPrecision(b.rawId);
             if (prec < a.minPrecision) a.minPrecision = prec;
         }
@@ -4925,7 +5035,8 @@ class MeshCoreApp {
             if (!g) {
                 g = { rawId, bIdx, time: layer.lo + bIdx * layer.width + Math.floor(layer.width / 2),
                       count: 0, snrMin: null, snrMax: null, snrSum: 0, snrN: 0,
-                      rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0 };
+                      rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0,
+                      lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null };
                 layer.cells.set(key, g);
             }
             g.count++;
@@ -4933,16 +5044,18 @@ class MeshCoreApp {
                 g.snrSum += snr; g.snrN++;
                 if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
                 if (g.snrMax == null || snr > g.snrMax) g.snrMax = snr;
+                if (time >= (g.lastSnrT ?? -Infinity)) { g.lastSnrT = time; g.lastSnr = snr; }
             }
             if (rssi != null) {
                 g.rssiSum += rssi; g.rssiN++;
                 if (g.rssiMin == null || rssi < g.rssiMin) g.rssiMin = rssi;
                 if (g.rssiMax == null || rssi > g.rssiMax) g.rssiMax = rssi;
+                if (time >= (g.lastRssiT ?? -Infinity)) { g.lastRssiT = time; g.lastRssi = rssi; }
             }
             return bIdx;
         };
         const base = this._chartBase;
-        if (!base) return;   // built shortly by _refreshWideView; the point is on disk
+        if (!base) { this._ensureChartBase(); return; }   // self-heal; the point is on disk
         const bIdx = fold(base);
         // "All" keeps a fixed bucket width from its build, so a long session can
         // outgrow the bucket budget — rebuild once with a wider bucket when the
@@ -4950,7 +5063,7 @@ class MeshCoreApp {
         // live bucket count stays ~constant via expiry, so no rebuild is needed.)
         if (!isFinite(this.DISPLAY_LIFETIME) && bIdx > this.DOWNSAMPLE_BUCKETS * 3) {
             this._chartBase = null;
-            this._rebuildChartBase();
+            this._ensureChartBase();
             return;
         }
         const zl = this._chartZoomLayer;
@@ -5330,6 +5443,10 @@ class MeshCoreApp {
             this.store.pruneOlderThan(now - this.HASH_LIFETIME)
                 .then(n => this._afterDiskPrune(n));
         }
+        // Safety net: if the wide/All chart cache went missing (a failed rebuild)
+        // it would otherwise stay null until the next Display change, freezing the
+        // charts. Re-establish it here too, in case no packet arrives to do so.
+        if (this._storeReady && !this._chartBase) this._ensureChartBase();
         const lifetime = this._ramWindowMs();
         const toRemove = [];
         for (const [hash, data] of this.hashData.entries()) {
@@ -5853,36 +5970,56 @@ class MeshCoreApp {
 
     _playRxSound(snr) {
         const mode = this.soundSelect?.value ?? 'off';
-        if (mode === 'off') return;
+        // 'disconnect' = alarm on drop only, no per-packet beep (see _playDisconnectAlarm).
+        if (mode === 'off' || mode === 'disconnect') return;
         if (!this.audioCtx) this.audioCtx = new AudioContext();
         const ctx = this.audioCtx;
         if (ctx.state === 'suspended') ctx.resume();
         const now = ctx.currentTime;
         const baseFreq = 700;
-        const scale = mode === 'long' ? 4 : mode === 'medium' ? 2 : 1;
 
-        const beep = (freq, start, dur) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.frequency.value = freq;
-            gain.gain.setValueAtTime(0.08, now + start);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + start + dur);
-            osc.start(now + start);
-            osc.stop(now + start + dur);
+        // Ring-out length grows with the chosen mode (short / medium / long).
+        const ring = mode === 'long' ? 0.8 : mode === 'medium' ? 0.5 : 0.3;
+
+        // A lowpass tames only the very top so it stays a bell, not a harsh
+        // tick — set high so the upper partials ring through and give the sound
+        // its clear, crystalline "glockenspiel" shimmer. (Tuned in sound-lab.html.)
+        const out = ctx.createBiquadFilter();
+        out.type = 'lowpass';
+        out.frequency.value = 10700;
+        out.Q.value = 0.3;
+        out.connect(ctx.destination);
+
+        // One struck bell note: fundamental + octave + a touch of detuned high
+        // shimmer (4.01×) over a sub-octave (0.5×) for body. Very fast attack
+        // gives a clear "ping"; partials ring out together (low decayFactor) so
+        // the shimmer lingers, which reads as crystalline rather than dull.
+        const bell = (freq, start, dur, vol) => {
+            const t = now + start;
+            const partials = [[1, 1.0], [2, 0.5], [4.01, 0.13], [0.5, 0.38]];
+            for (const [mult, amp] of partials) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq * mult;
+                osc.connect(gain);
+                gain.connect(out);
+                const peak = vol * amp * 0.085;
+                const pdur = dur / (1 + (mult - 1) * 0.05);   // upper partials ring almost as long
+                gain.gain.setValueAtTime(0.0001, t);
+                gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.001);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t + pdur);
+                osc.start(t);
+                osc.stop(t + pdur + 0.05);
+            }
         };
 
-        const dur = 0.05 * scale;
-        const gap = 0.08 * scale;
-        // The two tones run back-to-back over one window: the first tone takes
-        // 1/3 of the time, the second (pitched by SNR) the remaining 2/3.
-        // SNR 0 dB = base pitch; ±10 dB = ±1 octave.
-        const total = dur + gap;
-        const d1 = total / 3;
-        const d2 = total * 2 / 3;
-        beep(baseFreq, 0, d1);
-        beep(baseFreq * Math.pow(2, (snr ?? 0) / 10), d1, d2);
+        // Two notes: a brief, quieter reference ding, then the SNR-pitched note
+        // that rings out. SNR 0 dB = base pitch; ±10 dB = ±1 octave. A small
+        // overlap makes it a gentle "di-iing" instead of two separate ticks.
+        const onset = ring * 0.18;
+        bell(baseFreq, 0, ring * 0.5, 0.5);
+        bell(baseFreq * Math.pow(2, (snr ?? 0) / 10), onset, ring, 1.0);
     }
 
     // An interrupted two-tone alarm (880-440-880-440-880-440 Hz) for the
@@ -5917,11 +6054,78 @@ class MeshCoreApp {
 
     _showDisconnectAlarm() {
         document.getElementById('disconnectAlarm')?.classList.remove('hidden');
-        this._playDisconnectAlarm();
     }
 
     _hideDisconnectAlarm() {
         document.getElementById('disconnectAlarm')?.classList.add('hidden');
+    }
+
+    // Whether a silent (no user gesture) reconnect is even possible here, which
+    // is what gates the Auto-reconnect toggle. The native Android app can always
+    // reconnect quietly (saved BLE address, USB permission, or a WiFi socket).
+    // In a plain browser it needs an API that hands back an already-authorised
+    // device without a picker: Web Bluetooth getDevices() or Web Serial.
+    //
+    // The catch: mobile Chrome *exposes* getDevices() but it returns nothing
+    // usable, so every BLE connection still forces the system picker — feature
+    // detection alone can't tell that apart. So on a mobile browser we treat a
+    // silent reconnect as impossible and hide the toggle (the native app is
+    // unaffected — it returns early above).
+    _canAutoReconnect() {
+        if (window.__MESHCORE_NATIVE__) return true;
+        const ua = navigator.userAgent || '';
+        const mobileWeb = navigator.userAgentData?.mobile === true
+            || /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+        if (mobileWeb) return false;
+        if (navigator.bluetooth?.getDevices) return true;
+        if (navigator.serial) return true;
+        return false;
+    }
+
+    // Auto-reconnect: after an unexpected drop, retry the last device a few times
+    // with backoff (reusing quickConnect, which handles every transport). Falls
+    // back to the disconnect alarm if it can't get back. Only the zero-friction
+    // paths (BLE getDevices / saved serial / WiFi) work without a user gesture.
+    _startAutoReconnect() {
+        if (this._reconnecting) return;
+        this._reconnecting = true;
+        this._reconnectTries = 0;
+        this.updateStatus('Reconnecting…', 'connecting');
+        this._scheduleReconnect(500);
+    }
+
+    _scheduleReconnect(delay) {
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(() => this._tryReconnect(), delay);
+    }
+
+    async _tryReconnect() {
+        if (!this._reconnecting) return;
+        if (this.device) { this._cancelAutoReconnect(); return; }   // already back (manual connect)
+        this._reconnectTries++;
+        // auto:true → only the zero-friction transports, no gesture-required
+        // picker and no error alerts (those would stack up modally).
+        this.updateStatus('Reconnecting…', 'connecting');
+        try { await this.quickConnect(this._lastConnectedId, { auto: true }); } catch (e) { console.warn('Auto-reconnect attempt failed:', e); }
+        if (!this._reconnecting) return;        // cancelled meanwhile
+        if (this.device) { this._reconnecting = false; this._reconnectTimer = null; return; }  // success
+        if (this._reconnectTries >= 5) {
+            this._cancelAutoReconnect();
+            this.updateStatus('Disconnected', 'disconnected');
+            this._playDisconnectAlarm();        // gave up — sound + visual alert
+            this._showDisconnectAlarm();
+            return;
+        }
+        // A failed attempt left the status at 'Disconnected'; restore the
+        // distinct 'Reconnecting…' so it doesn't look like a manual disconnect.
+        this.updateStatus('Reconnecting…', 'connecting');
+        this._scheduleReconnect(Math.min(8000, 2000 * 2 ** (this._reconnectTries - 1)));
+    }
+
+    _cancelAutoReconnect() {
+        this._reconnecting = false;
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
     }
 
     // --- BLE Device Battery ---
@@ -6079,16 +6283,6 @@ class MeshCoreApp {
 
         const msgFilter = this._msgFilter.toLowerCase().trim();
 
-        const esc = v => {
-            if (v == null || v === '') return '';
-            const s = String(v);
-            return (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r'))
-                ? '"' + s.replace(/"/g, '""') + '"' : s;
-        };
-
-        const header = ['time', 'type', 'hash', 'repeater', 'snr', 'uplink_snr', 'rssi', 'raw_hex', 'lat', 'lon', 'text', 'sender'];
-        const lines = [];
-
         // One row per (hash, repeater) observation, sorted chronologically.
         // Source the full history from disk when available; otherwise the RAM
         // window. Each row carries its own rawHex (per-path) and the per-hash
@@ -6138,47 +6332,28 @@ class MeshCoreApp {
                 contactsToExport.set(c.pubKeyFullHex, c);
             }
         }
-        for (const c of contactsToExport.values()) {
-            lines.push('# CONTACT,' + [c.pubKeyFullHex, c.name || '', c.lat ?? 0, c.lon ?? 0].map(esc).join(','));
-        }
-        lines.push(header.join(','));
+        // Map the gathered observations into the flat shape csv.js serialises;
+        // numeric/date formatting lives in buildCsv.
+        const observations = allRows.map(({ hash, data, rep }) => ({
+            time:      rep.time ?? data.firstSeen,
+            type:      data.type,
+            hash,
+            rawId:     rep.rawId,
+            snr:       rep.snr,
+            remoteSnr: rep.remoteSnr,
+            rssi:      rep.rssi,
+            rawHex:    rep.rawHex || data.rawHex,
+            lat:       rep.lat,
+            lon:       rep.lon,
+            text:      data.meta?.text,
+            sender:    data.meta?.sender,
+        }));
 
-        for (const { hash, data, rep } of allRows) {
-            lines.push([
-                new Date(rep.time ?? data.firstSeen).toISOString(),
-                data.type  || '',
-                hash,
-                rep.rawId  || '',
-                rep.snr?.toFixed(2) ?? '',
-                rep.remoteSnr?.toFixed(2) ?? '',
-                rep.rssi ?? '',
-                rep.rawHex || data.rawHex || '',
-                rep.lat    ?? '',
-                rep.lon    ?? '',
-                data.meta?.text   || '',
-                data.meta?.sender || '',
-            ].map(esc).join(','));
-        }
-
-        // Append sent SNR history rows
-        for (const p of sentSource) {
-            lines.push([
-                new Date(p.time).toISOString(),
-                'SentSNR',
-                'SENTSNR',
-                p.col || '',
-                '',
-                p.snr.toFixed(2),
-                '',
-                '',
-                p.lat ?? '',
-                p.lon ?? '',
-                p.label || '',
-                '',
-            ].map(esc).join(','));
-        }
-
-        const csv = lines.join('\r\n');
+        const csv = buildCsv({
+            contacts: [...contactsToExport.values()],
+            observations,
+            sentRows: sentSource,
+        });
         const suggestedName = `meshcore-signal-tester-${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.csv`;
 
         // Android native app: delegate to SAF picker (shows system "Save as" dialog)
@@ -6213,96 +6388,32 @@ class MeshCoreApp {
         URL.revokeObjectURL(url);
     }
 
-    _parseCsvLine(line) {
-        const cols = [];
-        let cur = '';
-        let inQ = false;
-        for (let i = 0; i < line.length; i++) {
-            const ch = line[i];
-            if (inQ) {
-                if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-                else if (ch === '"') inQ = false;
-                else cur += ch;
-            } else {
-                if (ch === '"') inQ = true;
-                else if (ch === ',') { cols.push(cur); cur = ''; }
-                else cur += ch;
-            }
-        }
-        cols.push(cur);
-        return cols;
-    }
-
     async _importCsv(file) {
         let text;
         try { text = await file.text(); } catch { alert('Could not read file.'); return; }
-        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
-        const lines = text.split(/\r?\n/);
-        if (lines.length < 2) return;
+        const parsed = parseCsv(text);
+        if (parsed.error === 'empty') return;
 
-        // Parse embedded contact metadata and find real header line
-        let headerLineIdx = 0;
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            if (line.startsWith('# CONTACT,')) {
-                const parts = this._parseCsvLine(line.slice('# CONTACT,'.length));
-                const [pubKeyFullHex, name, latStr, lonStr] = parts;
-                if (pubKeyFullHex && !this._contacts.has(pubKeyFullHex)) {
-                    const lat = parseFloat(latStr) || 0;
-                    const lon = parseFloat(lonStr) || 0;
-                    this._contacts.set(pubKeyFullHex, { name: name || null, type: null, lat, lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex });
-                }
-                continue;
+        // Merge any contacts embedded in the CSV (new keys only, keep existing).
+        // Done before the header check so a malformed body still imports contacts.
+        for (const c of parsed.contacts) {
+            if (!this._contacts.has(c.pubKeyFullHex)) {
+                this._contacts.set(c.pubKeyFullHex,
+                    { name: c.name, type: null, lat: c.lat, lon: c.lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex: c.pubKeyFullHex });
             }
-            headerLineIdx = i;
-            break;
         }
         this._updateContactsCount();
         this._scheduleContactsPersist();   // persist any contacts embedded in the CSV
 
-        const header = this._parseCsvLine(lines[headerLineIdx]);
-        const idx = name => header.indexOf(name);
-        const iTime = idx('time'), iType = idx('type'), iHash = idx('hash');
-        const iRep  = idx('repeater'), iRssi = idx('rssi'), iSnr = idx('snr');
-        const iUplinkSnr = idx('uplink_snr');
-        const iHex  = idx('raw_hex'), iLat = idx('lat'), iLon = idx('lon');
-        const iTxt  = idx('text'), iSnd = idx('sender');
-
-        if (iTime < 0 || iHash < 0 || iRep < 0) {
-            alert('Unrecognised CSV format — expected columns: time, hash, repeater.');
+        if (!parsed.ok) {
+            if (parsed.error === 'format')
+                alert('Unrecognised CSV format — expected columns: time, hash, repeater.');
             return;
         }
 
-        let rows = [];
-        for (let i = headerLineIdx + 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (!line) continue;
-            const c = this._parseCsvLine(line);
-            const time = new Date(c[iTime]).getTime();
-            if (isNaN(time)) continue;
-            const lat = iLat >= 0 && c[iLat] !== '' ? parseFloat(c[iLat]) : null;
-            const lon = iLon >= 0 && c[iLon] !== '' ? parseFloat(c[iLon]) : null;
-            rows.push({
-                time,
-                type:      iType >= 0 ? c[iType] : '',
-                hash:      c[iHash],
-                repeater:  c[iRep],
-                rssi:      parseInt(c[iRssi]) || -100,
-                snr:       parseFloat(c[iSnr]) || 0,
-                rawHex:    iHex  >= 0 ? c[iHex]  : '',
-                lat:       lat != null && !isNaN(lat) ? lat : null,
-                lon:       lon != null && !isNaN(lon) ? lon : null,
-                uplinkSnr: iUplinkSnr >= 0 && c[iUplinkSnr] !== '' ? parseFloat(c[iUplinkSnr]) : null,
-                csvText:   iTxt >= 0 ? c[iTxt]  : '',
-                csvSender: iSnd >= 0 ? c[iSnd]  : '',
-            });
-        }
-        // Split SentSNR rows from regular rows
-        const sentSnrRows = rows.filter(r => r.type === 'SentSNR');
-        rows = rows.filter(r => r.type !== 'SentSNR');
-
+        const rows = parsed.rows;
+        const sentSnrRows = parsed.sentRows;
         if (rows.length === 0 && sentSnrRows.length === 0) return;
 
         const importBtn = document.getElementById('importCsvBtn');
@@ -6493,7 +6604,9 @@ class MeshCoreApp {
 
     async disconnect() {
         // The user explicitly asked to disconnect — suppress the surprise-
-        // disconnect alarm that onDisconnected() would otherwise raise.
+        // disconnect alarm that onDisconnected() would otherwise raise, and stop
+        // any auto-reconnect cycle.
+        this._cancelAutoReconnect();
         this._intentionalDisconnect = true;
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.transportKind === 'serial') {
@@ -6620,7 +6733,12 @@ class MeshCoreApp {
         const surprise = this._wasConnected && !this._intentionalDisconnect;
         this._wasConnected = false;
         this._intentionalDisconnect = false;
-        if (surprise) this._showDisconnectAlarm();
+        if (this._reconnecting) return;   // a reconnect cycle already owns the recovery
+        if (surprise) {
+            this._playDisconnectAlarm();   // audible cue on every unexpected drop (if sound on)
+            if (this._autoReconnect && this._lastConnectedId) this._startAutoReconnect();
+            else this._showDisconnectAlarm();
+        }
     }
 }
 

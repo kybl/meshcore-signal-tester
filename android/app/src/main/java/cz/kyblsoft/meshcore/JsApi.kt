@@ -10,7 +10,14 @@ import org.json.JSONObject
  *
  * The matching JS handlers live in native-bridge.js.
  */
-class JsApi(private var webView: WebView) {
+class JsApi(webView: WebView) {
+
+    // @Volatile: rebind() runs on the main thread while eval() is called from
+    // the BLE GATT callback / serial I/O / TCP reader threads, so the field is
+    // read and written across threads. Volatile guarantees those threads see
+    // the freshly rebound view rather than a stale reference.
+    @Volatile
+    private var webView: WebView = webView
 
     /**
      * Point this bridge at a freshly built WebView. Used when the renderer
@@ -50,6 +57,15 @@ class JsApi(private var webView: WebView) {
     /** Report a geolocation error (code: 1=denied, 2=unavailable, 3=timeout). */
     fun geoError(code: Int, message: String) {
         eval("window.__mcGeoError($code, ${q(message)})")
+    }
+
+    /**
+     * Tell the page that the location permission is now held, so the 3D map can
+     * begin watching immediately — without the user having to tap "Enable
+     * location". Fired right after the connect flow's permission grant.
+     */
+    fun locationPermissionGranted() {
+        eval("window.__mcLocationPermissionGranted && window.__mcLocationPermissionGranted()")
     }
 
     /** Deliver a chunk of bytes received from a serial port. */

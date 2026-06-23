@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.2.1] - 2026-06-22
+
+### Added
+
+- **Auto-reconnect** — an optional toggle that automatically retries the last
+  device after an unexpected drop, before the disconnect alarm. Shown only
+  where it can actually work (not for Bluetooth in a mobile browser).
+- **Nicer packet sound** — a pleasant bell whose pitch still tracks signal
+  strength, plus a new "disconnect only" sound mode. The disconnect alarm now
+  sounds on every unexpected drop.
+
+### Changed
+
+- **Location now starts automatically when you connect (Android)** — no need to
+  tap the 3D map's "Enable location" button anymore.
+- **Steadier location on the 3D map** — occasional GPS jumps (sudden ~200 m
+  hops) are filtered out.
+- **3D map zooms in to street level** even on large maps, and deep zoom is
+  smoother.
+- **3D camera framing** — "Center on me" no longer jerks at the end of its move,
+  and repeaters are framed with a little headroom above them.
+
+### Fixed
+
+- 2D charts could stop updating with Display set to **All**, until you switched
+  the Display window and back.
+- Help (?) tooltips could appear away from their icon.
+- Seen Repeaters now shows the true last RSSI/SNR, not a rounded/averaged value.
+- Received Packets always lists every repeater as a column, not only the ones on
+  the current page.
+- 3D map selection no longer clears itself on its own.
+- 3D map tiles no longer flicker while panning or zooming.
+- Footer text now has proper contrast in light mode.
+
 ## [1.2.0] - 2026-06-14
 
 ### Added

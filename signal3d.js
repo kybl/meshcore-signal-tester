@@ -11,15 +11,37 @@ import { MapControls } from './vendor/controls/MapControls.js';
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 12;    // world units for strongest signal
 const MIN_HEIGHT     = 2;     // world units for weakest signal
-const SNR_GOOD       = 12;    // dB — excellent signal
-const SNR_BAD        = -20;   // dB — minimum decodable (LoRa SF12)
+const SNR_GOOD       = 15;    // dB — top of the height scale (max height)
+const SNR_BAD        = -13;   // dB — bottom of the height scale (min height)
 const MAX_TILES_AXIS = 4;
 const TILE_PX        = 256;
+// Closest zoom shows roughly this much ground across the view, regardless of how
+// much area the (fixed-size) plane covers — so a long drive doesn't cap zoom at a
+// city-block view. minDistance is derived from it per map scale (see _applyZoomLimits).
+const ZOOM_MIN_VIEW_M = 30;
+// Markers (my-location cone, device, repeater pins) are sized to this fraction of
+// the view height (clamped to a sensible pixel range), so they don't look tiny
+// when the map is enlarged/fullscreen the way a fixed pixel size did.
+const MARKER_VIEW_FRAC = 0.10;
 // Reference camera distance: distance from origin when camera is at the initial
 // fit position (0.4r, 0.55r, 0.6r) with r = PLANE_SIZE.  Derived once so that
 // height/size scales are purely a function of current camera distance and never
 // depend on when the first tile load happened.
 const CAMERA_REF_DIST = PLANE_SIZE * Math.sqrt(0.4*0.4 + 0.55*0.55 + 0.6*0.6); // ≈ 90.7
+
+// GPS outlier rejection (see _gpsAccept). The marker and the packet geotag use
+// only accepted/estimated fixes. Tuned for a moving car; conservative so
+// legitimate motion (incl. hard braking/cornering) is never dropped, and so a
+// stationary receiver's jitter can't build a phantom velocity.
+const GPS_MAX_ACCEL  = 12;   // m/s² — plausible accel/brake/cornering
+const GPS_BASE_TOL   = 15;   // m — base slack (GPS noise) on top of the accel + accuracy budget
+const GPS_MAX_ACC    = 150;  // m — reject fixes less certain than this
+const GPS_MAX_REJECT = 4;    // accept after this many consecutive rejects (anti-stuck: real jump / GPS reset)
+const GPS_VEL_SMOOTH = 0.4;  // EMA weight for a new velocity sample (driving builds it; standstill jitter cancels)
+const GPS_MIN_SPEED  = 3;    // m/s (~11 km/h) — below this the receiver is treated as stationary (no dead-reckon)
+const GPS_NOISE_K    = 1.5;  // a step within this × accuracy is jitter, not real motion
+const GPS_MOVE_STREAK = 3;   // consecutive above-noise steps needed before we trust the velocity (no fling from one-off jitter)
+const GPS_DR_MAX_DT  = 2;    // s — cap on dead-reckon extrapolation time, so a wrong velocity can't fling far
 
 // Mapy.com tile API: path includes tile size (256) before z/x/y.
 // Reference: https://developer.mapy.com/rest-api/maptiles/
@@ -102,6 +124,32 @@ function tileToLatLon(tx, ty, zoom) {
     return { lat, lon };
 }
 
+// 2*tan(fov/2): the recurring factor converting between world size at a given
+// camera distance and on-screen size. Callers needing tan(fov/2) use the
+// result divided by 2.
+function fovFactor(camera) {
+    return 2 * Math.tan((camera.fov / 2) * Math.PI / 180);
+}
+
+// Detach a Three.js object from its parent and release its GPU resources
+// (geometry + materials, recursively). Pass disposeTextures:false for objects
+// whose materials reference shared/cached textures (the signal dots reuse
+// sprite textures owned by the map) — disposing those would corrupt every
+// other object still using them.
+function disposeObject3D(obj, { disposeTextures = true } = {}) {
+    if (!obj) return;
+    obj.parent?.remove(obj);
+    obj.traverse(node => {
+        node.geometry?.dispose?.();
+        const mat = node.material;
+        if (!mat) return;
+        for (const m of (Array.isArray(mat) ? mat : [mat])) {
+            if (disposeTextures) m.map?.dispose?.();
+            m.dispose?.();
+        }
+    });
+}
+
 export class Signal3DMap {
     constructor(opts) {
         this.canvas    = opts.canvas;
@@ -128,6 +176,10 @@ export class Signal3DMap {
         this._pinGroups = [];
         this._userLoc      = null;
         this._watchId      = null;
+        this._gpsLast       = null;          // last accepted fix {lat, lon, t, accuracy} — for outlier rejection
+        this._gpsVel        = { x: 0, y: 0 };// smoothed velocity estimate (m/s, east/north)
+        this._gpsMoveStreak = 0;             // consecutive above-noise steps (gates "moving"/dead-reckon)
+        this._gpsReject     = 0;             // consecutive rejected fixes (anti-stuck counter)
         this._followUser   = false;  // when true, camera tracks the user's GPS position
         this._userDragging = false;  // a pointer gesture on the map is in progress
         this.onFollowChange = opts.onFollowChange || null;
@@ -267,7 +319,7 @@ export class Signal3DMap {
         this.renderer.setSize(w, h, false);
 
         this.scene  = new THREE.Scene();
-        this.camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 5000);
+        this.camera = new THREE.PerspectiveCamera(45, w / h, 0.05, 5000);
         this.camera.position.set(70, 90, 110);
 
         this.controls = new MapControls(this.camera, canvas);
@@ -282,7 +334,11 @@ export class Signal3DMap {
         this.controls.touches = { ONE: 1 /* PAN */, TWO: 3 /* DOLLY_ROTATE */ };
         this.controls.update();
         this.controls.addEventListener('change', () => {
-            this.controls.target.y = 0;
+            // While following, keep the orbit pivot at the framing height (user +
+            // half a max-height spire); otherwise pin it to the ground plane. Skip
+            // during a camera animation so its lerp drives the target height
+            // smoothly instead of snapping (see _stepCameraAnim / flyToUser).
+            if (!this._camAnim) this.controls.target.y = this._followUser ? this._followCenterY() : 0;
             this._updateHeightScale();
             this._updatePerspUniforms();
             this._notifyViewChange();
@@ -299,13 +355,49 @@ export class Signal3DMap {
         this.controls.addEventListener('start', () => { this._camAnim = null; this._userDragging = true; });
         this.controls.addEventListener('end', () => {
             this._userDragging = false;
-            if (this._followUser && !this._userInDeadZone()) this.setFollowUser(false);
+            if (this._followUser && !this._followTargetInDeadZone()) this.setFollowUser(false);
         });
 
-        // Two-finger twist: rotate camera azimuth by the angular change between the
-        // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
-        // rotate camera.position directly around the Y axis through controls.target
-        // and let controls.update() recompute its internal spherical state.
+        this._initTwistGesture(canvas);
+
+        // The my-location cone is the only lit material in the scene. Its visible
+        // (near-vertical) sides only catch the directional light when that light
+        // comes from the side, so keep it fairly horizontal and strong for a clear
+        // lit/shadow split as the camera orbits; ambient sets the shadow-side floor.
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const dl = new THREE.DirectionalLight(0xffffff, 1.3);
+        dl.position.set(90, 70, 50);
+        this.scene.add(dl);
+
+        // Placeholder floor until tiles arrive
+        const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
+        const phMat = new THREE.MeshBasicMaterial({ color: this._floorColor() });
+        this._mapMesh = new THREE.Mesh(phGeo, phMat);
+        this._mapMesh.rotation.x = -Math.PI / 2;
+        this.scene.add(this._mapMesh);
+        this._planeDim = { w: PLANE_SIZE, h: PLANE_SIZE };
+
+        this._rxPointsGroup = new THREE.Group();
+        this.scene.add(this._rxPointsGroup);
+
+        this._raycaster = new THREE.Raycaster();
+
+        this._initClickDetection(canvas);
+
+        this._onResize = () => this._resize();
+        window.addEventListener('resize', this._onResize);
+        this._ro = new ResizeObserver(() => this._resize());
+        this._ro.observe(canvas);
+
+        this._initInfoPanelEvents();
+        this._startRenderLoop();
+    }
+
+    // Two-finger twist: rotate camera azimuth by the angular change between the
+    // two touch points.  rotateLeft() is private in Three.js ≥0.155, so we
+    // rotate camera.position directly around the Y axis through controls.target
+    // and let controls.update() recompute its internal spherical state.
+    _initTwistGesture(canvas) {
         let _twistAngle = null;
         canvas.addEventListener('touchstart', e => {
             if (e.touches.length === 2) {
@@ -336,26 +428,11 @@ export class Signal3DMap {
         }, { passive: true });
         canvas.addEventListener('touchend',   () => { _twistAngle = null; }, { passive: true });
         canvas.addEventListener('touchcancel',() => { _twistAngle = null; }, { passive: true });
+    }
 
-        this.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.45);
-        dl.position.set(60, 180, 80);
-        this.scene.add(dl);
-
-        // Placeholder floor until tiles arrive
-        const phGeo = new THREE.PlaneGeometry(PLANE_SIZE, PLANE_SIZE);
-        const phMat = new THREE.MeshBasicMaterial({ color: this._floorColor() });
-        this._mapMesh = new THREE.Mesh(phGeo, phMat);
-        this._mapMesh.rotation.x = -Math.PI / 2;
-        this.scene.add(this._mapMesh);
-        this._planeDim = { w: PLANE_SIZE, h: PLANE_SIZE };
-
-        this._rxPointsGroup = new THREE.Group();
-        this.scene.add(this._rxPointsGroup);
-
-        this._raycaster = new THREE.Raycaster();
-
-        // Distinguish click from drag: track pointer displacement
+    // Distinguish click from drag: only fire _onCanvasClick when the pointer
+    // barely moved between down and up.
+    _initClickDetection(canvas) {
         let _ptrStart = null;
         canvas.addEventListener('pointerdown', e => { _ptrStart = { x: e.clientX, y: e.clientY }; });
         canvas.addEventListener('click', e => {
@@ -366,40 +443,55 @@ export class Signal3DMap {
             if (Math.sqrt(dx * dx + dy * dy) > 5) return; // drag, not click
             this._onCanvasClick(e);
         });
+    }
 
-        this._onResize = () => this._resize();
-        window.addEventListener('resize', this._onResize);
-        this._ro = new ResizeObserver(() => this._resize());
-        this._ro.observe(canvas);
+    // Wire the selected-repeater info panel's action buttons (close, filter,
+    // look-at, pin).
+    _initInfoPanelEvents() {
+        if (!this.infoEl) return;
+        this.infoEl.addEventListener('click', e => {
+            if (e.target.closest('.smi-close')) {
+                this._selectedCol = null;
+                this._rebuildDots();
+                this._updateInfoPanel();
+                this.onSelect?.(null);
+            } else if (e.target.closest('.smi-filter')) {
+                this.onFilter?.(this._selectedCol);
+            } else if (e.target.closest('.smi-look')) {
+                const loc = this._repeaterLocation(this._selectedCol);
+                if (loc) this.faceLatLon(loc.lat, loc.lon);
+            } else if (e.target.closest('.smi-pin')) {
+                this.onToggleMapPin?.(this._selectedCol);
+                this._updateInfoPanel();   // reflect the new pin state
+            }
+        });
+    }
 
-        if (this.infoEl) {
-            this.infoEl.addEventListener('click', e => {
-                if (e.target.closest('.smi-close')) {
-                    this._selectedCol = null;
-                    this._rebuildDots();
-                    this._updateInfoPanel();
-                    this.onSelect?.(null);
-                } else if (e.target.closest('.smi-filter')) {
-                    this.onFilter?.(this._selectedCol);
-                } else if (e.target.closest('.smi-look')) {
-                    const loc = this._repeaterLocation(this._selectedCol);
-                    if (loc) this.faceLatLon(loc.lat, loc.lon);
-                } else if (e.target.closest('.smi-pin')) {
-                    this.onToggleMapPin?.(this._selectedCol);
-                    this._updateInfoPanel();   // reflect the new pin state
-                }
-            });
-        }
-
+    // Per-frame render loop, runs for the map's lifetime.
+    _startRenderLoop() {
         const tick = () => {
             this._stepCameraAnim();
             this.controls.update();
+            this._updateNearPlane();
             this._maybeRebuildDots();
             this._scaleMarkerToScreen();
             this.renderer.render(this.scene, this.camera);
-            requestAnimationFrame(tick);   // render loop runs for the map's lifetime
+            requestAnimationFrame(tick);
         };
         tick();
+    }
+
+    // Keep the camera near plane proportional to the current view distance: small
+    // when zoomed in (so a very close minDistance on a large-extent map never
+    // clips the floor) and large when zoomed out (so depth precision stays good
+    // and dots don't z-fight the map). This is what lets minDistance scale all the
+    // way down for the closest zoom without a fixed lower clamp.
+    _updateNearPlane() {
+        const near = Math.max(0.002, this.controls.getDistance() * 0.02);
+        if (Math.abs(near - this.camera.near) > this.camera.near * 0.05) {
+            this.camera.near = near;
+            this.camera.updateProjectionMatrix();
+        }
     }
 
     _resize() {
@@ -485,7 +577,12 @@ export class Signal3DMap {
                 clearTimeout(failTimer);
                 if (this.btnEl) this.btnEl.classList.add('hidden');
                 const { latitude, longitude, accuracy } = pos.coords;
-                this._userLoc = { lat: latitude, lon: longitude, accuracy };
+                // Drop one-off GPS outliers (the ~200 m spikes) before they reach
+                // the marker or get stamped onto packets; a rejected fix returns a
+                // dead-reckoned point (or null to hold) instead of the raw spike.
+                const fix = this._gpsAccept(latitude, longitude, accuracy, pos.timestamp || Date.now());
+                if (!fix) return;
+                this._userLoc = { lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy };
                 this._locationReady();   // swap the status text for the "Center on me" button
                 if (this.emptyEl && !this._rxPoints.length) {
                     this.emptyEl.textContent = 'Waiting for data…';
@@ -496,7 +593,7 @@ export class Signal3DMap {
                 // drifts out of the central-third dead zone — small moves don't
                 // nudge the map. Never recentre mid-gesture (it would fight the
                 // user's drag).
-                if (this._followUser && !this._userDragging && !this._userInDeadZone()) this.flyToUser(450);
+                if (this._followUser && !this._userDragging && !this._followTargetInDeadZone()) this.flyToUser(450);
             },
             err => {
                 resolved = true;
@@ -507,6 +604,74 @@ export class Signal3DMap {
             },
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
         );
+    }
+
+    // Outlier rejection for GPS fixes, with a moving/stationary split:
+    //  • Moving (a sustained, above-noise track — see the streak below): gate on
+    //    acceleration — reject a fix that deviates from the constant-velocity
+    //    prediction by more than plausible accel (0.5·a·Δt²) + accuracy + noise;
+    //    for a rejected fix dead-reckon along the smoothed velocity so the marker
+    //    keeps gliding.
+    //  • Stationary / starting from rest: the velocity estimate is just noise, so
+    //    don't dead-reckon. Accept jitter and a plausible first move, reject
+    //    spikes, and HOLD on a reject (this kills the standstill "fling").
+    // "Moving" needs GPS_MOVE_STREAK consecutive above-noise steps, so a one-off
+    // jitter (even a big one) can't masquerade as velocity and fling the marker.
+    // Anti-stuck: after GPS_MAX_REJECT rejects in a row, trust the fix (real jump /
+    // tunnel exit) and re-seed. State only advances on real accepted fixes.
+    // Returns { lat, lon, accuracy } to use, or null to hold the last position.
+    _gpsAccept(lat, lon, accuracy, t) {
+        const last = this._gpsLast;
+        if (!last) { this._gpsLast = { lat, lon, t, accuracy }; this._gpsVel = { x: 0, y: 0 }; this._gpsMoveStreak = 0; this._gpsReject = 0; return { lat, lon, accuracy }; }
+
+        const dt = Math.max(0.001, (t - last.t) / 1000);   // seconds since last accepted fix
+        const mPerDegLat = 111320;
+        const mPerDegLon = 111320 * Math.cos(last.lat * Math.PI / 180);
+        const nx = (lon - last.lon) * mPerDegLon;          // metres moved from last fix
+        const ny = (lat - last.lat) * mPerDegLat;
+        const step  = Math.hypot(nx, ny);
+        const noise = GPS_NOISE_K * Math.max(accuracy || 0, last.accuracy || 0);
+        const vel   = this._gpsVel;
+        const moving = this._gpsMoveStreak >= GPS_MOVE_STREAK && Math.hypot(vel.x, vel.y) > GPS_MIN_SPEED;
+
+        let reject;
+        if (moving) {
+            const residual = Math.hypot(nx - vel.x * dt, ny - vel.y * dt);  // deviation from prediction
+            reject = accuracy > GPS_MAX_ACC || residual > 0.5 * GPS_MAX_ACCEL * dt * dt + 2 * (accuracy || 0) + GPS_BASE_TOL;
+        } else {
+            // From rest: a plausible move is bounded by acceleration; anything more
+            // (beyond jitter noise) is a spike.
+            reject = accuracy > GPS_MAX_ACC || step > 0.5 * GPS_MAX_ACCEL * dt * dt + noise + GPS_BASE_TOL;
+        }
+
+        if (reject && this._gpsReject < GPS_MAX_REJECT) {
+            this._gpsReject++;
+            if (!moving) return null;   // stationary — hold (don't fling along noise)
+            // Dead-reckon: glide along the smoothed velocity. dt grows while we
+            // keep rejecting (so the point advances) but is capped so even a wrong
+            // velocity can't fling far. State stays on real fixes.
+            const ddt = Math.min(dt, GPS_DR_MAX_DT);
+            return {
+                lat: last.lat + (vel.y * ddt) / mPerDegLat,
+                lon: last.lon + (vel.x * ddt) / mPerDegLon,
+                accuracy: last.accuracy,
+            };
+        }
+
+        // Accept. Update the smoothed velocity; build the "moving" streak only from
+        // sustained above-noise steps so standstill jitter can't trip it.
+        const instX = nx / dt, instY = ny / dt, a = GPS_VEL_SMOOTH;
+        if (reject) {                  // forced accept after holding — trust & re-seed
+            this._gpsVel = { x: instX, y: instY };
+            this._gpsMoveStreak = 0;
+        } else {
+            this._gpsVel = { x: a * instX + (1 - a) * vel.x, y: a * instY + (1 - a) * vel.y };
+            if (step > noise && Math.hypot(this._gpsVel.x, this._gpsVel.y) > GPS_MIN_SPEED) this._gpsMoveStreak++;
+            else this._gpsMoveStreak = 0;
+        }
+        this._gpsLast = { lat, lon, t, accuracy };
+        this._gpsReject = 0;
+        return { lat, lon, accuracy };
     }
 
     currentLocation() {
@@ -579,94 +744,101 @@ export class Signal3DMap {
         );
         this._raycaster.setFromCamera(mouse, this.camera);
 
-        // Check static marker sprites first (emoji icons and labels)
-        if (this._pinSprites.length) {
-            const clickableEntries = this._pinSprites.filter(s => !s.isClose);
-            const sprites = clickableEntries.map(s => s.sprite);
-            const hits = this._raycaster.intersectObjects(sprites);
-            if (hits.length > 0) {
-                const hit = hits[0];
-                const entry = clickableEntries.find(s => s.sprite === hit.object);
-                if (entry) {
-                    // For label sprites, check if click landed in the [x] top-right corner.
-                    // Sprites always face the camera, so we must project the hit offset
-                    // onto camera right/up vectors (not world X/Y).
-                    if (entry.isLabel) {
-                        const sp = entry.sprite;
-                        const sw = new THREE.Vector3();
-                        sp.getWorldPosition(sw);
-                        const ss = new THREE.Vector3();
-                        sp.getWorldScale(ss);
-                        const offset = hit.point.clone().sub(sw);
-                        const camRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
-                        const camUp    = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
-                        // Normalize to ±0.5 (sprite edge)
-                        const nx = offset.dot(camRight) / ss.x;
-                        const ny = offset.dot(camUp)    / ss.y;
-                        if (nx > 0.27 && ny > 0.05) {
-                            if (entry.isPinned) this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
-                            else               this.onPinMarker?.(entry.col, entry.pubKeyFullHex);
-                            return;
-                        }
-                    }
-                    const newCol = entry.col === this._selectedCol ? null : entry.col;
-                    this._clickedPoint = null;
-                    this._selectedCol = newCol;
-                    this._rebuildDots();
-                    this.onSelect?.(newCol);
-                    this._infoPanelFromClick = !!newCol;
-                    this._updateInfoPanel();
-                    return;
-                }
-            }
-        }
+        // Static marker sprites (emoji icons and labels) take priority.
+        if (this._pickPinSprite(e, rect)) return;
 
-        let newCol = null;
-        let clickedPt = null;
-        // Screen-space pick against the actually-rendered dot positions. The dots
-        // are drawn at ~constant screen size (dampened-perspective shader), so a
-        // 3D ray-vs-world-sphere test mis-selects when dots stack vertically
-        // (same lat/lon, different SNR height) or sit near each other. Projecting
-        // each dot and choosing the one nearest the cursor matches what the user
-        // sees — and clicking the guide line (away from the ball) no longer hits.
-        {
-            const px = e.clientX - rect.left, py = e.clientY - rect.top;
-            const groupSy = this._rxPointsGroup?.scale.y ?? 1;
-            const PICK_RADIUS = 16; // CSS px around a dot centre
-            const TIE = 8;          // dots this close on screen count as overlapping
-            const _v = new THREE.Vector3();
-            const candidates = [];
-            for (const p of this._hitPoints) {
-                const wp = this._latLonToWorld(p.lat, p.lon);
-                if (!wp) continue;
-                _v.set(wp.x, this._signalToHeight(p.snr) * groupSy, wp.z);
-                const camDist = this.camera.position.distanceTo(_v);
-                _v.project(this.camera);
-                if (_v.z > 1) continue; // behind the camera
-                const sx = (_v.x * 0.5 + 0.5) * rect.width;
-                const sy = (-_v.y * 0.5 + 0.5) * rect.height;
-                const d = Math.hypot(sx - px, sy - py);
-                if (d <= PICK_RADIUS) candidates.push({ p, d, camDist });
-            }
-            // Nearest to the cursor wins; for dots overlapping on screen prefer the
-            // front-most (the one visually on top).
-            let best = null;
-            for (const c of candidates) {
-                if (!best) { best = c; continue; }
-                if (Math.abs(c.d - best.d) <= TIE) { if (c.camDist < best.camDist) best = c; }
-                else if (c.d < best.d) best = c;
-            }
-            if (best) {
-                if (this._clickedPoint === best.p) { newCol = null; clickedPt = null; }
-                else { newCol = best.p.col; clickedPt = best.p; }
-            }
-        }
+        const { newCol, clickedPt } = this._pickRxPoint(e, rect);
+        this._commitSelection(newCol, clickedPt);
+    }
+
+    // Apply a new selection: rebuild dots, notify the host and refresh the info
+    // panel. `clickedPt` is the picked RX/TX point (null for non-point sources).
+    _commitSelection(newCol, clickedPt = null) {
         this._clickedPoint = clickedPt;
         this._selectedCol = newCol;
         this._rebuildDots();
         this.onSelect?.(newCol);   // may call selectColumn() back, which resets _infoPanelFromClick
         this._infoPanelFromClick = !!newCol;   // set after the feedback loop so panel stays visible
         this._updateInfoPanel();
+    }
+
+    // Hit-test the static marker sprites. Returns true if the click was handled
+    // (toggling a pin via the label's [x] corner, or selecting the marker's
+    // column); false if no sprite was hit.
+    _pickPinSprite(e, rect) {
+        if (!this._pinSprites.length) return false;
+        const clickableEntries = this._pinSprites.filter(s => !s.isClose);
+        const sprites = clickableEntries.map(s => s.sprite);
+        const hits = this._raycaster.intersectObjects(sprites);
+        if (hits.length === 0) return false;
+        const hit = hits[0];
+        const entry = clickableEntries.find(s => s.sprite === hit.object);
+        if (!entry) return false;
+        // For label sprites, check if click landed in the [x] top-right corner.
+        // Sprites always face the camera, so we must project the hit offset
+        // onto camera right/up vectors (not world X/Y).
+        if (entry.isLabel) {
+            const sp = entry.sprite;
+            const sw = new THREE.Vector3();
+            sp.getWorldPosition(sw);
+            const ss = new THREE.Vector3();
+            sp.getWorldScale(ss);
+            const offset = hit.point.clone().sub(sw);
+            const camRight = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+            const camUp    = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+            // Normalize to ±0.5 (sprite edge)
+            const nx = offset.dot(camRight) / ss.x;
+            const ny = offset.dot(camUp)    / ss.y;
+            if (nx > 0.27 && ny > 0.05) {
+                if (entry.isPinned) this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
+                else               this.onPinMarker?.(entry.col, entry.pubKeyFullHex);
+                return true;
+            }
+        }
+        const newCol = entry.col === this._selectedCol ? null : entry.col;
+        this._commitSelection(newCol);
+        return true;
+    }
+
+    // Screen-space pick against the actually-rendered dot positions. The dots
+    // are drawn at ~constant screen size (dampened-perspective shader), so a
+    // 3D ray-vs-world-sphere test mis-selects when dots stack vertically
+    // (same lat/lon, different SNR height) or sit near each other. Projecting
+    // each dot and choosing the one nearest the cursor matches what the user
+    // sees — and clicking the guide line (away from the ball) no longer hits.
+    // Returns { newCol, clickedPt } (both null when nothing is hit).
+    _pickRxPoint(e, rect) {
+        const px = e.clientX - rect.left, py = e.clientY - rect.top;
+        const groupSy = this._rxPointsGroup?.scale.y ?? 1;
+        const PICK_RADIUS = 16; // CSS px around a dot centre
+        const TIE = 8;          // dots this close on screen count as overlapping
+        const _v = new THREE.Vector3();
+        const candidates = [];
+        for (const p of this._hitPoints) {
+            const wp = this._latLonToWorld(p.lat, p.lon);
+            if (!wp) continue;
+            _v.set(wp.x, this._signalToHeight(p.snr) * groupSy, wp.z);
+            const camDist = this.camera.position.distanceTo(_v);
+            _v.project(this.camera);
+            if (_v.z > 1) continue; // behind the camera
+            const sx = (_v.x * 0.5 + 0.5) * rect.width;
+            const sy = (-_v.y * 0.5 + 0.5) * rect.height;
+            const d = Math.hypot(sx - px, sy - py);
+            if (d <= PICK_RADIUS) candidates.push({ p, d, camDist });
+        }
+        // Nearest to the cursor wins; for dots overlapping on screen prefer the
+        // front-most (the one visually on top).
+        let best = null;
+        for (const c of candidates) {
+            if (!best) { best = c; continue; }
+            if (Math.abs(c.d - best.d) <= TIE) { if (c.camDist < best.camDist) best = c; }
+            else if (c.d < best.d) best = c;
+        }
+        if (best) {
+            if (this._clickedPoint === best.p) return { newCol: null, clickedPt: null };
+            return { newCol: best.p.col, clickedPt: best.p };
+        }
+        return { newCol: null, clickedPt: null };
     }
 
     _updateInfoPanel() {
@@ -737,16 +909,7 @@ export class Signal3DMap {
     }
 
     _disposePins() {
-        for (const g of this._pinGroups) {
-            this.scene.remove(g);
-            g.traverse(obj => {
-                obj.geometry?.dispose();
-                if (obj.material) {
-                    obj.material.map?.dispose();
-                    obj.material.dispose();
-                }
-            });
-        }
+        for (const g of this._pinGroups) disposeObject3D(g);
         this._pinGroups = [];
         this._pinSprites = [];
     }
@@ -1046,6 +1209,29 @@ export class Signal3DMap {
         return ((bb.maxLat - bb.minLat) * 111320) / h;
     }
 
+    // Set the closest zoom (controls.minDistance) from the map's real-world scale,
+    // so the deepest zoom shows ~ZOOM_MIN_VIEW_M across whether the plane covers a
+    // few hundred metres or tens of km. The plane is always PLANE_SIZE world units,
+    // so metres-per-world-unit grows with the area covered; without this, a large
+    // map could only zoom to a city-block view.
+    _applyZoomLimits() {
+        if (!this._tileBounds) return;
+        const { x0, y0, nx, ny, zoom } = this._tileBounds;
+        const lat = tileToLatLon(x0 + nx / 2, y0 + ny / 2, zoom).lat;
+        // Web-Mercator ground resolution: 156543.03 m/px at the equator, zoom 0.
+        const mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+        const realLongEdge = Math.max(nx, ny) * TILE_PX * mPerPx;   // metres across the plane's long edge
+        const mPerUnit = realLongEdge / PLANE_SIZE;
+        const ff = fovFactor(this.camera);
+        // World-unit distance for a ~ZOOM_MIN_VIEW_M-wide view. It scales with the
+        // map's metres-per-unit precisely so the *real* closest zoom is the same at
+        // any extent. Only an upper cap (0.5) remains, so small maps can still zoom
+        // even closer; there's no lower clamp — _updateNearPlane keeps the near
+        // plane out of the way however small this gets.
+        const desired = ZOOM_MIN_VIEW_M / (mPerUnit * ff);
+        this.controls.minDistance = Math.min(0.5, Math.max(0.002, desired));
+    }
+
     // Called by the host app when chart/legend selection changes.
     selectColumn(col) {
         this._infoPanelFromClick = false;   // always hide info panel on external selection
@@ -1060,6 +1246,19 @@ export class Signal3DMap {
 
     // Drop packets older than the given timestamp. Disposes their meshes and
     // refreshes selection / info panel if the active repeater goes away.
+    // Whether `col` still has any rendered point — across every source
+    // _rebuildDots draws: live or historical RX dots, plus live or historical
+    // outgoing-SNR stars. Used to decide if a dropped point should clear the
+    // selection.
+    _isColShown(col) {
+        const rx = this._histPoints != null ? this._histPoints : this._rxPoints;
+        if (rx.some(p => p.col === col)) return true;
+        const sent = this._histOutgoingPts != null
+            ? this._histOutgoingPts.concat(this._outgoingPts)
+            : this._outgoingPts;
+        return sent.some(p => p.col === col);
+    }
+
     purgeOlderThan(cutoff) {
         if (!Number.isFinite(cutoff)) return;
         const before     = this._rxPoints.length;
@@ -1067,7 +1266,12 @@ export class Signal3DMap {
         this._rxPoints   = this._rxPoints.filter(p => p.time >= cutoff);
         this._outgoingPts = this._outgoingPts.filter(p => p.time >= cutoff);
         if (this._rxPoints.length === before && this._outgoingPts.length === sentBefore) return;
-        if (this._selectedCol && !this._rxPoints.some(p => p.col === this._selectedCol)) {
+        // Only drop the selection if the selected repeater is no longer rendered
+        // at all (see _isColShown). Checking just _rxPoints wrongly deselected a
+        // repeater shown only via _histPoints (wide/"All" mode) or only as an
+        // outgoing-SNR star — which fired intermittently, whenever a point
+        // happened to expire on a cleanup tick.
+        if (this._selectedCol && !this._isColShown(this._selectedCol)) {
             this._selectedCol = null;
             this._updateInfoPanel();
             this.onSelect?.(null);
@@ -1194,23 +1398,16 @@ export class Signal3DMap {
         // bbox that the current level can already accommodate. Sources that
         // don't serve tiles all the way to z19 cap the starting level.
         const srcMaxZoom = TILE_SOURCES[this._mapSource].maxZoom ?? 19;
-        let zoom = Math.min(srcMaxZoom, this._tileBounds ? this._tileBounds.zoom : 19);
-        let tl, br;
-        while (zoom > 1) {
-            tl = lonLatToTile(minLon, maxLat, zoom);
-            br = lonLatToTile(maxLon, minLat, zoom);
-            const dtx = Math.floor(br.x) - Math.floor(tl.x) + 1;
-            const dty = Math.floor(br.y) - Math.floor(tl.y) + 1;
-            if (dtx <= MAX_TILES_AXIS && dty <= MAX_TILES_AXIS) break;
-            zoom--;
-        }
+        const startZoom = Math.min(srcMaxZoom, this._tileBounds ? this._tileBounds.zoom : 19);
+        const { zoom, tl, br } = this._fitZoomForBbox(minLon, maxLat, maxLon, minLat, startZoom);
 
-        // Asymmetric padding: proportional to data extent so elongated shapes don't waste tiles
+        // Fixed 1-tile margin around the data bbox. A margin that scaled with the
+        // bbox span (ceil(span/2), 1–2) flipped between 1 and 2 as the span
+        // fluctuated by a tile while walking, which pulsed the grid — a tile ahead
+        // would appear and then vanish a second later. A constant margin only
+        // changes the grid monotonically as you cross tile boundaries.
         const maxTile = Math.pow(2, zoom) - 1;
-        const tx = Math.floor(br.x) - Math.floor(tl.x) + 1;
-        const ty = Math.floor(br.y) - Math.floor(tl.y) + 1;
-        const padX = Math.max(1, Math.min(2, Math.ceil(tx / 2)));
-        const padY = Math.max(1, Math.min(2, Math.ceil(ty / 2)));
+        const padX = 1, padY = 1;
         const x0 = Math.max(0, Math.floor(tl.x) - padX);
         const y0 = Math.max(0, Math.floor(tl.y) - padY);
         const x1 = Math.min(maxTile, Math.floor(br.x) + padX);
@@ -1234,12 +1431,7 @@ export class Signal3DMap {
             const planeW = aspect >= 1 ? PLANE_SIZE : PLANE_SIZE * aspect;
             const planeH = aspect >= 1 ? PLANE_SIZE / aspect : PLANE_SIZE;
 
-            if (this._mapMesh) {
-                this.scene.remove(this._mapMesh);
-                this._mapMesh.geometry.dispose();
-                this._mapMesh.material.map?.dispose?.();
-                this._mapMesh.material.dispose();
-            }
+            if (this._mapMesh) disposeObject3D(this._mapMesh);
             const geo = new THREE.PlaneGeometry(planeW, planeH);
             const mat = new THREE.MeshBasicMaterial({ map: texture });
             this._mapMesh = new THREE.Mesh(geo, mat);
@@ -1249,6 +1441,7 @@ export class Signal3DMap {
             this._tileBounds  = { x0, y0, nx, ny, zoom };
             this._planeDim    = { w: planeW, h: planeH };
             this._lastMapKey = key;
+            this._applyZoomLimits();  // let zoom reach street level regardless of map extent
             this._removeOverlay();   // scale changed — overlay must be rebuilt
 
             this._rebuildDots();
@@ -1322,27 +1515,50 @@ export class Signal3DMap {
         const k = Math.min(1, (performance.now() - a.start) / a.duration);
         const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // easeInOutQuad
         a.apply(e);
-        this.controls.target.y = 0;
+        // Keep camera-only animations (e.g. faceLatLon) pinned to the ground, but
+        // let a follow recenter animate its target height (set by apply) smoothly.
+        if (!this._followUser) this.controls.target.y = 0;
         this._updateHeightScale();
         if (k >= 1) this._camAnim = null;
     }
 
-    // Recenter the view on the user's current GPS location (keeps angle/zoom).
-    // Returns false (and shows a status message) when the location is unknown.
+    // Half the world height of a theoretical strongest-possible dot directly
+    // above the user (rendered dots are scaled in Y by _rxPointsGroup.scale.y),
+    // i.e. the midpoint between the ground and that dot.
+    _followCenterY() {
+        return MAX_HEIGHT * (this._rxPointsGroup?.scale.y ?? 1) / 2;
+    }
+
+    // The point "Center on me" frames: the user's position raised halfway up
+    // toward a theoretical max-SNR dot directly above them, so the view shows the
+    // marker plus the upward spire direction. Null until the location is known.
+    _followTarget() {
+        if (!this._userLoc) return null;
+        const u = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
+        if (!u) return null;
+        u.y = this._followCenterY();
+        return u;
+    }
+
+    // Recenter the view on the follow target (keeps angle/zoom). Returns false
+    // (and shows a status message) when the location is unknown.
     flyToUser(duration = 700) {
         if (!this._userLoc) {
             this._setStatus('Location not known yet — tap “Enable location” first.');
             return false;
         }
-        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
-        if (!pos) return false;
-        const delta    = new THREE.Vector3(pos.x - this.controls.target.x, 0, pos.z - this.controls.target.z);
-        const fromT    = this.controls.target.clone();
-        const fromE    = this.camera.position.clone();
-        const toT      = new THREE.Vector3(pos.x, 0, pos.z);
-        const toE      = this.camera.position.clone().add(delta);
+        if (!this._followTarget()) return false;
+        const fromT = this.controls.target.clone();
+        const fromE = this.camera.position.clone();
+        // Recompute the target each frame: its height tracks the live dot scale,
+        // which shifts as the camera distance changes during the move. Ending on
+        // the live value means it exactly matches the height the follow handler
+        // then maintains — no little snap at the end. Camera move is a flat pan.
         this._animate(e => {
-            this.controls.target.lerpVectors(fromT, toT, e);
+            const target = this._followTarget();
+            if (!target) return;
+            const toE = fromE.clone().add(new THREE.Vector3(target.x - fromT.x, 0, target.z - fromT.z));
+            this.controls.target.lerpVectors(fromT, target, e);
             this.camera.position.lerpVectors(fromE, toE, e);
         }, duration);
         return true;
@@ -1351,11 +1567,13 @@ export class Signal3DMap {
     // True while the user's marker projects within the central third of the
     // canvas (both axes). Follow mode uses this as its dead zone: inside it the
     // map is left alone and manual gestures don't disengage following.
-    _userInDeadZone() {
-        if (!this._userLoc) return false;
-        const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
-        if (!pos) return false;
-        const v = pos.project(this.camera);   // NDC: visible canvas is -1..1
+    // True when the follow target (user↔best-dot midpoint) sits in the central
+    // third of the view — i.e. already framed, so following needn't recenter and
+    // a manual nudge that keeps it centred doesn't disengage follow.
+    _followTargetInDeadZone() {
+        const target = this._followTarget();
+        if (!target) return false;
+        const v = target.project(this.camera);   // NDC: visible canvas is -1..1
         return v.z < 1 && Math.abs(v.x) <= 1 / 3 && Math.abs(v.y) <= 1 / 3;
     }
 
@@ -1409,9 +1627,16 @@ export class Signal3DMap {
         const maxPhi  = this.controls.maxPolarAngle ?? (Math.PI / 2 - 0.08);
         const fovRad  = this.camera.fov * Math.PI / 180;
         const offsetAt = phi => (Math.PI / 2 - phi) - Math.atan2(r * Math.cos(phi), d + r * Math.sin(phi));
+        // Leave headroom above the repeater for ~4 dot-height units of its spire,
+        // so the marker plus that stretch stay in view instead of the repeater
+        // sitting near the top edge with the spire cut off. `want` is where the
+        // repeater should sit above the view centre; tilt toward the horizon
+        // whenever it would sit higher than that.
+        const sy = this._rxPointsGroup?.scale.y ?? 1;
+        const headroom = Math.atan2(4 * sy, r + d);   // angular height of ~4 units at the repeater
+        const want = Math.max(0, fovRad / 2 * 0.6 - headroom);
         let phiTo = phi0;
-        if (offsetAt(phi0) > fovRad / 2 * 0.85) {
-            const want = fovRad / 2 * 0.6;       // place R ~60% toward the top edge
+        if (offsetAt(phi0) > want) {
             if (offsetAt(maxPhi) >= want) {
                 phiTo = maxPhi;                  // as horizontal as allowed
             } else {
@@ -1437,8 +1662,16 @@ export class Signal3DMap {
     }
 
     _updateHeightScale() {
-        const ratio = Math.max(0.01, this.controls.getDistance() / CAMERA_REF_DIST);
+        // scale.y ∝ camera distance keeps spires a roughly constant *screen*
+        // height across zoom. The floor only guards against zero (it must not bite
+        // before deep zoom, or spires balloon on screen once you pass it).
+        const ratio = Math.max(1e-6, this.controls.getDistance() / CAMERA_REF_DIST);
         this._rxPointsGroup.scale.y = ratio * 2;
+        // Sit the detail overlay just above the base map but below the lowest dot
+        // (MIN_HEIGHT·scale.y) and marker. A fixed offset can't do both: at deep
+        // zoom the dampened dots/markers are tiny, so a 0.02 overlay would hide
+        // them; tying it to scale.y keeps it clear of z-fighting yet under them.
+        if (this._overlayMesh) this._overlayMesh.position.y = this._rxPointsGroup.scale.y * 0.1;
     }
 
     _updatePerspUniforms() {
@@ -1477,8 +1710,10 @@ export class Signal3DMap {
         const center = this._worldToLatLon(this.controls.target.x, this.controls.target.z);
         if (!center) return null;
         // Target is clamped to y=0 so getDistance() ≈ camera-to-floor distance.
-        // Multiply by 1.5 to cover tilted views where visible area extends past the target.
-        const r = Math.max(1, this.controls.getDistance()) * Math.tan((this.camera.fov / 2) * Math.PI / 180) * 1.5;
+        // Multiply by 1.5 to cover tilted views where visible area extends past the
+        // target. (No distance floor: at deep zoom it would overstate the view and
+        // make the detail overlay pick too low a tile zoom.)
+        const r = Math.max(1e-4, this.controls.getDistance()) * (fovFactor(this.camera) / 2) * 1.5;
         // Convert radius in world units → lon/lat delta using current tileBounds scale
         const { nx, ny, zoom } = this._tileBounds;
         const { w, h } = this._planeDim;
@@ -1493,6 +1728,21 @@ export class Signal3DMap {
 
     // ---- Detail overlay (high-zoom tiles when camera is close) ----
 
+    // Highest zoom at which the lon/lat bbox fits within MAX_TILES_AXIS² tiles,
+    // counting down from `startZoom`. Returns { zoom, tl, br } (tl/br = the
+    // top-left / bottom-right tile coords at that zoom).
+    _fitZoomForBbox(minLon, maxLat, maxLon, minLat, startZoom) {
+        let zoom = startZoom, tl, br;
+        while (zoom > 1) {
+            tl = lonLatToTile(minLon, maxLat, zoom);
+            br = lonLatToTile(maxLon, minLat, zoom);
+            if (Math.floor(br.x) - Math.floor(tl.x) + 1 <= MAX_TILES_AXIS &&
+                Math.floor(br.y) - Math.floor(tl.y) + 1 <= MAX_TILES_AXIS) break;
+            zoom--;
+        }
+        return { zoom, tl, br };
+    }
+
     async _updateOverlay() {
         if (!this._tileBounds || this._overlayBusy) return;
         if (this._mapSource === 'none') { this._removeOverlay(); return; }  // nothing to detail
@@ -1501,14 +1751,9 @@ export class Signal3DMap {
 
         // Find highest zoom where camera view fits in MAX_TILES_AXIS × MAX_TILES_AXIS
         // (capped at the source's own maximum tile level)
-        let overlayZoom = TILE_SOURCES[this._mapSource].maxZoom ?? 19, oTl, oBr;
-        while (overlayZoom > 1) {
-            oTl = lonLatToTile(camBb.minLon, camBb.maxLat, overlayZoom);
-            oBr = lonLatToTile(camBb.maxLon, camBb.minLat, overlayZoom);
-            if (Math.floor(oBr.x) - Math.floor(oTl.x) + 1 <= MAX_TILES_AXIS &&
-                Math.floor(oBr.y) - Math.floor(oTl.y) + 1 <= MAX_TILES_AXIS) break;
-            overlayZoom--;
-        }
+        const { zoom: overlayZoom, tl: oTl, br: oBr } = this._fitZoomForBbox(
+            camBb.minLon, camBb.maxLat, camBb.maxLon, camBb.minLat,
+            TILE_SOURCES[this._mapSource].maxZoom ?? 19);
         // Only show overlay when it offers more detail than the base map
         if (overlayZoom <= this._tileBounds.zoom) { this._removeOverlay(); return; }
 
@@ -1548,7 +1793,7 @@ export class Signal3DMap {
             const mat  = new THREE.MeshBasicMaterial({ map: texture });
             const mesh = new THREE.Mesh(geo, mat);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.set(ocx, 0.02, ocz);   // 0.02 above base to avoid z-fighting
+            mesh.position.set(ocx, this._rxPointsGroup.scale.y * 0.1, ocz);   // just above base, below the dots (kept in sync by _updateHeightScale)
 
             this._removeOverlay();
             this._overlayMesh = mesh;
@@ -1561,10 +1806,7 @@ export class Signal3DMap {
 
     _removeOverlay() {
         if (!this._overlayMesh) return;
-        this.scene.remove(this._overlayMesh);
-        this._overlayMesh.geometry.dispose();
-        this._overlayMesh.material.map?.dispose();
-        this._overlayMesh.material.dispose();
+        disposeObject3D(this._overlayMesh);
         this._overlayMesh = null;
         this._overlayKey = null;
     }
@@ -1577,17 +1819,16 @@ export class Signal3DMap {
     }
 
     _disposeDots() {
-        for (const obj of [...this._dotMeshes, this._hitMesh, this._lineSegs, this._lineSegsDim]) {
-            if (!obj) continue;
-            this._rxPointsGroup.remove(obj);
-            obj.material?.dispose();
-            if (obj !== this._hitMesh) obj.geometry?.dispose();
+        // disposeTextures:false — dot materials share the cached sprite textures
+        // (_sphereTex/_starTex/_ringTex*), which outlive any single rebuild.
+        for (const obj of [...this._dotMeshes, this._lineSegs, this._lineSegsDim]) {
+            disposeObject3D(obj, { disposeTextures: false });
         }
         this._dotMeshes   = [];
-        this._hitMesh    = null;
+        this._hitMesh     = null;
         this._lineSegs    = null;
         this._lineSegsDim = null;
-        this._hitPoints = [];
+        this._hitPoints   = [];
     }
 
     _rebuildDots() {
@@ -1613,120 +1854,14 @@ export class Signal3DMap {
 
         const _col = new THREE.Color();
 
-        const fovFactor  = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
-        const screenH    = this.canvas.clientHeight || 600;
-
-        // Build a THREE.Points object for a set of data points
-        const makePoints = (pts, opacity, sizeMult, tex = this._sphereTex) => {
-            const pos = new Float32Array(pts.length * 3);
-            const col = new Float32Array(pts.length * 3);
-            for (let i = 0; i < pts.length; i++) {
-                const p  = pts[i];
-                const wp = this._latLonToWorld(p.lat, p.lon);
-                pos[i*3]   = wp ? wp.x : 0;
-                pos[i*3+1] = wp ? this._signalToHeight(p.snr) : 0;
-                pos[i*3+2] = wp ? wp.z : 0;
-                if (p.col === 'direct' || p.col === 'unknown') {
-                    col[i*3] = 1; col[i*3+1] = 1; col[i*3+2] = 1;   // white — ring texture carries the rim colour
-                } else {
-                    _col.set(this.colorFor(p.col));
-                    col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
-                }
-            }
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-            const dotSize = this._sphereSize * sizeMult * 7;
-            const isLit = opacity >= 1.0;
-            const mat = new THREE.PointsMaterial({
-                map:             tex,
-                size:            dotSize,
-                sizeAttenuation: false,  // we apply our own dampened perspective below
-                vertexColors:    true,
-                // Keep everything in the transparent pass so renderOrder controls draw
-                // order within the same pass (opaque pass always renders before
-                // transparent regardless of renderOrder, breaking our layering).
-                transparent:     true,
-                opacity,
-                depthWrite:      isLit,  // lit balls write depth → occlude each other
-                alphaTest:       isLit ? 0.5 : 0.02,
-            });
-            // Dampened perspective: gl_PointSize = size * (refDist / -mvz)^0.5
-            // Standard perspective would use exponent 1.0; 0.5 halves the visual
-            // size difference between near and far dots in log space.
-            // uRefDist is updated every frame to controls.getDistance() so that
-            // the reference distance tracks the camera rather than being a fixed
-            // constant — otherwise high-scaled dots float closer to the camera
-            // than the target and appear enormous.
-            if (this._perspSize) {
-                const uRefDist = { value: this.controls.getDistance() };
-                mat.onBeforeCompile = shader => {
-                    shader.uniforms.uRefDist = uRefDist;
-                    shader.vertexShader = shader.vertexShader
-                        .replace('#include <common>',
-                                 '#include <common>\nuniform float uRefDist;')
-                        .replace('gl_PointSize = size;',
-                                 'gl_PointSize = size * pow(uRefDist / max(0.5, -mvPosition.z), 0.5);');
-                };
-                mat.userData.uRefDistUniform = uRefDist;
-            }
-            const mesh = new THREE.Points(geo, mat);
-            // Render order: lit dots (renderOrder 2) paint over lines (renderOrder 1)
-            // so the ball is always visually in front of its own guide line.
-            mesh.renderOrder = isLit ? 2 : 0;
-            mesh.userData.baseDotSize = dotSize;
-            return mesh;
-        };
-
-        const addPoints = (pts, opacity, sizeMult, tex) => {
-            if (!pts.length) return;
-            const m = makePoints(pts, opacity, sizeMult, tex);
-            this._dotMeshes.push(m);
-            this._rxPointsGroup.add(m);
-        };
-
-        // Split each set by sprite texture: real repeaters use the shaded
-        // sphere, the two pseudo columns use white-filled rings.
-        const addGroup = (pts, opacity) => {
-            const normal = [], direct = [], unknown = [];
-            for (const p of pts) {
-                if (p.col === 'direct') direct.push(p);
-                else if (p.col === 'unknown') unknown.push(p);
-                else normal.push(p);
-            }
-            addPoints(normal,  opacity, 2.0, this._sphereTex);
-            addPoints(direct,  opacity, 2.0, this._ringTexDirect);
-            addPoints(unknown, opacity, 2.0, this._ringTexUnknown);
-        };
-        addGroup(litPts, 1.0);
-        addGroup(dimPts, 0.07);
+        this._addDotGroup(litPts, 1.0);
+        this._addDotGroup(dimPts, 0.07);
 
         // Points used for screen-space click picking (see _onCanvasClick).
         // Outgoing TX stars are appended further below, once sentAll is built.
         this._hitPoints = visible;
 
         // Vertical lines — split into lit (coloured) and dim (flat grey, low opacity)
-        const makeLines = (pts, mat) => {
-            if (!pts.length) return null;
-            const pos = new Float32Array(pts.length * 6);
-            for (let i = 0; i < pts.length; i++) {
-                const p  = pts[i];
-                const wp = this._latLonToWorld(p.lat, p.lon);
-                if (!wp) continue;
-                const h = this._signalToHeight(p.snr);
-                const j = i * 6;
-                pos[j]   = wp.x; pos[j+1] = 0; pos[j+2] = wp.z;
-                pos[j+3] = wp.x; pos[j+4] = h; pos[j+5] = wp.z;
-            }
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            const seg = new THREE.LineSegments(geo, mat);
-            seg.renderOrder = 1;  // after dim dots (0), before lit balls (2)
-            seg.visible = this._showLines;
-            this._rxPointsGroup.add(seg);
-            return seg;
-        };
-
         const litCol = new Float32Array(litPts.length * 6);
         for (let i = 0; i < litPts.length; i++) {
             _col.set(this.colorFor(litPts[i].col));
@@ -1743,10 +1878,10 @@ export class Signal3DMap {
             color: 0x888888, transparent: true, depthWrite: false, depthTest: false, opacity: 0.18,
         });
 
-        this._lineSegs = makeLines(litPts, litMat);
+        this._lineSegs = this._makeDotLines(litPts, litMat);
         if (this._lineSegs)
             this._lineSegs.geometry.setAttribute('color', new THREE.BufferAttribute(litCol, 3));
-        this._lineSegsDim = makeLines(dimPts, dimMat);
+        this._lineSegsDim = this._makeDotLines(dimPts, dimMat);
 
         // Sent SNR stars — outgoing signal quality (how well the repeater heard
         // us). Disk-loaded historical points when present, plus a live tail
@@ -1761,8 +1896,8 @@ export class Signal3DMap {
         );
         const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
         const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
-        addPoints(sentLit, 1.0,  3.2, this._starTex);
-        addPoints(sentDim, 0.07, 3.2, this._starTex);
+        this._addDotPoints(sentLit, 1.0,  3.2, this._starTex);
+        this._addDotPoints(sentDim, 0.07, 3.2, this._starTex);
 
         // Make the TX stars clickable too (clicking one selects its repeater,
         // exactly like clicking an RX sphere).
@@ -1772,14 +1907,128 @@ export class Signal3DMap {
         this._updatePerspUniforms();
     }
 
+    // Build a THREE.Points object for a set of data points (used by _rebuildDots).
+    _makeDotPoints(pts, opacity, sizeMult, tex = this._sphereTex) {
+        const _col = new THREE.Color();
+        const pos = new Float32Array(pts.length * 3);
+        const col = new Float32Array(pts.length * 3);
+        for (let i = 0; i < pts.length; i++) {
+            const p  = pts[i];
+            const wp = this._latLonToWorld(p.lat, p.lon);
+            pos[i*3]   = wp ? wp.x : 0;
+            pos[i*3+1] = wp ? this._signalToHeight(p.snr) : 0;
+            pos[i*3+2] = wp ? wp.z : 0;
+            if (p.col === 'direct' || p.col === 'unknown') {
+                col[i*3] = 1; col[i*3+1] = 1; col[i*3+2] = 1;   // white — ring texture carries the rim colour
+            } else {
+                _col.set(this.colorFor(p.col));
+                col[i*3] = _col.r; col[i*3+1] = _col.g; col[i*3+2] = _col.b;
+            }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+        const dotSize = this._sphereSize * sizeMult * 7;
+        const isLit = opacity >= 1.0;
+        const mat = new THREE.PointsMaterial({
+            map:             tex,
+            size:            dotSize,
+            sizeAttenuation: false,  // we apply our own dampened perspective below
+            vertexColors:    true,
+            // Keep everything in the transparent pass so renderOrder controls draw
+            // order within the same pass (opaque pass always renders before
+            // transparent regardless of renderOrder, breaking our layering).
+            transparent:     true,
+            opacity,
+            depthWrite:      isLit,  // lit balls write depth → occlude each other
+            alphaTest:       isLit ? 0.5 : 0.02,
+        });
+        // Dampened perspective: gl_PointSize = size * (refDist / -mvz)^0.5
+        // Standard perspective would use exponent 1.0; 0.5 halves the visual
+        // size difference between near and far dots in log space.
+        // uRefDist is updated every frame to controls.getDistance() so that
+        // the reference distance tracks the camera rather than being a fixed
+        // constant — otherwise high-scaled dots float closer to the camera
+        // than the target and appear enormous.
+        if (this._perspSize) {
+            const uRefDist = { value: this.controls.getDistance() };
+            mat.onBeforeCompile = shader => {
+                shader.uniforms.uRefDist = uRefDist;
+                shader.vertexShader = shader.vertexShader
+                    .replace('#include <common>',
+                             '#include <common>\nuniform float uRefDist;')
+                    .replace('gl_PointSize = size;',
+                             // Floor the depth relative to uRefDist (not a fixed 0.5) so the
+                             // dampening still holds when the whole scene is <0.5 units from
+                             // the camera at deep zoom; also caps foreground dots at ~4.5×.
+                             'gl_PointSize = size * pow(uRefDist / max(uRefDist * 0.05, -mvPosition.z), 0.5);');
+            };
+            mat.userData.uRefDistUniform = uRefDist;
+        }
+        const mesh = new THREE.Points(geo, mat);
+        // Render order: lit dots (renderOrder 2) paint over lines (renderOrder 1)
+        // so the ball is always visually in front of its own guide line.
+        mesh.renderOrder = isLit ? 2 : 0;
+        mesh.userData.baseDotSize = dotSize;
+        return mesh;
+    }
+
+    // Build a dot mesh and register it for rendering + disposal.
+    _addDotPoints(pts, opacity, sizeMult, tex) {
+        if (!pts.length) return;
+        const m = this._makeDotPoints(pts, opacity, sizeMult, tex);
+        this._dotMeshes.push(m);
+        this._rxPointsGroup.add(m);
+    }
+
+    // Split a point set by sprite texture: real repeaters use the shaded sphere,
+    // the two pseudo columns ('direct'/'unknown') use white-filled rings.
+    _addDotGroup(pts, opacity) {
+        const normal = [], direct = [], unknown = [];
+        for (const p of pts) {
+            if (p.col === 'direct') direct.push(p);
+            else if (p.col === 'unknown') unknown.push(p);
+            else normal.push(p);
+        }
+        this._addDotPoints(normal,  opacity, 2.0, this._sphereTex);
+        this._addDotPoints(direct,  opacity, 2.0, this._ringTexDirect);
+        this._addDotPoints(unknown, opacity, 2.0, this._ringTexUnknown);
+    }
+
+    // Build the vertical guide lines (ground → signal height) for a point set.
+    _makeDotLines(pts, mat) {
+        if (!pts.length) return null;
+        const pos = new Float32Array(pts.length * 6);
+        for (let i = 0; i < pts.length; i++) {
+            const p  = pts[i];
+            const wp = this._latLonToWorld(p.lat, p.lon);
+            if (!wp) continue;
+            const h = this._signalToHeight(p.snr);
+            const j = i * 6;
+            pos[j]   = wp.x; pos[j+1] = 0; pos[j+2] = wp.z;
+            pos[j+3] = wp.x; pos[j+4] = h; pos[j+5] = wp.z;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        const seg = new THREE.LineSegments(geo, mat);
+        seg.renderOrder = 1;  // after dim dots (0), before lit balls (2)
+        seg.visible = this._showLines;
+        this._rxPointsGroup.add(seg);
+        return seg;
+    }
+
     _scaleMarkerToScreen() {
         const screenH = this.canvas.clientHeight || 1;
-        const fovFactor = 2 * Math.tan((this.camera.fov / 2) * Math.PI / 180);
+        const ff = fovFactor(this.camera);
+        // Target a fraction of the view height (clamped), not a fixed pixel count,
+        // so markers stay proportional on a small map and don't shrink to nothing
+        // when the map is enlarged / fullscreen.
+        const targetPx = Math.max(30, Math.min(140, MARKER_VIEW_FRAC * screenH));
         const scaleFor = (group, localH) => {
             const d = this.camera.position.distanceTo(group.position);
-            group.scale.setScalar(40 * d * fovFactor / (localH * screenH));
+            group.scale.setScalar(targetPx * d * ff / (localH * screenH));
         };
-        // Cone local height = 2.8; target 40 CSS pixels tall on screen
+        // localH = each marker's model height; targetPx is its on-screen height.
         if (this._userMarker) scaleFor(this._userMarker, 2.8);
         if (this._deviceMarker) scaleFor(this._deviceMarker, 3.1);
         for (const g of this._pinGroups) {
@@ -1806,25 +2055,33 @@ export class Signal3DMap {
         });
     }
 
+    // The translucent ground disc shared by the user and device markers.
+    _makeMarkerBase(color) {
+        const base = new THREE.Mesh(
+            new THREE.CircleGeometry(1.44, 24),
+            new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35 })
+        );
+        base.rotation.x = -Math.PI / 2;
+        base.position.y = 0.05;
+        return base;
+    }
+
     _updateUserMarker() {
         if (!this._userLoc || !this._tileBounds) return;
         const pos = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
         if (!pos) return;
         if (!this._userMarker) {
+            const COL = 0xff4040;   // vivid red — stays bright on the ambient-lit sides
             const group = new THREE.Group();
             const cone = new THREE.Mesh(
                 new THREE.ConeGeometry(1, 2.8, 14),
-                new THREE.MeshBasicMaterial({ color: 0xff3355 })
+                // Lambert (not Basic) so the cone is shaded by the scene's ambient
+                // + directional lights and reads as a 3D solid, not a flat blob.
+                new THREE.MeshLambertMaterial({ color: COL })
             );
             cone.position.y = 1.4;
             group.add(cone);
-            const base = new THREE.Mesh(
-                new THREE.CircleGeometry(1.44, 24),
-                new THREE.MeshBasicMaterial({ color: 0xff3355, transparent: true, opacity: 0.35 })
-            );
-            base.rotation.x = -Math.PI / 2;
-            base.position.y = 0.05;
-            group.add(base);
+            group.add(this._makeMarkerBase(COL));
             this._markerNoZFight(group);
             this._userMarker = group;
             this._userMarker.visible = this._showMarker;
@@ -1855,13 +2112,7 @@ export class Signal3DMap {
             );
             ball.position.y = 2.6;
             group.add(ball);
-            const base = new THREE.Mesh(
-                new THREE.CircleGeometry(1.44, 24),
-                new THREE.MeshBasicMaterial({ color: COL, transparent: true, opacity: 0.35 })
-            );
-            base.rotation.x = -Math.PI / 2;
-            base.position.y = 0.05;
-            group.add(base);
+            group.add(this._makeMarkerBase(COL));
             this._markerNoZFight(group);
             this._deviceMarker = group;
             this.scene.add(this._deviceMarker);
