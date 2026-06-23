@@ -23,8 +23,8 @@ android {
         applicationId "cz.kyblsoft.meshcore.signaltester"
         minSdk 26
         targetSdk 35
-        versionCode appVersionCode ? appVersionCode.toInteger() : 4
-        versionName appVersionName ?: "1.2.1"
+        versionCode appVersionCode ? appVersionCode.toInteger() : 5
+        versionName appVersionName ?: "1.2.2"
     }
 
     signingConfigs {
