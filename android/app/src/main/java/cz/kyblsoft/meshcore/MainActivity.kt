@@ -55,6 +55,11 @@ class MainActivity : AppCompatActivity() {
         private set
 
     private lateinit var webView: WebView
+    // Holds the WebView and carries the system-bar / cutout insets as padding
+    // (padding a WebView directly is unreliable — it leaves content under the
+    // bars and can make the page wider than the viewport). The WebView fills
+    // this container, so insetting the container resizes the WebView itself.
+    private lateinit var rootContainer: FrameLayout
     private lateinit var jsApi: JsApi
 
     private val appUrl = "https://appassets.androidplatform.net/assets/www/index.html"
@@ -174,24 +179,34 @@ class MainActivity : AppCompatActivity() {
         webView = WebView(this)
         // Draw edge to edge (enforced on Android 15 / targetSdk 35, where the
         // window's statusBarColor / navigationBarColor are ignored) and keep the
-        // web UI inside the safe area by padding the WebView with the system-bar
-        // and display-cutout insets. The dark window background shows behind the
-        // bars; system-bar icons are light to stay legible on it. When an HTML
-        // element enters fullscreen the bars are hidden, the insets collapse to
-        // zero, and the WebView fills the whole screen (see setImmersiveFullscreen).
+        // web UI inside the safe area by padding a container that holds the
+        // WebView with the system-bar and display-cutout insets — so the WebView
+        // is laid out smaller rather than just clipped. The dark window
+        // background shows behind the bars; system-bar icons are light to stay
+        // legible on it. When an HTML element enters fullscreen the bars are
+        // hidden, the insets collapse to zero, and the WebView fills the whole
+        // screen (see setImmersiveFullscreen).
+        rootContainer = FrameLayout(this)
+        rootContainer.addView(
+            webView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, webView).run {
+        WindowInsetsControllerCompat(window, window.decorView).run {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
         }
-        ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { v, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            insets
+            WindowInsetsCompat.CONSUMED
         }
-        setContentView(webView)
+        setContentView(rootContainer)
+        ViewCompat.requestApplyInsets(rootContainer)
 
         jsApi = JsApi(webView)
         ble = BleManager(applicationContext, jsApi)
@@ -393,7 +408,13 @@ class MainActivity : AppCompatActivity() {
         customViewCallback = null
 
         webView = WebView(this)
-        setContentView(webView)
+        // Re-insert into the inset-padded container (keeps edge-to-edge handling).
+        rootContainer.addView(
+            webView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
         jsApi.rebind(webView)
         configureWebView()
         // ?recover=1 tells the page this is a crash rebuild (not a fresh launch),
