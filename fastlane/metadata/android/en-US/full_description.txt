@@ -1,0 +1,20 @@
+MeshCore Signal Tester monitors LoRa mesh traffic from a MeshCore companion radio (over Bluetooth, USB-C, or Wi-Fi) or a MeshCore repeater (USB serial CLI) in real time. The connected device type is auto-detected.
+
+It is built for field signal testing: it keeps capturing received packets and your GPS position while the phone is in your pocket with the screen off. A foreground service holds the connection and location alive — something a normal mobile browser cannot do, because it freezes the page and drops the link when the screen turns off.
+
+Features:
+
+* Connect to a MeshCore companion over Bluetooth, USB-C serial, or Wi-Fi (a raw TCP link to the Wi-Fi firmware), or to a repeater over USB.
+* Group every reception by message, so you can see which repeaters forwarded the same packet and compare their signal side by side.
+* Seen-repeaters table with per-repeater RX count and max/last RSSI and SNR.
+* Scrolling SNR and RSSI history charts with a noise-floor estimate; zoom and pan the time axis.
+* Signal 3D map: each received packet is placed at your GPS location, with height encoding SNR; many map styles, or none.
+* Discover nearby nodes and read the SNR they measured for your uplink.
+* Received-packets table with full decoded detail and raw hex.
+* CSV export and re-import for offline review.
+* Persistent on-disk capture that survives a reload or restart.
+* Optional beep on each packet, auto-remove of old data, adjustable display window, repeater filter, keep-screen-on, device battery readout, and a light/dark theme.
+
+All captured data stays on your device. The app uses no analytics and no tracking. Map tiles are fetched from third-party tile servers only while online.
+
+Free and open source (MIT). Source code: https://github.com/kybl/meshcore-signal-tester

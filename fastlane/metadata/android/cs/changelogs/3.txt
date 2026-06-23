@@ -1,0 +1,11 @@
+Verze 1.2.0
+
+- Přibližitelné a posouvatelné 2D grafy SNR a RSSI.
+- Celá historie záznamu se nyní ukládá na disk a přežije reload i restart
+  (při startu se aplikace zeptá, zda obnovit předchozí relaci).
+- Více stylů 3D mapy (CARTO, Esri, další varianty OpenStreetMap) a možnost
+  „Žádná (bez mapy)".
+- Delší doby historie (3 h a 12 h).
+- Android: opraveno zamrznutí po několika hodinách běhu a vylepšené obnovení
+  z pozadí.
+- Různé opravy čitelnosti ve světlém i tmavém režimu.

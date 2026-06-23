@@ -1,0 +1,11 @@
+Version 1.2.0
+
+- Zoomable and pannable 2D SNR & RSSI charts.
+- The full capture history is now kept on disk and survives a reload or restart
+  (you are asked whether to resume the previous session on launch).
+- More 3D map styles (CARTO, Esri, extra OpenStreetMap flavours) and a
+  "None (no map)" option.
+- Longer history durations (3 h and 12 h).
+- Android: fixed a freeze after running for hours and improved background
+  recovery.
+- Various light/dark readability fixes.
