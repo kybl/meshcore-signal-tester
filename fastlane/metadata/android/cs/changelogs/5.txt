@@ -1,0 +1,6 @@
+Verze 1.2.2
+
+Toto vydání je převážně změna buildu a balení.
+
+- Podpora Androidu 15 včetně ošetření edge-to-edge zobrazení.
+- V Help → About se zobrazuje nainstalovaná verze a open-source licence.

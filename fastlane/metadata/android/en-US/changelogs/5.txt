@@ -1,0 +1,6 @@
+Version 1.2.2
+
+This release is mainly a build and packaging change.
+
+- Android 15 support, including edge-to-edge display handling.
+- Shows the installed app version and open-source licenses under Help → About.

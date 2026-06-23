@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.2] - 2026-06-23
+
+This release is essentially a build and packaging change — there are no
+functional changes to the app itself.
+
+### Changed
+
+- **Android 15 support** — the Android app now targets Android 15 (API 35) and
+  handles its enforced edge-to-edge display, so the UI stays within the system
+  bars.
+- **Android app package renamed** to `cz.kyblsoft.meshcore.signaltester`
+  (reserving `cz.kyblsoft.meshcore` as a namespace for future MeshCore apps). It
+  installs as a new app — the previous build is not replaced.
+- The Android app now shows its installed version (with build number) and lists
+  bundled open-source licenses under Help → About.
+
+### Internal
+
+- The `usb-serial-for-android` library is vendored and built from source (no
+  JitPack); the build is reproducible with pinned tooling and dependency
+  checksum verification, and a CI workflow builds and lints the app on every
+  change.
+
 ## [1.2.1] - 2026-06-22
 
 ### Added
