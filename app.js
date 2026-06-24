@@ -4928,15 +4928,25 @@ class MeshCoreApp {
         // a newer build owns the base, so discard this (possibly different-window)
         // result rather than clobbering it.
         const lifetime = this.DISPLAY_LIFETIME;
-        const from = isFinite(lifetime) ? Date.now() - lifetime : -Infinity;
+        // Bucket over the same window the charts actually render: [from, nowRef].
+        // nowRef is the frozen chart clock (import / paused) or live now. Bounding
+        // the upper edge matters because bucketObs derives the bucket width from
+        // the queried span: with an unbounded `to`, any obs newer than nowRef
+        // (e.g. leftover live captures, or rows newer than an imported-and-frozen
+        // session) would stretch the width, collapsing all in-view points into a
+        // couple of buckets — they'd render as one vertical column until a zoom
+        // (whose layer is window-bounded) rebuilt a finer grid. Using nowRef for
+        // `from` too keeps the window consistent with the frozen clock.
+        const nowRef = this._chartFrozenAt ?? Date.now();
+        const from = isFinite(lifetime) ? nowRef - lifetime : -Infinity;
         try {
-            const { buckets, width, lo } = await this.store.bucketObs(from, Infinity, this.DOWNSAMPLE_BUCKETS);
+            const { buckets, width, lo } = await this.store.bucketObs(from, nowRef, this.DOWNSAMPLE_BUCKETS);
             if (this.DISPLAY_LIFETIME !== lifetime) return;
             const cells = new Map();
             for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
             this._chartBase = { cells, width, lo };
             const sent = [];
-            await this.store.eachSent(from, Infinity, r =>
+            await this.store.eachSent(from, nowRef, r =>
                 sent.push({ time: r.time, snr: r.snr, col: this._resolveColReadonly(r.rawId), label: r.label }));
             this._wideSentPoints = sent;
             this._sentChartAt = Date.now();   // live sent points after this are the tail
