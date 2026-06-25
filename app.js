@@ -4797,11 +4797,18 @@ class MeshCoreApp {
             }
         } catch (_) {}
         await this._replayWindow();
-        // Not collecting on startup: freeze the chart at the newest restored point
+        // Not collecting on startup: freeze the chart at the newest stored point
         // (+1 s) so restored history fills the view instead of being squashed
-        // against the left edge while the right edge tracks the wall clock. Set
-        // before the first render and the wide-view rebuild so both use this window.
-        if (!this._collecting && this._lastDataTime) this._chartFrozenAt = this._lastDataTime + 1000;
+        // against the left edge while the right edge tracks the wall clock. Use the
+        // newest time on DISK — _lastDataTime only reflects the recent RAM replay
+        // window, and restored data can be far older than that. Set before the
+        // first render and the wide-view rebuild so both use this window.
+        if (!this._collecting) {
+            try {
+                const span = await this.store._obsSpan(-Infinity, Infinity);
+                if (span) this._chartFrozenAt = span.max + 1000;
+            } catch (_) {}
+        }
         this._scheduleChartRender();
         this._renderMsgTable();
         this._renderRepTable();
