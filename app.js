@@ -107,6 +107,7 @@ class MeshCoreApp {
         this._keepScreenOn = Store.bool('keepScreenOn', true);
         this._unsavedRxCount = 0; // packets received since last CSV export
         this._chartFrozenAt = Date.now();
+        this._lastDataTime = 0;          // newest observation time seen (live or restored); used to freeze the chart at the last point when not collecting
         this._chartZoom = null;          // {tMin,tMax} X-axis zoom window (null = auto/live)
         this._lastChartWindow = null;    // [tMin,tMax] the charts were last drawn with
         this._chartFullWindow = null;    // [tMin,tMax] un-zoomed extent (for clamping)
@@ -183,7 +184,10 @@ class MeshCoreApp {
         } else {
             btn.textContent = '▶ Resume';
             btn.classList.remove('collecting');
-            if (!this._chartFrozenAt) this._chartFrozenAt = Date.now();
+            // Not collecting → freeze the chart at the last point (so it sits at
+            // the right edge with breathing room), not at the wall clock, which
+            // could leave a gap if the last packet arrived a while ago.
+            if (!this._chartFrozenAt) this._chartFrozenAt = (this._lastDataTime || Date.now()) + 1000;
         }
         // While connected, the frame is green when collecting and yellow when
         // paused (Stopped). When disconnected, leave the frame colour alone —
@@ -201,6 +205,15 @@ class MeshCoreApp {
     _syncWakeLock() {
         if (this._collecting && this._keepScreenOn) this.acquireWakeLock();
         else this.releaseWakeLock();
+    }
+
+    // Single source of truth for the empty-state overlay: shown only when there
+    // is no data to display — neither live (RAM) nor restored/imported (on disk).
+    // The <p> text itself is set elsewhere (connect handlers) to reflect status.
+    _updateEmptyState() {
+        if (!this.emptyState) return;
+        const hasData = this.hashData.size > 0 || (this._tableHashCount || 0) > 0;
+        this.emptyState.classList.toggle('hidden', hasData);
     }
 
     initUI() {
@@ -3171,6 +3184,7 @@ class MeshCoreApp {
         this.totalRxCount++;
         if (!opts.importing) this._unsavedRxCount++;
         const now = opts.timestamp ?? Date.now();
+        if (now > this._lastDataTime) this._lastDataTime = now;
         if (!opts.importing) this._rxTimestamps.push(now);
         const isNewHash = !this.hashData.has(hash);
         const prevColCount = this.repeaterColumns.length;
@@ -3269,7 +3283,7 @@ class MeshCoreApp {
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
         if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr);
-        this.emptyState?.classList.add('hidden');
+        this._updateEmptyState();
     }
 
     // Coalesce the per-packet table/stats render to ~7×/s. Rebuilding both
@@ -3890,7 +3904,9 @@ class MeshCoreApp {
         const { yMin, yMax } = this._chartYBounds(type);
         const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
-        const xOf = t => pl + (t - tMin) / tRange * cw;
+        const padX = this._dotSize * 3.5 + 2;          // match _renderChart's data inset
+        const innerW = Math.max(1, cw - 2 * padX);
+        const xOf = t => pl + padX + (t - tMin) / tRange * innerW;
         const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
@@ -4247,7 +4263,11 @@ class MeshCoreApp {
         const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
-        const xOf = t => (pl + (t - tMin) / tRange * cw).toFixed(1);
+        // Inset the data area horizontally so points at the very start/end of the
+        // window aren't drawn half-off the edge (and stay comfortably clickable).
+        const padX = this._dotSize * 3.5 + 2;          // ≈ dot radius + margin
+        const innerW = Math.max(1, cw - 2 * padX);
+        const xOf = t => (pl + padX + (t - tMin) / tRange * innerW).toFixed(1);
         const yOf = v => (pt + (1 - (v - yMin) / yRange) * ch).toFixed(1);
         const valOf = p => type === 'rssi' ? p.rssi : p.snr;
 
@@ -4527,7 +4547,9 @@ class MeshCoreApp {
         const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
-        const xOf = t => pl + (t - tMin) / tRange * cw;
+        const padX = this._dotSize * 3.5 + 2;          // match _renderChart's data inset
+        const innerW = Math.max(1, cw - 2 * padX);
+        const xOf = t => pl + padX + (t - tMin) / tRange * innerW;
         const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
 
         let nearest = null, minDist = Infinity;
@@ -4638,19 +4660,24 @@ class MeshCoreApp {
         // renderer rebuild (?recover=1, via mc_last_tab), otherwise the within-tab
         // reload's id (sessionStorage survives a reload).
         const isRecover = !!new URLSearchParams(location.search).get('recover');
-        let cur = null;
         if (isRecover) {
+            // Crash rebuild (Android WebView reloads with ?recover=1): silently
+            // re-adopt the just-crashed session. Strip the flag from the URL first
+            // so a later *manual* reload of this page does NOT also resume
+            // silently — a user-initiated reload must always go through the prompt.
+            try { history.replaceState(null, '', location.pathname + location.hash); } catch (_) {}
             try {
                 const last = JSON.parse(localStorage.getItem('mc_last_tab') || 'null');
-                if (last && Date.now() - last.beat < 120000) cur = last.id;
+                if (last && Date.now() - last.beat < 120000) return setTab(last.id);
             } catch (_) {}
         }
-        if (!cur) { try { cur = sessionStorage.getItem('mc_tab'); } catch (_) {} }
 
-        // Never bring back old data without asking — on a manual reload OR a
-        // crash rebuild. If the continued session holds data, ask whether to
-        // resume it or start fresh (declining discards it). An empty session is
-        // resumed silently (nothing to lose).
+        // Manual reload: sessionStorage survives it, so this is the same tab's
+        // session. Never bring its data back without asking — if it holds data,
+        // prompt to resume or start fresh (declining discards it). An empty
+        // session is continued silently (nothing to lose).
+        let cur = null;
+        try { cur = sessionStorage.getItem('mc_tab'); } catch (_) {}
         if (cur) {
             const e = this._readReg()[cur];
             if (e && e.count > 0) {
@@ -4698,17 +4725,21 @@ class MeshCoreApp {
 
     // Mark this session alive and record its packet count, so a later launch can
     // offer to resume it. Also drops databases left by closed empty sessions.
+    // The recorded count is what the resume prompt keys off, so callers update it
+    // right after the count changes (e.g. after a CSV import) rather than waiting
+    // for the next tick.
+    _dbHeartbeat() {
+        try {
+            localStorage.setItem('mc_last_tab', JSON.stringify({ id: this._tabId, beat: Date.now() }));
+            const reg = this._readReg();
+            reg[this._tabId] = { beat: Date.now(), count: this.totalRxCount || 0 };
+            this._writeReg(reg);
+        } catch (_) {}
+    }
+
     _startDbHeartbeat() {
-        const beat = () => {
-            try {
-                localStorage.setItem('mc_last_tab', JSON.stringify({ id: this._tabId, beat: Date.now() }));
-                const reg = this._readReg();
-                reg[this._tabId] = { beat: Date.now(), count: this.totalRxCount || 0 };
-                this._writeReg(reg);
-            } catch (_) {}
-        };
-        beat();
-        setInterval(beat, 15000);   // runs for the app's lifetime
+        this._dbHeartbeat();
+        setInterval(() => this._dbHeartbeat(), 15000);   // runs for the app's lifetime
     }
 
     // Garbage-collect databases of closed sessions that hold no data (stale and
@@ -4746,12 +4777,15 @@ class MeshCoreApp {
             return;
         }
         this._storeReady = true;
-        this._startDbHeartbeat();
         this.store.onQuotaExceeded = () => this._onStorageQuota();
         try {
             const totals = await this.store.getKV('totals');
             if (totals && Number.isFinite(totals.totalRxCount)) this.totalRxCount = totals.totalRxCount;
         } catch (_) {}
+        // Start the heartbeat only after counters are restored, so its first write
+        // records the real packet count — not a transient 0 that would make a
+        // quick reload resume silently (the resume prompt keys off this count).
+        this._startDbHeartbeat();
         // Restore persisted contacts (names, GPS, types) so the repeater map
         // markers and column names survive a reload / renderer-crash rebuild.
         try {
@@ -4763,12 +4797,18 @@ class MeshCoreApp {
             }
         } catch (_) {}
         await this._replayWindow();
+        // Not collecting on startup: freeze the chart at the newest restored point
+        // (+1 s) so restored history fills the view instead of being squashed
+        // against the left edge while the right edge tracks the wall clock. Set
+        // before the first render and the wide-view rebuild so both use this window.
+        if (!this._collecting && this._lastDataTime) this._chartFrozenAt = this._lastDataTime + 1000;
         this._scheduleChartRender();
         this._renderMsgTable();
         this._renderRepTable();
         this._updateStats();
         this._updateMapPins();   // contacts restored above ⇒ show repeater markers
         this._refreshWideView();
+        this._updateEmptyState();
         // No periodic wide-view tick: charts, map and table page 0 are all kept
         // current in RAM (bucket/cell upserts + the live row tail); writes flush
         // themselves via _scheduleWriteFlush. Disk is only read on view changes.
@@ -4889,6 +4929,10 @@ class MeshCoreApp {
                 this._rebuildChartBase(),     // time-bucket cache for the 2D charts
             ]);
             this._renderCacheAt = boundary;
+            // _tableHashCount is now authoritative for on-disk data, so the empty
+            // state can resolve correctly even when nothing is in the RAM window
+            // (e.g. imported/restored history older than it).
+            this._updateEmptyState();
         } catch (e) {
             console.warn('Wide-view rebuild failed:', e);
         }
@@ -5500,7 +5544,7 @@ class MeshCoreApp {
             this._renderMsgTable();
             this._renderRepTable();
             this._updateStats();
-            if (this.hashData.size === 0 && this.emptyState) this.emptyState.classList.remove('hidden');
+            this._updateEmptyState();
         }, 400);
     }
 
@@ -5622,6 +5666,7 @@ class MeshCoreApp {
         this._sentWriteBuf = [];
         this._hashWriteBuf = [];
         this.totalRxCount = 0;
+        this._lastDataTime = 0;
         this.store?.clearAll();
         this._dscSeq = 0;
         this.repeaterColumns = [];
@@ -5643,7 +5688,8 @@ class MeshCoreApp {
         this._updateStats();
         this._updateContactsCount();
         this._updateMapPins();
-        if (this.emptyState) this.emptyState.classList.remove('hidden');
+        this._updateEmptyState();
+        this._dbHeartbeat();   // record the now-empty count so a reload won't offer to resume
         // Re-create the (now empty) chart/map cache layers so live upserts have
         // somewhere to land — nothing else rebuilds them outside Display changes.
         this._refreshWideView();
@@ -6565,7 +6611,11 @@ class MeshCoreApp {
         this._updateStats();
         this._updateMapPins();
         this._updateShowAllBtn();
-        this.emptyState?.classList.add('hidden');
+        this._updateEmptyState();
+        // Record the post-import packet count immediately so a reload right after
+        // an import still prompts to resume (the prompt keys off this count, and
+        // the periodic heartbeat might not have run yet).
+        this._dbHeartbeat();
         requestAnimationFrame(() => this._checkTableOverflow(true));
 
         if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
