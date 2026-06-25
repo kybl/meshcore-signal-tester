@@ -53,25 +53,27 @@ class BleManager(private val context: Context, private val js: JsApi) {
     private val adapterReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, intent: Intent) {
             if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
-            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-            if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
-                main.post { handleAdapterDown() }
+            when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF ->
+                    main.post { handleAdapterDown() }
+                // Adapter came back (e.g. airplane mode off): let the page decide
+                // whether to restart auto-reconnect. The receiver stays registered
+                // after a disconnect precisely so we can still catch this.
+                BluetoothAdapter.STATE_ON ->
+                    main.post { js.bleAdapterOn() }
             }
         }
     }
 
+    // Registered on the first connect and kept for the app's lifetime: we must
+    // keep hearing adapter state even while disconnected, so STATE_ON (Bluetooth
+    // back on) can restart auto-reconnect after the adapter was off.
     private fun registerAdapterReceiver() {
         if (adapterReceiverRegistered) return
         try {
             context.registerReceiver(adapterReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
             adapterReceiverRegistered = true
         } catch (_: Exception) {}
-    }
-
-    private fun unregisterAdapterReceiver() {
-        if (!adapterReceiverRegistered) return
-        try { context.unregisterReceiver(adapterReceiver) } catch (_: Exception) {}
-        adapterReceiverRegistered = false
     }
 
     // Adapter went down with a connection (or connect attempt) in flight: tear it
@@ -127,7 +129,6 @@ class BleManager(private val context: Context, private val js: JsApi) {
     }
 
     private fun closeGatt() {
-        unregisterAdapterReceiver()
         try { gatt?.disconnect() } catch (_: Exception) {}
         try { gatt?.close() } catch (_: Exception) {}
         gatt = null

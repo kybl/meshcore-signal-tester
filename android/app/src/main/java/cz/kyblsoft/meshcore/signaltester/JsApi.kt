@@ -49,6 +49,12 @@ class JsApi(webView: WebView) {
         eval("window.__mcBleDisconnected(${q(deviceId)})")
     }
 
+    /** Report that the Bluetooth adapter was turned back on (e.g. airplane mode
+     *  off), so the page can restart auto-reconnect. */
+    fun bleAdapterOn() {
+        eval("window.__mcBleAdapterOn && window.__mcBleAdapterOn()")
+    }
+
     /** Push a geolocation fix. */
     fun geoUpdate(lat: Double, lon: Double, accuracy: Double, timestamp: Long) {
         eval("window.__mcGeoUpdate($lat, $lon, $accuracy, $timestamp)")

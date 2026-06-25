@@ -318,6 +318,13 @@
         d._dispatch('gattserverdisconnected', { target: d });
     };
 
+    // Native host calls this when the Bluetooth adapter is turned back on (e.g.
+    // airplane mode off). Relay it to the app as a window event so it can restart
+    // auto-reconnect even though there is no device proxy to dispatch on.
+    window.__mcBleAdapterOn = function () {
+        try { window.dispatchEvent(new Event('mc-ble-adapter-on')); } catch (_) {}
+    };
+
     // ---- navigator.bluetooth polyfill -----------------------------------
 
     navigator.bluetooth = {

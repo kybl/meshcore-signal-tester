@@ -42,6 +42,7 @@ class MeshCoreApp {
         // or 'serial' (Web Serial, length-prefixed frames). null = disconnected.
         this.transportKind = null;
         this._serialBtnKind = 'serial';    // which connect button acts as Cancel/Disconnect: 'serial' (USB) or 'wifi'
+        this._lastDropWasSurprise = false; // last disconnect was an unexpected drop (vs. user-initiated); gates Bluetooth-back-on auto-reconnect
         this.serialPort = null;
         this.serialReader = null;
         this._serialReadBuffer = new Uint8Array(0);
@@ -344,6 +345,10 @@ class MeshCoreApp {
                 this._checkTableOverflow(true);
             }, 150);
         });
+
+        // Native host fires this when the Bluetooth adapter is turned back on
+        // (e.g. airplane mode off). See native-bridge.js / BleManager.
+        window.addEventListener('mc-ble-adapter-on', () => this._onBleAdapterOn());
 
         const bindChartTooltip = (svg, type) => {
             if (!svg) return;
@@ -1440,6 +1445,7 @@ class MeshCoreApp {
         // A fully-established connection: from here a drop we didn't initiate is
         // a surprise disconnect and should raise the alarm.
         this._wasConnected = true;
+        this._lastDropWasSurprise = false;   // a fresh connection clears any pending reconnect intent
         this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
@@ -1684,6 +1690,7 @@ class MeshCoreApp {
         // A fully-established connection: from here a drop we didn't initiate is
         // a surprise disconnect and should raise the alarm.
         this._wasConnected = true;
+        this._lastDropWasSurprise = false;   // a fresh connection clears any pending reconnect intent
         this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
@@ -1723,6 +1730,7 @@ class MeshCoreApp {
         // A fully-established connection: from here a drop we didn't initiate is
         // a surprise disconnect and should raise the alarm.
         this._wasConnected = true;
+        this._lastDropWasSurprise = false;   // a fresh connection clears any pending reconnect intent
         this._intentionalDisconnect = false;
         this._updatePauseBtn();
         if (this.emptyState) {
@@ -6158,6 +6166,18 @@ class MeshCoreApp {
     // with backoff (reusing quickConnect, which handles every transport). Falls
     // back to the disconnect alarm if it can't get back. Only the zero-friction
     // paths (BLE getDevices / saved serial / WiFi) work without a user gesture.
+    // Bluetooth came back (e.g. airplane mode off). If we'd dropped unexpectedly
+    // and want back, restart auto-reconnect — the earlier cycle may have given up
+    // while the adapter was down. Guards: only with auto-reconnect on, only after
+    // a surprise drop (not a manual disconnect), and not while already connected
+    // or mid-reconnect.
+    _onBleAdapterOn() {
+        if (!this._autoReconnect || !this._lastDropWasSurprise) return;
+        if (this.device || this.serialPort || this._reconnecting) return;
+        if (!this._lastConnectedId) return;
+        this._startAutoReconnect();
+    }
+
     _startAutoReconnect() {
         if (this._reconnecting) return;
         this._reconnecting = true;
@@ -6814,6 +6834,10 @@ class MeshCoreApp {
         const surprise = this._wasConnected && !this._intentionalDisconnect;
         this._wasConnected = false;
         this._intentionalDisconnect = false;
+        // Remember whether we'd want to come back: a surprise drop yes, a manual
+        // disconnect no. Bluetooth turning back on (e.g. after airplane mode) uses
+        // this to decide whether to restart auto-reconnect after it gave up.
+        this._lastDropWasSurprise = surprise;
         if (this._reconnecting) return;   // a reconnect cycle already owns the recovery
         if (surprise) {
             this._playDisconnectAlarm();   // audible cue on every unexpected drop (if sound on)
