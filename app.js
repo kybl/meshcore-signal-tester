@@ -5021,7 +5021,10 @@ class MeshCoreApp {
     // (≈ the newest bucket's midpoint).
     _restoreRepStatsFromBase() {
         const base = this._chartBase;
-        if (!base) return;
+        // No base yet (e.g. it was dropped and not rebuilt): kick a rebuild so the
+        // Seen Repeaters table can be re-seeded from disk once it lands, instead of
+        // silently staying empty after the RAM tail ages out.
+        if (!base) { if (this._storeReady) this._ensureChartBase(); return; }
         const agg = new Map();
         for (const b of base.cells.values()) {
             const col = this._resolveColReadonly(b.rawId);
@@ -5644,6 +5647,12 @@ class MeshCoreApp {
         // cause of "only 3 repeaters until I toggled Display": the restore ran
         // only on a Display change, never after a routine prune.)
         this._restoreRepStatsFromBase();
+        // Likewise refresh the Received Packets table from disk. Its page-0
+        // snapshot is otherwise only reloaded on a Display change, so once the
+        // live RAM tail ages out (long session with Auto-remove "Never" / a wide
+        // Display window) the table would go empty even though the history is
+        // still on disk — unlike the charts/map, which read disk-backed caches.
+        if (this._storeReady) this._loadTablePage(this._tablePage);
     }
 
     _clearAllData() {
