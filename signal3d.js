@@ -343,6 +343,11 @@ export class Signal3DMap {
             this._updateHeightScale();
             this._updatePerspUniforms();
             this._notifyViewChange();
+            // Refresh detail tiles for the new view — fires for programmatic camera
+            // moves too (e.g. "Center on me" following the user), not just drags, so
+            // the map doesn't wait for a manual nudge to fetch tiles. Debounced and
+            // gated by visibility inside _updateOverlay.
+            this._scheduleOverlayUpdate();
         });
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
@@ -358,6 +363,25 @@ export class Signal3DMap {
             this._userDragging = false;
             if (this._followUser && !this._followTargetInDeadZone()) this.setFollowUser(false);
         });
+
+        // Tile traffic saver: only fetch detail tiles while the map is actually
+        // on-screen — the app in the foreground AND the canvas in the viewport
+        // (it can be scrolled away or its section collapsed). While hidden we just
+        // remember a refresh is due (_overlayPending) and run it once the map is
+        // visible again, so following the user with the screen off / map off-screen
+        // never hits the network.
+        this._mapInView = true;
+        this._overlayPending = false;
+        const onMaybeVisible = () => {
+            if (this._isMapVisible() && this._overlayPending) this._scheduleOverlayUpdate(150);
+        };
+        document.addEventListener('visibilitychange', onMaybeVisible);
+        if (typeof IntersectionObserver !== 'undefined') {
+            new IntersectionObserver((entries) => {
+                this._mapInView = entries.some(e => e.isIntersecting);
+                onMaybeVisible();
+            }, { threshold: 0 }).observe(canvas);
+        }
 
         this._initTwistGesture(canvas);
 
@@ -1203,6 +1227,19 @@ export class Signal3DMap {
         }, 350);
     }
 
+    // True when the map can be seen right now: app foreground and the canvas in
+    // the viewport. Gates detail-tile fetches so off-screen following is silent.
+    _isMapVisible() {
+        return !document.hidden && this._mapInView !== false;
+    }
+
+    // Debounced detail-tile refresh. Coalesces the stream of camera-change events
+    // (drag, zoom, follow animation) into one _updateOverlay once movement settles.
+    _scheduleOverlayUpdate(delay = 700) {
+        clearTimeout(this._overlayTimer);
+        this._overlayTimer = setTimeout(() => this._updateOverlay(), delay);
+    }
+
     _metersPerPixel() {
         const bb = this._cameraViewBbox();
         if (!bb) return null;
@@ -1746,6 +1783,10 @@ export class Signal3DMap {
 
     async _updateOverlay() {
         if (!this._tileBounds || this._overlayBusy) return;
+        // Traffic saver: if the map isn't on-screen, don't fetch — just mark that a
+        // refresh is due and let it run when the map becomes visible again.
+        if (!this._isMapVisible()) { this._overlayPending = true; return; }
+        this._overlayPending = false;
         if (this._mapSource === 'none') { this._removeOverlay(); return; }  // nothing to detail
         const camBb = this._cameraViewBbox();
         if (!camBb) { this._removeOverlay(); return; }
