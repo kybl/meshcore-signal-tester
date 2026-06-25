@@ -1,6 +1,7 @@
 package cz.kyblsoft.meshcore.signaltester
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
@@ -9,7 +10,10 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -40,6 +44,48 @@ class BleManager(private val context: Context, private val js: JsApi) {
     private var opBusy = false
     private var pendingReqId: String? = null
 
+    // When the Bluetooth adapter is turned off (e.g. airplane mode), Android
+    // frequently does NOT deliver onConnectionStateChange(STATE_DISCONNECTED) for
+    // an active GATT — so the connection would look alive forever and the page
+    // would never notice the drop or try to reconnect. Watch the adapter state
+    // and surface adapter-down as a disconnect ourselves.
+    private var adapterReceiverRegistered = false
+    private val adapterReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: Intent) {
+            if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+            if (state == BluetoothAdapter.STATE_TURNING_OFF || state == BluetoothAdapter.STATE_OFF) {
+                main.post { handleAdapterDown() }
+            }
+        }
+    }
+
+    private fun registerAdapterReceiver() {
+        if (adapterReceiverRegistered) return
+        try {
+            context.registerReceiver(adapterReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+            adapterReceiverRegistered = true
+        } catch (_: Exception) {}
+    }
+
+    private fun unregisterAdapterReceiver() {
+        if (!adapterReceiverRegistered) return
+        try { context.unregisterReceiver(adapterReceiver) } catch (_: Exception) {}
+        adapterReceiverRegistered = false
+    }
+
+    // Adapter went down with a connection (or connect attempt) in flight: tear it
+    // down and tell the page, mirroring a STATE_DISCONNECTED callback.
+    private fun handleAdapterDown() {
+        if (gatt == null && !connected && connectReqId == null) return
+        val addr = deviceAddress
+        val req = connectReqId
+        connectReqId = null
+        closeGatt()
+        if (req != null) js.resolve(req, false, errJson(BridgeError.NETWORK, "Bluetooth turned off"))
+        else if (addr != null) js.bleDisconnected(addr)
+    }
+
     fun isConnected(address: String): Boolean = connected && address == deviceAddress
 
     // ---- connection -----------------------------------------------------
@@ -65,6 +111,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
             js.resolve(reqId, false, errJson(BridgeError.NOT_FOUND, "Invalid device address"))
             return
         }
+        registerAdapterReceiver()
         main.post {
             gatt = dev.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         }
@@ -80,6 +127,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
     }
 
     private fun closeGatt() {
+        unregisterAdapterReceiver()
         try { gatt?.disconnect() } catch (_: Exception) {}
         try { gatt?.close() } catch (_: Exception) {}
         gatt = null
