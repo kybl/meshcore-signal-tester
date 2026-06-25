@@ -372,8 +372,11 @@ export class Signal3DMap {
         // never hits the network.
         this._mapInView = true;
         this._overlayPending = false;
+        this._mapPending = false;
         const onMaybeVisible = () => {
-            if (this._isMapVisible() && this._overlayPending) this._scheduleOverlayUpdate(150);
+            if (!this._isMapVisible()) return;
+            if (this._mapPending) this._scheduleMapUpdate();        // base floor first
+            if (this._overlayPending) this._scheduleOverlayUpdate(150);
         };
         document.addEventListener('visibilitychange', onMaybeVisible);
         if (typeof IntersectionObserver !== 'undefined') {
@@ -1404,6 +1407,13 @@ export class Signal3DMap {
 
     async _updateMap() {
         if (this._mapBusy) { this._scheduleMapUpdate(); return; }
+        // Traffic saver: don't fetch the base floor while the map is off-screen;
+        // remember it's due and rebuild once visible. When it does run it fits the
+        // *current* data extent into a bounded tile grid (≤ MAX_TILES_AXIS²) — so
+        // even after travelling 100 km it's a handful of tiles for where you are
+        // now, never the whole path.
+        if (!this._isMapVisible()) { this._mapPending = true; return; }
+        this._mapPending = false;
         const bb = this._bbox();
         if (!bb) return;
 
