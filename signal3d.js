@@ -20,8 +20,9 @@ const TILE_PX        = 256;
 // city-block view. minDistance is derived from it per map scale (see _applyZoomLimits).
 const ZOOM_MIN_VIEW_M = 30;
 // Markers (my-location cone, device, repeater pins) are sized to this fraction of
-// the view height (clamped to a sensible pixel range), so they don't look tiny
-// when the map is enlarged/fullscreen the way a fixed pixel size did.
+// the smaller viewport dimension (clamped to a sensible pixel range), so they
+// don't look tiny on a small map nor balloon when the map is made much taller
+// (e.g. fullscreen on a phone, where only the height grows).
 const MARKER_VIEW_FRAC = 0.10;
 // Reference camera distance: distance from origin when camera is at the initial
 // fit position (0.4r, 0.55r, 0.6r) with r = PLANE_SIZE.  Derived once so that
@@ -2019,11 +2020,14 @@ export class Signal3DMap {
 
     _scaleMarkerToScreen() {
         const screenH = this.canvas.clientHeight || 1;
+        const screenW = this.canvas.clientWidth || 1;
         const ff = fovFactor(this.camera);
-        // Target a fraction of the view height (clamped), not a fixed pixel count,
-        // so markers stay proportional on a small map and don't shrink to nothing
-        // when the map is enlarged / fullscreen.
-        const targetPx = Math.max(30, Math.min(140, MARKER_VIEW_FRAC * screenH));
+        // Target a fraction of the SMALLER viewport dimension (clamped), not a
+        // fixed pixel count — so markers stay proportional on a small map yet
+        // don't blow up when the map is made much taller (e.g. fullscreen on a
+        // phone, where only the height grows). screenH stays in scaleFor below
+        // because that is the px↔world conversion via the camera's vertical FOV.
+        const targetPx = Math.max(30, Math.min(140, MARKER_VIEW_FRAC * Math.min(screenW, screenH)));
         const scaleFor = (group, localH) => {
             const d = this.camera.position.distanceTo(group.position);
             group.scale.setScalar(targetPx * d * ff / (localH * screenH));
