@@ -6541,6 +6541,14 @@ class MeshCoreApp {
             this._renderChart('snr');
         }
 
+        // Freeze the chart clock at the last imported packet's time (+1 s) so all
+        // imported data stays in view. This must happen BEFORE the wide-view
+        // rebuild below: _rebuildChartBase buckets over [from, frozen-now], so if
+        // the freeze still held an older value the most recent imported points
+        // would be truncated from the base layer and only reappear on a zoom.
+        const lastTime = rows.length ? rows.reduce((m, r) => Math.max(m, r.time), 0) : 0;
+        if (!this._collecting && lastTime) this._chartFrozenAt = lastTime + 1_000;
+
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.
         if (this._storeReady) {
@@ -6551,9 +6559,6 @@ class MeshCoreApp {
         this._sortColumns();
         // Move the 3D map camera to show all imported points regardless of current GPS location
         this.signalMap?.fitCamera?.();
-        // Freeze chart at last packet time + 1 min so all imported data is in view
-        const lastTime = rows.length ? rows[rows.length - 1].time : 0;
-        if (!this._collecting && lastTime) this._chartFrozenAt = lastTime + 1_000;
         this._renderMsgTable();
         this._renderRepTable();
         this._scheduleChartRender();
