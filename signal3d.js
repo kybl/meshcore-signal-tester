@@ -1154,9 +1154,16 @@ export class Signal3DMap {
     }
 
     // Map background (clear colour) and plain-floor colour, both theme-aware.
-    // Dark page → black background so the scene reads as dark regardless of the
-    // chosen tile source.
-    _bgColor()    { return this.isDarkMode() ? 0x000000 : 0xeef2f7; }
+    // The background matches the app's content/table background (the --bg-content
+    // var, e.g. behind "Seen repeaters") so the map sky — and the placeholder
+    // shown mid-resize — blends with the rest of the UI instead of a flat black.
+    _bgColor() {
+        try {
+            const c = getComputedStyle(document.documentElement).getPropertyValue('--bg-content').trim();
+            if (c) return new THREE.Color(c);
+        } catch (_) {}
+        return new THREE.Color(this.isDarkMode() ? 0x091525 : 0xeef2f7);
+    }
     _floorColor() { return this.isDarkMode() ? 0x000000 : 0xdcdcdc; }
 
     // Called by the host app when the page theme (light/dark) toggles.
