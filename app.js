@@ -6539,8 +6539,18 @@ class MeshCoreApp {
 
         await new Promise(r => setTimeout(r, 0)); // yield to let the browser repaint
 
-        if (this.hashData.size > 0) {
-            if (!confirm(`There are already ${this.hashData.size} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) {
+        // Count what's actually stored, not just the small RAM window. hashData
+        // only holds the recent in-memory window (often a few dozen hashes), while
+        // the disk may hold many thousands — so reporting hashData.size here showed
+        // a confusingly tiny number. Use the on-disk distinct-hash total when the
+        // store is ready (this also warns correctly after a reload, when the RAM
+        // window can be empty even though the disk is full).
+        let existingCount = this.hashData.size;
+        if (this._storeReady) {
+            try { existingCount = await this.store.countHashes(); } catch (_) {}
+        }
+        if (existingCount > 0) {
+            if (!confirm(`There are already ${existingCount} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) {
                 // Cancelled: restore the button/status that were set above.
                 if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
                 this.statusEl?.classList.remove('importing');
