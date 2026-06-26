@@ -68,7 +68,12 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: var(--bg-gutter);
     min-height: 100vh;
-    padding: 0;
+    /* Keep content clear of a left/right display cutout (env() is 0 in normal
+       browsers and in portrait, so this is a no-op there). Top/bottom safe-area
+       is handled on the header and footer so their backgrounds can still bleed
+       under the bars. */
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
     color: var(--text-primary);
     transform-origin: top left;
     transition: transform 0.25s ease, width 0.25s ease;
@@ -95,7 +100,10 @@ html.ui-larger body {
 }
 
 .container {
-    margin: 0 8px 8px;
+    /* No horizontal margin: content runs edge to edge (the old 8px side margins
+       exposed the dark body gutter — removed, so the page is 16px wider). The
+       8px padding is internal (shows the content background, not the gutter). */
+    margin: 0 0 8px;
     background: var(--bg-content);
     padding: 8px;
 }
@@ -103,6 +111,9 @@ html.ui-larger body {
 .app-footer {
     text-align: center;
     padding: 14px 16px 20px;
+    /* Keep the footer text above the navigation bar while its background bleeds
+       under it (edge-to-edge). No-op where env() is 0. */
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
     font-size: 12px;
     color: var(--text-muted);
 }
@@ -131,6 +142,11 @@ html.light-theme .footer-sep   { color: #2A4E6E; }
 header {
     background: var(--bg-header);
     padding: 8px 16px;
+    /* Edge-to-edge: push the header content below the status bar so it's never
+       hidden and the page still scrolls to the very top, while the header's
+       background bleeds up under the (transparent) status bar. No-op in browsers
+       where env() is 0. */
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
     margin-bottom: 0;
     display: flex;
     flex-direction: column;
@@ -1445,7 +1461,11 @@ header .help-icon.active {
     display: flex;
     align-items: flex-start;
     justify-content: center;
+    /* Top-aligned modal: keep the box clear of the status/navigation bars in
+       edge-to-edge (env() is 0 on web). */
     padding: 16px;
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     overflow: hidden;
     box-sizing: border-box;
 }
@@ -2256,8 +2276,9 @@ td.col-dim { opacity: 0.25; }
     /* Re-parented to <html> (to escape the body text-size transform), so it no
        longer inherits the body font — set it explicitly. */
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    top: 16px;
-    right: 16px;
+    /* Clear the status bar / side cutout in edge-to-edge (env() is 0 on web). */
+    top: calc(16px + env(safe-area-inset-top, 0px));
+    right: calc(16px + env(safe-area-inset-right, 0px));
     z-index: 200;
     background: var(--bg-box);
     border: 1px solid var(--border);
@@ -2275,9 +2296,12 @@ td.col-dim { opacity: 0.25; }
 /* Modifier: the repeater-FILTER notice is a full-width bar pinned to the very
    top of the screen (the selection notice stays a floating corner box). */
 .corner-notice.notice-topbar {
+    /* Stays pinned to the very top so the amber background bleeds under the
+       status bar; the inset is added as padding so the text sits below it. */
     top: 0;
     left: 0;
     right: 0;
+    padding-top: calc(10px + env(safe-area-inset-top, 0px));
     min-width: 0;
     max-width: none;
     flex-direction: row;
@@ -2313,7 +2337,7 @@ td.col-dim { opacity: 0.25; }
 /* "Show more" stats flow horizontally in the bar instead of stacking */
 .notice-topbar .cn-stats { flex-direction: row; flex-wrap: wrap; gap: 2px 14px; }
 /* Keep the selection corner box clear of the bar when both are visible */
-.notice-topbar:not(.hidden) ~ #selNotice { top: 60px; }
+.notice-topbar:not(.hidden) ~ #selNotice { top: calc(60px + env(safe-area-inset-top, 0px)); }
 
 .corner-notice-line1 {
     display: flex;

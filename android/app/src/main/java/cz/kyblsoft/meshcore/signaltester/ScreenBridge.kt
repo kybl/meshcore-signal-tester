@@ -8,6 +8,7 @@ import android.os.Looper
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONObject
 
 class ScreenBridge(private val activity: MainActivity) {
@@ -21,6 +22,20 @@ class ScreenBridge(private val activity: MainActivity) {
                 activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             } else {
                 activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+
+    /** Match the system-bar icon colour to the web theme. In edge-to-edge the
+     *  bars are transparent and the page background shows through, so light
+     *  (cream) theme needs dark icons (light=true) and dark theme needs light
+     *  icons (light=false). Called from the web app whenever the theme changes. */
+    @JavascriptInterface
+    fun setLightSystemBars(light: Boolean) {
+        main.post {
+            WindowInsetsControllerCompat(activity.window, activity.window.decorView).run {
+                isAppearanceLightStatusBars = light
+                isAppearanceLightNavigationBars = light
             }
         }
     }

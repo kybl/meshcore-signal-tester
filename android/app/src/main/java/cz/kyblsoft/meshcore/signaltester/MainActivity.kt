@@ -34,7 +34,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -189,15 +188,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         webView = WebView(this)
-        // Draw edge to edge (enforced on Android 15 / targetSdk 35, where the
-        // window's statusBarColor / navigationBarColor are ignored) and keep the
-        // web UI inside the safe area by padding a container that holds the
-        // WebView with the system-bar and display-cutout insets — so the WebView
-        // is laid out smaller rather than just clipped. The dark window
-        // background shows behind the bars; system-bar icons are light to stay
-        // legible on it. When an HTML element enters fullscreen the bars are
-        // hidden, the insets collapse to zero, and the WebView fills the whole
-        // screen (see setImmersiveFullscreen).
+        // True edge-to-edge: the WebView fills the whole window, including behind
+        // the (transparent) status and navigation bars. We deliberately do NOT pad
+        // the container with the system-bar insets — instead the web app pads its
+        // own content with CSS env(safe-area-inset-*) (the page sets
+        // viewport-fit=cover). Not consuming the insets here is exactly what makes
+        // those CSS insets non-zero, so the page background bleeds under the bars
+        // while its content (header, footer) stays clear of them. Status-bar icon
+        // colour is driven from the web theme via ScreenBridge.setLightSystemBars.
         rootContainer = FrameLayout(this)
         rootContainer.addView(
             webView,
@@ -206,19 +204,12 @@ class MainActivity : AppCompatActivity() {
             )
         )
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).run {
-            isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
-        }
-        ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { v, insets ->
-            val bars = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-            )
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            WindowInsetsCompat.CONSUMED
-        }
+        // Transparent bars so the page shows through them instead of the dark
+        // window background (on Android 15 these are ignored — bars are already
+        // transparent in edge-to-edge — but this keeps older versions consistent).
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
         setContentView(rootContainer)
-        ViewCompat.requestApplyInsets(rootContainer)
 
         jsApi = JsApi(webView)
         ble = BleManager(applicationContext, jsApi)
@@ -425,7 +416,8 @@ class MainActivity : AppCompatActivity() {
         customViewCallback = null
 
         webView = WebView(this)
-        // Re-insert into the inset-padded container (keeps edge-to-edge handling).
+        // Re-insert into the edge-to-edge container (fills the window; the web app
+        // handles safe-area insets in CSS).
         rootContainer.addView(
             webView,
             FrameLayout.LayoutParams(

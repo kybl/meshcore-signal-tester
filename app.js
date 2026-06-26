@@ -531,6 +531,9 @@ class MeshCoreApp {
             const applyTheme = light => {
                 document.documentElement.classList.toggle('light-theme', light);
                 themeBtn.textContent = light ? '🌙' : '☀️';
+                // Edge-to-edge: match the Android status/nav-bar icon colour to the
+                // theme (light theme → dark icons, and vice versa). No-op on web.
+                try { window.AndroidScreen?.setLightSystemBars?.(light); } catch (_) {}
             };
             let isLight = Store.get('theme') === 'light';
             applyTheme(isLight);
