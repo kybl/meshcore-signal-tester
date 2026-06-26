@@ -40,8 +40,8 @@
             <span id="batteryStatus" class="battery-status hidden"></span>
         </div>
             <div class="header-row header-row-tools">
-                <button id="importCsvBtn" class="btn-pause" title="Import CSV file">Import CSV</button>
-                <input type="file" id="importCsvInput" accept=".csv,text/csv,text/plain,application/csv" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;opacity:0">
+                <button id="importCsvBtn" class="btn-pause" title="Import one or more CSV files">Import CSV</button>
+                <input type="file" id="importCsvInput" accept=".csv,text/csv,text/plain,application/csv" multiple style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;opacity:0">
                 <button id="exportCsvBtn" class="btn-pause" title="Export visible packets as CSV" disabled>Export CSV</button>
                 <button id="clearDataBtn" class="btn-clear-data-header" title="Delete all captured data">Clear data</button>
                 <label class="ttl-header-label">Auto-remove<select id="ttlSelect" class="ttl-header-select"><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="900">15 min</option><option value="3600">1 h</option><option value="10800">3 h</option><option value="43200">12 h</option><option value="Infinity" selected>Never</option></select><span class="help-icon" data-help="ttl">?</span></label>
@@ -414,6 +414,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=358"></script>
+    <script type="module" src="app.js?v=359"></script>
 </body>
 </html>

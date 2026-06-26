@@ -626,8 +626,8 @@ class MeshCoreApp {
         const importCsvInput = document.getElementById('importCsvInput');
         document.getElementById('importCsvBtn')?.addEventListener('click', () => importCsvInput?.click());
         importCsvInput?.addEventListener('change', () => {
-            const file = importCsvInput.files?.[0];
-            if (file) { this._importCsv(file).catch(e => console.error('CSV import failed:', e)); importCsvInput.value = ''; }
+            const files = importCsvInput.files;
+            if (files && files.length) { this._importCsvFiles(files).catch(e => console.error('CSV import failed:', e)); importCsvInput.value = ''; }
         });
 
         const fsBtn = document.getElementById('mapFullscreenBtn');
@@ -6480,39 +6480,59 @@ class MeshCoreApp {
         URL.revokeObjectURL(url);
     }
 
-    async _importCsv(file) {
-        let text;
-        try { text = await file.text(); } catch { alert('Could not read file.'); return; }
+    // Back-compat single-file entry point.
+    _importCsv(file) { return this._importCsvFiles([file]); }
 
-        const parsed = parseCsv(text);
-        if (parsed.error === 'empty') return;
+    // Import one or more CSV files as a single batch. Every file is read and
+    // parsed first, then all their rows are merged, deduped and ingested
+    // together — so the user is prompted once and the expensive finalize (disk
+    // flush, wide-view rebuild, re-render, camera fit) runs once for the whole
+    // selection rather than once per file.
+    async _importCsvFiles(files) {
+        files = Array.from(files || []).filter(Boolean);
+        if (!files.length) return;
 
-        // Merge any contacts embedded in the CSV (new keys only, keep existing).
-        // Done before the header check so a malformed body still imports contacts.
-        for (const c of parsed.contacts) {
-            if (!this._contacts.has(c.pubKeyFullHex)) {
-                this._contacts.set(c.pubKeyFullHex,
-                    { name: c.name, type: null, lat: c.lat, lon: c.lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex: c.pubKeyFullHex });
+        // Read + parse every file up front. Contacts embedded in any file are
+        // merged immediately (new keys only, keep existing) — done even for a
+        // malformed body, so contacts still import. Files that fail the header
+        // check are collected and reported once at the end.
+        const parsedFiles = [];
+        const badFormat = [];
+        for (const file of files) {
+            let text;
+            try { text = await file.text(); }
+            catch { console.warn('Could not read file:', file.name); badFormat.push(`${file.name} (unreadable)`); continue; }
+
+            const parsed = parseCsv(text);
+            if (parsed.error === 'empty') continue;
+
+            for (const c of parsed.contacts) {
+                if (!this._contacts.has(c.pubKeyFullHex)) {
+                    this._contacts.set(c.pubKeyFullHex,
+                        { name: c.name, type: null, lat: c.lat, lon: c.lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex: c.pubKeyFullHex });
+                }
             }
+
+            if (!parsed.ok) { if (parsed.error === 'format') badFormat.push(file.name); continue; }
+            parsedFiles.push({ rows: parsed.rows, sentRows: parsed.sentRows });
         }
+
         this._updateContactsCount();
-        this._scheduleContactsPersist();   // persist any contacts embedded in the CSV
+        this._scheduleContactsPersist();   // persist any contacts embedded in the CSVs
 
-        if (!parsed.ok) {
-            if (parsed.error === 'format')
-                alert('Unrecognised CSV format — expected columns: time, hash, repeater.');
-            return;
-        }
+        if (badFormat.length)
+            alert(`Unrecognised CSV format — expected columns: time, hash, repeater.\nSkipped: ${badFormat.join(', ')}`);
 
-        const rows = parsed.rows;
-        const sentSnrRows = parsed.sentRows;
+        // Merge rows from all files into one batch.
+        const rows = parsedFiles.flatMap(f => f.rows);
+        const sentSnrRows = parsedFiles.flatMap(f => f.sentRows);
         if (rows.length === 0 && sentSnrRows.length === 0) return;
 
         const importBtn = document.getElementById('importCsvBtn');
         const prevBtnText = importBtn?.textContent;
         if (importBtn) { importBtn.textContent = 'Importing…'; importBtn.disabled = true; }
         const prevStatus = this.statusTextEl?.textContent;
-        if (this.statusTextEl) this.statusTextEl.textContent = 'Importing CSV…';
+        if (this.statusTextEl) this.statusTextEl.textContent = files.length > 1 ? `Importing ${files.length} CSV files…` : 'Importing CSV…';
         // Overlay the yellow "importing" tint without dropping the current
         // connection-state class (which governs child visibility).
         this.statusEl?.classList.add('importing');
