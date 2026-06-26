@@ -124,6 +124,18 @@ class MainActivity : AppCompatActivity() {
         cb?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
     }
 
+    // Multi-file variant, used when the page's <input> has the `multiple`
+    // attribute (FileChooserParams.MODE_OPEN_MULTIPLE). The single-file launcher
+    // above ignores that mode, so without this the CSV import could only ever
+    // receive one file regardless of the HTML.
+    private val openMultipleFilesLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        val cb = fileChooserCallback
+        fileChooserCallback = null
+        cb?.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
+    }
+
     // File picker for CSV export — shows "Save as" dialog via SAF
     private var pendingCsvContent: String? = null
     private var pendingCsvName: String? = null
@@ -362,7 +374,12 @@ class MainActivity : AppCompatActivity() {
                 // Cancel any previous pending callback to avoid leaking it.
                 fileChooserCallback?.onReceiveValue(null)
                 fileChooserCallback = filePathCallback
-                openFileLauncher.launch(arrayOf("text/csv", "text/comma-separated-values", "text/*"))
+                val mimeTypes = arrayOf("text/csv", "text/comma-separated-values", "text/*")
+                if (fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                    openMultipleFilesLauncher.launch(mimeTypes)
+                } else {
+                    openFileLauncher.launch(mimeTypes)
+                }
                 return true
             }
         }
