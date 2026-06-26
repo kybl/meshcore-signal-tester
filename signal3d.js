@@ -953,7 +953,14 @@ export class Signal3DMap {
         ctx.textBaseline = 'middle';
         ctx.fillText(emoji, S / 2, S / 2 + 4);
         const tex = new THREE.CanvasTexture(c);
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
+        // depthTest: true so the icon is occluded by spheres standing in front of
+        // it — it should sit in the 3D scene, not float permanently on top. Lit
+        // dots write depth (see _makeDotPoints), so the billboard is hidden behind
+        // any ball nearer the camera than the icon's anchor. depthWrite stays false:
+        // the emoji's antialiased edges shouldn't stamp a hard depth halo. The
+        // renderOrder (10, after the dots at 2) ensures the dots have written their
+        // depth before the icon is tested against it.
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: true });
         const sprite = new THREE.Sprite(mat);
         sprite.renderOrder = 10;
         sprite.scale.set(3.0, 3.0, 1);
