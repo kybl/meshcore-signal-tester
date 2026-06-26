@@ -1,6 +1,9 @@
 Version 1.2.2
 
-This release is mainly a build and packaging change.
+- Import multiple CSV files at once.
+- 3D map keeps loading tiles while "Center on me" follows you (only while visible, to save data).
+- Auto-reconnect now also retries when you turn Bluetooth back on.
+- Android 15 support with true edge-to-edge (the dark border around the UI is gone).
+- 3D map background matches the rest of the UI.
 
-- Android 15 support, including edge-to-edge display handling.
-- Shows the installed app version and open-source licenses under Help → About.
+Fixed: "connected but no packets" after airplane mode, tables going blank after long runs, Help not scrolling to the bottom, the import packet count, and several 2D-chart and 3D-map glitches.

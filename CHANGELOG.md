@@ -1,20 +1,51 @@
 # Changelog
 
-## [1.2.2] - 2026-06-23
+## [1.2.2] - 2026-06-26
 
-This release is essentially a build and packaging change — there are no
-functional changes to the app itself.
+### Added
+
+- **Import multiple CSV files at once** — the file picker now accepts a
+  multi-selection (including in the Android app) and merges all chosen files in
+  a single import.
+- **3D map keeps loading tiles while following you** — with "Center on me"
+  active the map fetches new tiles as you move, but only while the map is
+  on-screen and the app is in the foreground, so it doesn't waste data in the
+  background.
+- **Auto-reconnect after Bluetooth returns** — turning Bluetooth back on (for
+  example leaving airplane mode) now retries the last device.
 
 ### Changed
 
-- **Android 15 support** — the Android app now targets Android 15 (API 35) and
-  handles its enforced edge-to-edge display, so the UI stays within the system
-  bars.
+- **Android 15 support and true edge-to-edge** — the app targets Android 15
+  (API 35); the dark border around the UI is gone, content runs to the screen
+  edges and the page background extends under the (transparent) system bars
+  while staying scrollable to the very top.
 - **Android app package renamed** to `cz.kyblsoft.meshcore.signaltester`
   (reserving `cz.kyblsoft.meshcore` as a namespace for future MeshCore apps). It
   installs as a new app — the previous build is not replaced.
-- The Android app now shows its installed version (with build number) and lists
-  bundled open-source licenses under Help → About.
+- The Android app now shows its installed version (with build number) under
+  Help → About.
+- **3D map background** now matches the rest of the UI (the table background)
+  instead of a flat black panel.
+
+### Fixed
+
+- **"Connected but no packets" after airplane mode** — turning Bluetooth off is
+  now detected as a disconnect instead of leaving the app stuck "connected".
+- **Empty tables after long runs** — Seen Repeaters and Received Packets are
+  repopulated from disk once old data ages out of memory, so they no longer go
+  blank while the charts and 3D map still show the data.
+- Help → About can now be scrolled to the bottom in the Android app.
+- The CSV-import prompt now reports the true number of stored packets, not just
+  the small in-memory window.
+- 2D charts no longer cluster every point into a single column, and recently
+  imported data shows without needing to zoom; a restored chart freezes at the
+  correct time.
+- 3D map repeater icons are now hidden behind signal balls in front of them
+  (correct depth) instead of always drawing on top.
+- 3D map markers are sized from the smaller screen dimension, so they aren't
+  oversized in landscape.
+- The 3D map no longer flashes a white panel while you resize it in dark mode.
 
 ### Internal
 
