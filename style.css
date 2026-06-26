@@ -1528,7 +1528,11 @@ header .help-icon.active {
     font-size: 13px;
     line-height: 1.6;
     color: #c8ccd4;
-    max-height: calc(100vh - 32px);
+    /* Subtract the safe-area insets too: in the Android app (edge-to-edge) 100vh
+       includes the area under the status/navigation bars, so without this the
+       modal overflows under the nav bar and its bottom can't be scrolled into
+       view. env() is 0 on web, so the browser behaviour is unchanged. */
+    max-height: calc(100vh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
     overflow-y: auto;
     box-sizing: border-box;
 }
