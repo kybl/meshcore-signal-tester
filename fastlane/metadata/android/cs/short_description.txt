@@ -1,1 +1,0 @@
-Sledování LoRa mesh signálu z MeshCore radia a opakovačů v reálném čase
