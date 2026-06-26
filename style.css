@@ -1868,9 +1868,12 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     max-height: calc(100vh - 80px);
     border-radius: 8px;
     overflow: hidden;
-    background: #eef2f7;
+    /* Shown while the WebGL canvas is mid-resize (before it repaints). Black in
+       the dark theme so it doesn't flash a bright white panel; light otherwise. */
+    background: #000;
     box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
 }
+html.light-theme .map-container { background: #eef2f7; }
 
 .map-resize-handle {
     height: 14px;
