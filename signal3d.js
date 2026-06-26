@@ -1033,13 +1033,10 @@ export class Signal3DMap {
         }
 
         const tex = new THREE.CanvasTexture(c);
-        // depthTest: true so the label is occluded by spheres in front of it, the
-        // same as the repeater icon — both sit in the 3D scene rather than floating
-        // permanently on top. The label is anchored higher (y 3.6 vs the icon's 1.2),
-        // so it stays visible a bit longer as balls rise in front. depthWrite stays
-        // false (antialiased text edges shouldn't stamp a depth halo); renderOrder 10
-        // keeps it drawn after the dots so their depth is written first.
-        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: true });
+        // depthTest: false so the text label always stays on top and readable, even
+        // when a sphere is in front of it. (The repeater icon itself is depth-tested
+        // and does hide behind nearer balls — only the label floats above.)
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
         const sprite = new THREE.Sprite(mat);
         sprite.renderOrder = 10;
         const aspect = c.width / c.height;
