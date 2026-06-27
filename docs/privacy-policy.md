@@ -3,7 +3,7 @@
 _Last updated: 2026-06-23_
 
 MeshCore Signal Tester ("the app") is a free, open-source tool for monitoring
-LoRa mesh signal from MeshCore devices. This policy explains what the app
+mesh signal from MeshCore devices. This policy explains what the app
 accesses and where that data goes.
 
 **Short version: all data the app captures stays on your device. The developer
@@ -18,7 +18,7 @@ tracking.**
   so capture keeps working with the screen off. Your location is stored only on
   your device and is never transmitted by the app.
 - **Bluetooth, USB, and Wi-Fi (local network).** Used to connect to your
-  MeshCore companion radio or repeater and receive LoRa packets. The app talks
+  MeshCore companion radio or repeater and receive packets. The app talks
   only to the device you choose; it does not scan or contact anything else.
 - **On-device storage.** Captured packets, signal history, and your settings are
   saved locally (in the app's WebView storage / IndexedDB) so a session survives

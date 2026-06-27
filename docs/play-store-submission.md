@@ -4,7 +4,7 @@ Practical answers and justification texts for the Play Console forms, specific
 to this app. Nothing here is code — it is the paperwork that accompanies an
 upload. (IzzyOnDroid and F-Droid do not need any of this.)
 
-The app's core function is **mapping LoRa radio signal**: it records the GPS
+The app's core function is **mapping MeshCore radio signal**: it records the GPS
 location at which each received radio packet arrives so the user can map
 coverage as they move. Field use requires capturing with the screen off / app
 backgrounded (phone in a pocket). **All captured data stays on the device and
@@ -19,7 +19,7 @@ Play requires a declaration (and usually a short demo video) for
 
 **Justification text:**
 
-> MeshCore Signal Tester is a LoRa radio signal-mapping tool. Its core feature
+> MeshCore Signal Tester is a radio signal-mapping tool. Its core feature
 > is recording the GPS location at which each received radio packet arrives, so
 > the user can map signal coverage as they move. Field testing requires the
 > phone to keep capturing with the screen off and the app in the background
