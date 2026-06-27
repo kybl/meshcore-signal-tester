@@ -1075,7 +1075,7 @@ class MeshCoreApp {
             'discover':
                 'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
             'auto-reconnect':
-                'When the connection to the device drops unexpectedly (out of range, device reset, cable unplugged), automatically retry the last device a few times before raising the disconnect alarm. This option only appears where a silent reconnect is possible: the Android app (Bluetooth, USB or WiFi) or desktop Chrome/Edge. It is hidden for Bluetooth in a mobile browser, because there the browser forces a manual device-picker confirmation on every connection for privacy reasons — so it can never reconnect on its own.',
+                'When the connection to the device drops unexpectedly (out of range, device reset, cable unplugged), automatically retry the last device a few times before raising the disconnect alarm. In the Android app it also retries the moment you switch Bluetooth back on — for example after leaving airplane mode. This option only appears where a silent reconnect is possible: the Android app (Bluetooth, USB or WiFi) or desktop Chrome/Edge. It is hidden for Bluetooth in a mobile browser, because there the browser forces a manual device-picker confirmation on every connection for privacy reasons — so it can never reconnect on its own.',
         };
 
         const tipEl = document.getElementById('helpTip');
