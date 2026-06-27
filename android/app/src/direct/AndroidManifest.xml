@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Direct-distribution flavor only (GitHub / F-Droid / sideload). Adds the
+     battery-optimization exemption permission so the app can show the one-tap
+     system "ignore battery optimizations" dialog. Google Play restricts this
+     permission to a few app categories, so the 'play' flavor omits it and uses
+     the general battery-optimization settings screen instead. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+</manifest>

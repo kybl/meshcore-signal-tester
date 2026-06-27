@@ -628,30 +628,44 @@ class MainActivity : AppCompatActivity() {
             val pm = getSystemService(POWER_SERVICE) as PowerManager
             if (pm.isIgnoringBatteryOptimizations(packageName)) return@post
             batteryCheckShown = true
+            val common = "Battery optimization is active for this app. Android may suspend " +
+                "signal capture when the screen turns off — which defeats the main purpose " +
+                "of the app.\n\n"
+            // The 'direct' flavor can pop the one-tap system exemption dialog; the
+            // 'play' flavor sends the user to the settings list to do it manually
+            // (Google Play restricts the one-tap permission). See build.gradle.
+            val message = common + if (BuildConfig.DIRECT_BATTERY_PROMPT)
+                "Tap \"Open Settings\" and allow it to run unrestricted in the background."
+            else
+                "Tap \"Open Settings\", find MeshCore Signal Tester in the list, and set it " +
+                "to unrestricted (not optimized)."
             AlertDialog.Builder(this)
                 .setTitle("Allow unrestricted background use")
-                .setMessage(
-                    "Battery optimization is active for this app. " +
-                    "Android may suspend signal capture when the screen turns off — " +
-                    "which defeats the main purpose of the app.\n\n" +
-                    "Tap \"Open Settings\", find MeshCore Signal Tester in the list, and set it " +
-                    "to unrestricted (not optimized)."
-                )
+                .setMessage(message)
                 .setPositiveButton("Open Settings") { _, _ ->
-                    // Open the general battery-optimization list and let the user toggle
-                    // it manually. We deliberately do NOT use
-                    // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS / the
-                    // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission — Google Play
-                    // restricts those to a few app categories, so they risk rejection.
-                    try {
-                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                    } catch (_: Exception) {
-                        try {
+                    // Direct build: try the one-tap exemption dialog first. Play build
+                    // (or any failure): fall back to the general settings list, then to
+                    // the app-details screen.
+                    var opened = false
+                    if (BuildConfig.DIRECT_BATTERY_PROMPT) {
+                        opened = try {
                             startActivity(Intent(
-                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                                 Uri.parse("package:$packageName")
-                            ))
-                        } catch (_: Exception) {}
+                            )); true
+                        } catch (_: Exception) { false }
+                    }
+                    if (!opened) {
+                        try {
+                            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        } catch (_: Exception) {
+                            try {
+                                startActivity(Intent(
+                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.parse("package:$packageName")
+                                ))
+                            } catch (_: Exception) {}
+                        }
                     }
                 }
                 .setNegativeButton("Later", null)

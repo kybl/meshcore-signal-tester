@@ -48,16 +48,19 @@ jobs:
       - name: Install SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Build debug APK + lint
+      # assembleDebug builds both flavor variants (playDebug + directDebug), so a
+      # break in either flavor's manifest/config is caught. Lint the play variant
+      # (the one bound for the store).
+      - name: Build debug APKs + lint
         working-directory: android
-        run: ./gradlew --no-daemon --stacktrace assembleDebug lintDebug
+        run: ./gradlew --no-daemon --stacktrace assembleDebug lintPlayDebug
 
-      - name: Upload debug APK
+      - name: Upload debug APKs
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/*/debug/*.apk
           if-no-files-found: error
 
       - name: Upload lint report
@@ -65,5 +68,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lint-report
-          path: android/app/build/reports/lint-results-debug.html
+          path: android/app/build/reports/lint-results-playDebug.html
           if-no-files-found: ignore
