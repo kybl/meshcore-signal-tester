@@ -1,1 +1,1 @@
-Real-time LoRa mesh signal monitor for MeshCore companion radios & repeaters
+Real-time mesh signal monitor for MeshCore companion radios & repeaters

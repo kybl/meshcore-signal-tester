@@ -1,4 +1,4 @@
-MeshCore Signal Tester monitors LoRa mesh traffic from a MeshCore companion radio (over Bluetooth, USB-C, or Wi-Fi) or a MeshCore repeater (USB serial CLI) in real time. The connected device type is auto-detected.
+MeshCore Signal Tester monitors mesh traffic from a MeshCore companion radio (over Bluetooth, USB-C, or Wi-Fi) or a MeshCore repeater (USB serial CLI) in real time. The connected device type is auto-detected.
 
 It is built for field signal testing: it keeps capturing received packets and your GPS position while the phone is in your pocket with the screen off. A foreground service holds the connection and location alive — something a normal mobile browser cannot do, because it freezes the page and drops the link when the screen turns off.
 
