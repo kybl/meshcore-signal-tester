@@ -634,16 +634,24 @@ class MainActivity : AppCompatActivity() {
                     "Battery optimization is active for this app. " +
                     "Android may suspend signal capture when the screen turns off — " +
                     "which defeats the main purpose of the app.\n\n" +
-                    "Tap \"Open Settings\" and allow the app to run unrestricted in the background."
+                    "Tap \"Open Settings\", find MeshCore Signal Tester in the list, and set it " +
+                    "to unrestricted (not optimized)."
                 )
                 .setPositiveButton("Open Settings") { _, _ ->
+                    // Open the general battery-optimization list and let the user toggle
+                    // it manually. We deliberately do NOT use
+                    // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS / the
+                    // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission — Google Play
+                    // restricts those to a few app categories, so they risk rejection.
                     try {
-                        startActivity(Intent(
-                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                            Uri.parse("package:$packageName")
-                        ))
-                    } catch (_: Exception) {
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    } catch (_: Exception) {
+                        try {
+                            startActivity(Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:$packageName")
+                            ))
+                        } catch (_: Exception) {}
                     }
                 }
                 .setNegativeButton("Later", null)
