@@ -68,7 +68,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         // Each warning is shown at most once per process lifetime.
         private var batteryCheckShown = false
-        private var bgLocationCheckShown = false
     }
 
     // ---- scanning state (one picker at a time) ----
@@ -90,10 +89,6 @@ class MainActivity : AppCompatActivity() {
         _onPermsGranted?.invoke()
         _onPermsGranted = null
     }
-
-    private val requestBackgroundLocation = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { /* user decides in settings; capture still works while screen is on */ }
 
     // The map's "Enable location" button. Separate from requestPerms (the
     // connect flow) because enabling the map location must NOT start the
@@ -650,33 +645,6 @@ class MainActivity : AppCompatActivity() {
                     } catch (_: Exception) {
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     }
-                }
-                .setNegativeButton("Later", null)
-                .show()
-        }
-    }
-
-    fun checkBackgroundLocation() {
-        if (Build.VERSION.SDK_INT < 29) return
-        main.post {
-            if (bgLocationCheckShown) return@post
-            val bgGranted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-            if (bgGranted) return@post
-            bgLocationCheckShown = true
-            AlertDialog.Builder(this)
-                .setTitle("Allow location all the time")
-                .setMessage(
-                    "MeshCore Signal Tester collects location (GPS) data to tag received " +
-                    "packets with where they were received and to show them on the map — " +
-                    "including in the background, even when the app is closed or not in use, " +
-                    "so capture keeps working with the screen off. This data stays on your " +
-                    "device.\n\n" +
-                    "Tap \"Grant Permission\" and choose \"Allow all the time\" on the next screen."
-                )
-                .setPositiveButton("Grant Permission") { _, _ ->
-                    requestBackgroundLocation.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
                 }
                 .setNegativeButton("Later", null)
                 .show()

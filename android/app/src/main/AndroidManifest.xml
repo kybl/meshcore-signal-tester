@@ -17,10 +17,13 @@
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
 
-    <!-- Location: foreground + background so capture continues with screen off -->
+    <!-- Location: foreground only. Capture runs in a foreground service of type
+         "location" started while the app is visible, which may keep reading
+         location with the screen off / app backgrounded without the all-the-time
+         (background) location permission — and avoids Play's background-location
+         policy review. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- Foreground service that keeps BLE + GPS alive while the screen is off -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
