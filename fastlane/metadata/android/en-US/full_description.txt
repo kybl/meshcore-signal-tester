@@ -15,6 +15,6 @@ Features:
 * Persistent on-disk capture that survives a reload or restart.
 * Optional beep on each packet, auto-remove of old data, adjustable display window, repeater filter, keep-screen-on, device battery readout, and a light/dark theme.
 
-All captured data stays on your device. The app uses no analytics and no tracking. Map tiles are fetched from third-party tile servers only while online.
+All captured data stays on your device. The app has no ads and uses no analytics and no tracking. Map tiles are fetched from third-party tile servers only while online.
 
 Free and open source (MIT). Source code: https://github.com/kybl/meshcore-signal-tester
