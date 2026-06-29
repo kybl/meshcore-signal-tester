@@ -5852,20 +5852,29 @@ class MeshCoreApp {
                 <td class="rl-time">${this._formatTime(d.lastSeen)}</td>
             </tr>`;
         }).join('');
-        // Scroll selected row into view within the table — without moving the page viewport
+        // Scroll the selected row into view within the table — but ONLY when the
+        // selection actually changed, not on every periodic re-render. Otherwise the
+        // table (which re-renders every few seconds as data arrives) keeps yanking
+        // the user's scroll back to the selected row. Reset on deselect so picking
+        // the same repeater again still scrolls to it.
         if (sel) {
-            const selRow = this.repTableBody.querySelector('tr.rl-row-sel');
-            const scroll = this.repTableBody.closest('.rep-table-scroll');
-            if (selRow && scroll) {
-                const thead = scroll.querySelector('thead');
-                const headerH = thead ? thead.offsetHeight : 0;
-                const rowTop = selRow.offsetTop;
-                const rowBot = rowTop + selRow.offsetHeight;
-                if (rowTop - headerH < scroll.scrollTop)
-                    scroll.scrollTop = rowTop - headerH;
-                else if (rowBot > scroll.scrollTop + scroll.clientHeight)
-                    scroll.scrollTop = rowBot - scroll.clientHeight;
+            if (sel !== this._repScrolledSel) {
+                const selRow = this.repTableBody.querySelector('tr.rl-row-sel');
+                const scroll = this.repTableBody.closest('.rep-table-scroll');
+                if (selRow && scroll) {
+                    const thead = scroll.querySelector('thead');
+                    const headerH = thead ? thead.offsetHeight : 0;
+                    const rowTop = selRow.offsetTop;
+                    const rowBot = rowTop + selRow.offsetHeight;
+                    if (rowTop - headerH < scroll.scrollTop)
+                        scroll.scrollTop = rowTop - headerH;
+                    else if (rowBot > scroll.scrollTop + scroll.clientHeight)
+                        scroll.scrollTop = rowBot - scroll.clientHeight;
+                    this._repScrolledSel = sel;
+                }
             }
+        } else {
+            this._repScrolledSel = null;
         }
     }
 
