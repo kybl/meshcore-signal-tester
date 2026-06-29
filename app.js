@@ -5007,6 +5007,23 @@ class MeshCoreApp {
             const cells = new Map();
             for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
             this._chartBase = { cells, width, lo };
+            // Seed canonical repeater columns from the disk buckets, applying the
+            // same promote/merge as live ingest (findOrCreateColumn). Without this,
+            // a node seen at several path-prefix lengths (e.g. 11 / 1122 / 112233)
+            // splits into one bare column PER length whenever its live column has
+            // aged out of the RAM window — because the read-only resolver maps each
+            // unmatched prefix to itself — so a long run shows the same repeater as
+            // several rows. Seeding here (before the sent-point resolve and the
+            // Seen-Repeaters restore below) collapses the prefixes into one column,
+            // and still forms a collision key for genuinely ambiguous shorter ones.
+            // Shortest-first so a short prefix promotes into the longer label.
+            const seedRaw = new Set();
+            for (const b of cells.values()) {
+                if (b.rawId && b.rawId !== 'direct' && b.rawId !== 'unknown') seedRaw.add(b.rawId);
+            }
+            for (const r of [...seedRaw].sort((a, c) => this.idPrecision(a) - this.idPrecision(c))) {
+                this.findOrCreateColumn(r);
+            }
             const sent = [];
             await this.store.eachSent(from, nowRef, r =>
                 sent.push({ time: r.time, snr: r.snr, col: this._resolveColReadonly(r.rawId), label: r.label }));
