@@ -3243,7 +3243,7 @@ class MeshCoreApp {
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
             if (!opts.replaying && !opts.importing && this._storeReady) {
-                this._upsertChartCell(now, snr, rssi, repeater);
+                this._upsertChartCell(now, snr, rssi, repeater, type);
             }
         }
         if (loc) {
@@ -4575,11 +4575,15 @@ class MeshCoreApp {
         if (!nearest || minDist > 1600) { if (!this._tooltipPinned) this.hideChartTooltip(); return; }
 
         const isSent = sentPts.includes(nearest);
+        // A point is a single packet when it's a live point, or a single-reception
+        // bucket that carries the packet's exact time/type (_exactTime). Clustered
+        // buckets (count > 1) are aggregates over a range.
+        const single = !nearest._bucket || nearest._exactTime;
         const tDate = new Date(nearest.time);
         let time = tDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        // Milliseconds for individual (live) points. Bucketed/downsampled points are
-        // aggregates over a time range, so a sub-second figure would be misleading.
-        if (!nearest._bucket) time += '.' + String(tDate.getMilliseconds()).padStart(3, '0');
+        // Milliseconds only when the time is a real packet timestamp — a clustered
+        // bucket's time is a range midpoint, so a sub-second figure would mislead.
+        if (single) time += '.' + String(tDate.getMilliseconds()).padStart(3, '0');
         const color = this._dotColor(nearest.col);
         const dotShape = isSent
             ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
@@ -4587,10 +4591,16 @@ class MeshCoreApp {
         const cName = this._contactNameForCol(nearest.col);
         const nameHtml = cName ? `<span class="ct-colname">${this._escHtml(cName)}</span>` : '';
         // Packet-type badge — the 2-char payload abbreviation (full type on hover),
-        // pushed to the end of the name line. Only for individual incoming points:
-        // sent points and aggregated buckets carry no single packet type.
-        const typeBadge = (!isSent && !nearest._bucket && nearest.type)
+        // pushed to the end of the name line. Only for single incoming packets:
+        // sent points and clustered buckets carry no single packet type.
+        const typeBadge = (!isSent && single && nearest.type)
             ? `<span class="ct-type" title="${this._escHtml(nearest.type)}">${this._escHtml(this._abbreviateType(nearest.type))}</span>`
+            : '';
+        // Cluster (downsampled) points aggregate several receptions into one bucket —
+        // show how many fell in this interval, so retransmissions/duplicates are
+        // visible in the chart. Sits where the type badge would be for live points.
+        const countBadge = (nearest._bucket && nearest.count > 1)
+            ? `<span class="ct-type" title="${nearest.count} receptions aggregated in this interval">${nearest.count}×</span>`
             : '';
         // Signal values and time share one line, with the time pushed to the end
         // (matching the 3D map infobox layout).
@@ -4598,7 +4608,7 @@ class MeshCoreApp {
             ? `Sent SNR ${this._fmtSnr(nearest.snr)} dB ↗`
             : `SNR ${this._fmtSnr(nearest.snr)} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
         this.tooltip.innerHTML =
-            `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}${typeBadge}</div>` +
+            `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}${typeBadge}${countBadge}</div>` +
             `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
 
         // Anchor the infobox to the data point itself (not the cursor/tap, which
@@ -5129,7 +5139,7 @@ class MeshCoreApp {
 
     // Fold one live observation into the chart bucket layers (base always, the
     // zoom layer when the time falls inside it).
-    _upsertChartCell(time, snr, rssi, rawId) {
+    _upsertChartCell(time, snr, rssi, rawId, type = null) {
         const fold = layer => {
             const bIdx = Math.floor((time - layer.lo) / layer.width);
             const key = rawId + '|' + bIdx;
@@ -5142,6 +5152,13 @@ class MeshCoreApp {
                 layer.cells.set(key, g);
             }
             g.count++;
+            // When a bucket holds exactly one reception it stands for a single
+            // packet, so carry its exact time and type for the tooltip (ms + type
+            // badge). As soon as a second reception folds in, the bucket is a
+            // cluster — drop both (no single time/type). Disk-loaded buckets never
+            // get these fields, so old aggregates correctly show neither.
+            if (g.count === 1) { g.exactTime = time; g.type = type ?? null; }
+            else { g.exactTime = null; g.type = null; }
             if (snr != null) {
                 g.snrSum += snr; g.snrN++;
                 if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
@@ -5203,10 +5220,17 @@ class MeshCoreApp {
             const col = this._resolveColReadonly(b.rawId);
             const snrAvg  = b.snrN  ? b.snrSum  / b.snrN  : null;
             const rssiAvg = b.rssiN ? b.rssiSum / b.rssiN : null;
-            cps.push({ time: b.time, snr: snrAvg, rssi: rssiAvg, col, rawId: b.rawId, _bucket: true, count: b.count });
+            // Single-reception bucket (count 1, live-folded): expose the packet's
+            // exact time and type so the tooltip can show ms + the type badge.
+            // Disk-loaded or clustered buckets lack exactTime, so they fall back to
+            // the bucket time and show neither.
+            const single = b.count === 1 && b.exactTime != null;
+            cps.push({ time: single ? b.exactTime : b.time, snr: snrAvg, rssi: rssiAvg,
+                       col, rawId: b.rawId, _bucket: true, count: b.count,
+                       type: single ? b.type : undefined, _exactTime: single });
             if (b.count > 1) {
-                if (b.snrMin != null) cps.push({ time: b.time, snr: b.snrMin, rssi: b.rssiMin, col, rawId: b.rawId, _bucket: true });
-                if (b.snrMax != null) cps.push({ time: b.time, snr: b.snrMax, rssi: b.rssiMax, col, rawId: b.rawId, _bucket: true });
+                if (b.snrMin != null) cps.push({ time: b.time, snr: b.snrMin, rssi: b.rssiMin, col, rawId: b.rawId, _bucket: true, count: b.count });
+                if (b.snrMax != null) cps.push({ time: b.time, snr: b.snrMax, rssi: b.rssiMax, col, rawId: b.rawId, _bucket: true, count: b.count });
             }
         }
         cps.sort((a, b) => a.time - b.time);
