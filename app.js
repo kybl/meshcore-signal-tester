@@ -3238,7 +3238,7 @@ class MeshCoreApp {
 
         this._recordRepeaterStat(canonicalKey, repeater, now, snr, rssi);
         if (snr != null || rssi != null) {
-            this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater });
+            this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater, type });
             // Fold it into the chart bucket cache so the charts show it without a
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
@@ -4575,20 +4575,30 @@ class MeshCoreApp {
         if (!nearest || minDist > 1600) { if (!this._tooltipPinned) this.hideChartTooltip(); return; }
 
         const isSent = sentPts.includes(nearest);
-        const time = new Date(nearest.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const tDate = new Date(nearest.time);
+        let time = tDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        // Milliseconds for individual (live) points. Bucketed/downsampled points are
+        // aggregates over a time range, so a sub-second figure would be misleading.
+        if (!nearest._bucket) time += '.' + String(tDate.getMilliseconds()).padStart(3, '0');
         const color = this._dotColor(nearest.col);
         const dotShape = isSent
             ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
             : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${this._repDotStyle(nearest.col)};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
         const cName = this._contactNameForCol(nearest.col);
         const nameHtml = cName ? `<span class="ct-colname">${this._escHtml(cName)}</span>` : '';
+        // Packet-type badge — the 2-char payload abbreviation (full type on hover),
+        // pushed to the end of the name line. Only for individual incoming points:
+        // sent points and aggregated buckets carry no single packet type.
+        const typeBadge = (!isSent && !nearest._bucket && nearest.type)
+            ? `<span class="ct-type" title="${this._escHtml(nearest.type)}">${this._escHtml(this._abbreviateType(nearest.type))}</span>`
+            : '';
         // Signal values and time share one line, with the time pushed to the end
         // (matching the 3D map infobox layout).
         const valLine = isSent
             ? `Sent SNR ${this._fmtSnr(nearest.snr)} dB ↗`
             : `SNR ${this._fmtSnr(nearest.snr)} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
         this.tooltip.innerHTML =
-            `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}</div>` +
+            `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}${typeBadge}</div>` +
             `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
 
         // Anchor the infobox to the data point itself (not the cursor/tap, which

@@ -1302,6 +1302,21 @@ html.light-theme .ct-colname {
     color: #2a7da0;
 }
 
+.ct-type {
+    margin-left: auto;
+    flex-shrink: 0;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.14);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    line-height: 16px;
+}
+html.light-theme .ct-type {
+    background: rgba(11, 29, 46, 0.10);
+}
+
 .ct-sig {
     display: flex;
     align-items: center;
