@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=145';
-import { PacketStore } from './packet-store.js?v=17';
+import { PacketStore } from './packet-store.js?v=18';
 import { buildCsv, parseCsv } from './csv.js?v=1';
 import { Store } from './storage.js?v=1';
 
@@ -4592,9 +4592,14 @@ class MeshCoreApp {
         const nameHtml = cName ? `<span class="ct-colname">${this._escHtml(cName)}</span>` : '';
         // Packet-type badge — the 2-char payload abbreviation (full type on hover),
         // pushed to the end of the name line. Only for single incoming packets:
-        // sent points and clustered buckets carry no single packet type.
-        const typeBadge = (!isSent && single && nearest.type)
-            ? `<span class="ct-type" title="${this._escHtml(nearest.type)}">${this._escHtml(this._abbreviateType(nearest.type))}</span>`
+        // sent points and clustered buckets carry no single packet type. Live points
+        // carry the type directly; single-reception buckets carry the packet hash —
+        // resolve the type from the RAM hash table here, and from disk async below.
+        const pType = (!isSent && single)
+            ? (nearest.type ?? (nearest.hash ? this.hashData.get(nearest.hash)?.type : null))
+            : null;
+        const typeBadge = pType
+            ? `<span class="ct-type" title="${this._escHtml(pType)}">${this._escHtml(this._abbreviateType(pType))}</span>`
             : '';
         // Cluster (downsampled) points aggregate several receptions into one bucket —
         // show how many fell in this interval, so retransmissions/duplicates are
@@ -4607,9 +4612,28 @@ class MeshCoreApp {
         const valLine = isSent
             ? `Sent SNR ${this._fmtSnr(nearest.snr)} dB ↗`
             : `SNR ${this._fmtSnr(nearest.snr)} &nbsp; RSSI ${nearest.rssi ?? '—'}`;
+        // Bump a token on every render so a pending async type lookup from a prior
+        // hover can't inject into a different point's tooltip.
+        const tipTok = this._tipTypeReq = (this._tipTypeReq || 0) + 1;
         this.tooltip.innerHTML =
             `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}${typeBadge}${countBadge}</div>` +
             `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
+        // Single stored packet whose hash has aged out of the RAM window: fetch its
+        // type from disk and inject the badge if still hovering the same point.
+        if (!isSent && single && !pType && nearest.hash && this._storeReady) {
+            this.store.getHash(nearest.hash).then(h => {
+                if (tipTok !== this._tipTypeReq || !h?.type) return;
+                if (this.tooltip.style.display === 'none') return;
+                const nameEl = this.tooltip.querySelector('.ct-name');
+                if (nameEl && !nameEl.querySelector('.ct-type')) {
+                    const span = document.createElement('span');
+                    span.className = 'ct-type';
+                    span.title = h.type;
+                    span.textContent = this._abbreviateType(h.type);
+                    nameEl.appendChild(span);
+                }
+            }).catch(() => {});
+        }
 
         // Anchor the infobox to the data point itself (not the cursor/tap, which
         // can land a bit off), centred above it. The tooltip is position:absolute
@@ -5227,7 +5251,8 @@ class MeshCoreApp {
             const single = b.count === 1 && b.exactTime != null;
             cps.push({ time: single ? b.exactTime : b.time, snr: snrAvg, rssi: rssiAvg,
                        col, rawId: b.rawId, _bucket: true, count: b.count,
-                       type: single ? b.type : undefined, _exactTime: single });
+                       type: single ? b.type : undefined, hash: single ? b.hash : undefined,
+                       _exactTime: single });
             if (b.count > 1) {
                 if (b.snrMin != null) cps.push({ time: b.time, snr: b.snrMin, rssi: b.rssiMin, col, rawId: b.rawId, _bucket: true, count: b.count });
                 if (b.snrMax != null) cps.push({ time: b.time, snr: b.snrMax, rssi: b.rssiMax, col, rawId: b.rawId, _bucket: true, count: b.count });

@@ -478,7 +478,10 @@ export class PacketStore {
                       snrMin: Infinity, snrMax: -Infinity, snrSum: 0, snrN: 0,
                       rssiMin: Infinity, rssiMax: -Infinity, rssiSum: 0, rssiN: 0,
                       lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null,
-                      lat: null, lon: null, lastTime: 0 };
+                      lat: null, lon: null, lastTime: 0,
+                      // First obs's exact time + hash, surfaced only for count===1
+                      // buckets so the chart tooltip can show ms + look up the type.
+                      firstTime: r.time, hash: r.hash };
                 groups.set(key, g);
             }
             g.count++;
@@ -510,6 +513,9 @@ export class PacketStore {
                 lastSnr: g.lastSnr, lastSnrT: g.lastSnrT,
                 lastRssi: g.lastRssi, lastRssiT: g.lastRssiT,
                 lat: g.lat, lon: g.lon,
+                // Single-reception bucket = one packet: expose its exact time and
+                // hash so the tooltip shows ms and can resolve the packet type.
+                ...(g.count === 1 ? { exactTime: g.firstTime, hash: g.hash } : {}),
             });
         }
         out.sort((a, b) => a.time - b.time);
