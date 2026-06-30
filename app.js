@@ -4580,10 +4580,13 @@ class MeshCoreApp {
         // buckets (count > 1) are aggregates over a range.
         const single = !nearest._bucket || nearest._exactTime;
         const tDate = new Date(nearest.time);
-        let time = tDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const time = tDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         // Milliseconds only when the time is a real packet timestamp — a clustered
         // bucket's time is a range midpoint, so a sub-second figure would mislead.
-        if (single) time += '.' + String(tDate.getMilliseconds()).padStart(3, '0');
+        // Wrapped in its own span so the ms (and the dot) can be dimmed.
+        const msHtml = single
+            ? `<span class="ct-ms">.${String(tDate.getMilliseconds()).padStart(3, '0')}</span>`
+            : '';
         const color = this._dotColor(nearest.col);
         const dotShape = isSent
             ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
@@ -4617,7 +4620,7 @@ class MeshCoreApp {
         const tipTok = this._tipTypeReq = (this._tipTypeReq || 0) + 1;
         this.tooltip.innerHTML =
             `<div class="ct-name">${dotShape}<b>${this._escHtml(this.displayId(nearest.col))}</b>${nameHtml}${typeBadge}${countBadge}</div>` +
-            `<div class="ct-sig">${valLine}<span class="ct-time">${time}</span></div>`;
+            `<div class="ct-sig">${valLine}<span class="ct-time">${time}${msHtml}</span></div>`;
         // Single stored packet whose hash has aged out of the RAM window: fetch its
         // type from disk and inject the badge if still hovering the same point.
         if (!isSent && single && !pType && nearest.hash && this._storeReady) {

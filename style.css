@@ -1330,6 +1330,10 @@ html.light-theme .ct-type {
     opacity: 0.7;
     white-space: nowrap;
 }
+/* Milliseconds (and the leading dot) dimmer than the rest of the time. */
+.ct-ms {
+    opacity: 0.55;
+}
 
 .battery-status {
     font-size: 12px;
