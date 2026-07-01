@@ -3238,7 +3238,7 @@ class MeshCoreApp {
 
         this._recordRepeaterStat(canonicalKey, repeater, now, snr, rssi);
         if (snr != null || rssi != null) {
-            this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater, type });
+            this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater, type, hash });
             // Fold it into the chart bucket cache so the charts show it without a
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
@@ -3617,6 +3617,36 @@ class MeshCoreApp {
         }
     }
 
+    // Close every open packet-detail row at once (no close animation — this is
+    // used before opening a different one). Also clears the sig-active cell mark.
+    _closeAllDetails() {
+        this.msgTableBody?.querySelectorAll('.sig-active').forEach(el => el.classList.remove('sig-active'));
+        this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => tr.remove());
+    }
+
+    // Open the detail row for one packet (hash) under one repeater column, as if
+    // the user had clicked that repeater's cell. Closes any other open details
+    // first, and — since the table is paged — navigates to the page holding the
+    // hash when it isn't on the current one. Called from the 2D-chart click.
+    async _openPacketDetail(hash, col) {
+        this._closeAllDetails();
+        if (this._storeReady) {
+            // Ensure a fresh narrow index for the current selection, then find
+            // which page the hash sits on (one row per hash, so it is unique).
+            if (!this._tableNarrowHashes || this._tableNarrowIndexKey !== this._tableNarrowKey())
+                await this._buildTableNarrowIndex();
+            const idx = this._tableNarrowHashes ? this._tableNarrowHashes.indexOf(hash) : -1;
+            const page = idx >= 0 ? Math.floor(idx / this._tablePageSize) : 0;
+            // reset=false keeps the index we just built (avoids a second scan)
+            // and honours the explicit page.
+            await this._loadTablePage(page, false);
+        } else {
+            this._renderMsgTable();
+        }
+        // The reload re-applied selection dimming; open the packet's detail on top.
+        this.toggleDetailRow(hash, col);
+    }
+
     _syntaxHighlightJson(json) {
         let out = '';
         let i = 0;
@@ -3933,10 +3963,25 @@ class MeshCoreApp {
             this.hideChartTooltip(true);
             return;
         }
-        const deselect = this._selectedCol === nearest.col;
-        this._selectRepeater(deselect ? null : nearest.col);
-        if (deselect) this.hideChartTooltip(true);
-        else this.showChartTooltip(e, type, true);
+        // Clicking a point selects its repeater (narrowing the packet table) and
+        // opens that packet's detail row in Received Packets. Clicking the point
+        // whose detail is already open toggles the whole thing back off. Cluster
+        // points carry no single hash, so they only select/deselect + close.
+        const detailOpen = nearest.hash && document.getElementById(`detail-${nearest.hash}`);
+        const sameOpen = detailOpen && detailOpen.dataset.col === (nearest.col ?? '');
+        if (this._selectedCol === nearest.col && (sameOpen || !nearest.hash)) {
+            this._closeAllDetails();
+            this._selectRepeater(null);
+            this.hideChartTooltip(true);
+            return;
+        }
+        // Switching repeaters: skip _selectRepeater's own table reload when we are
+        // about to open a specific packet, so the two don't race on the page.
+        if (this._selectedCol !== nearest.col)
+            this._selectRepeater(nearest.col, !!nearest.hash);
+        this.showChartTooltip(e, type, true);
+        if (nearest.hash) this._openPacketDetail(nearest.hash, nearest.col);
+        else this._closeAllDetails();
     }
 
     // ----- 2D-chart X-axis zoom ------------------------------------------
@@ -5942,7 +5987,7 @@ class MeshCoreApp {
 
     // --- Repeater selection ---
 
-    _selectRepeater(col) {
+    _selectRepeater(col, skipRepaginate = false) {
         this._selectedCol = col ?? null;
         this.signalMap?.selectColumn(this._selectedCol);
         this._updateMapPins();
@@ -5952,7 +5997,9 @@ class MeshCoreApp {
         // its hashes so we don't page through mostly-hidden rows. The sync
         // _applyMsgTableSelection below dims/hides the current page for instant
         // feedback; the async reload then re-renders a full narrowed page.
-        this._repaginateIfNarrowChanged();
+        // skipRepaginate lets a caller (chart-point click → open one packet's
+        // detail) own the reload itself, so the two don't race on the same page.
+        if (!skipRepaginate) this._repaginateIfNarrowChanged();
         this._applyMsgTableSelection();
         this._updateCornerNotices();
     }
