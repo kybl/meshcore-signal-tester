@@ -56,8 +56,12 @@ class TcpManager(private val js: JsApi) {
             } catch (_: Exception) {
                 // Socket reset/closed — fall through to disconnect handling.
             }
-            val userInitiated = closing
-            closeInternal()
+            // Only tear down / signal for the socket THIS thread owns. A quick
+            // reconnect may have already installed a new socket (and reset
+            // `closing`); the old reader must not close the new socket or fire a
+            // phantom wifiClosed for a connection that is actually live.
+            val userInitiated = closing || socket !== s
+            if (socket === s) closeInternal()
             // Only signal an unexpected drop; a user-initiated close already tore
             // the web transport down.
             if (!userInitiated) js.wifiClosed()

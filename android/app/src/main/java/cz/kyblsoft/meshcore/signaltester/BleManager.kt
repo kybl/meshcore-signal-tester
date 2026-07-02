@@ -115,7 +115,15 @@ class BleManager(private val context: Context, private val js: JsApi) {
         }
         registerAdapterReceiver()
         main.post {
-            gatt = dev.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            try {
+                gatt = dev.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            } catch (e: Exception) {
+                // Missing BLUETOOTH_CONNECT on Android 12+ throws SecurityException
+                // here — report it instead of crashing the main thread.
+                val r = connectReqId
+                connectReqId = null
+                if (r != null) js.resolve(r, false, errJson(BridgeError.SECURITY, "Bluetooth permission not granted"))
+            }
         }
     }
 
@@ -125,6 +133,17 @@ class BleManager(private val context: Context, private val js: JsApi) {
             // Closing the GATT often suppresses the STATE_DISCONNECTED callback,
             // so notify the page directly to settle its disconnect promise.
             js.bleDisconnected(address)
+        }
+    }
+
+    // Called from the activity's onDestroy: drop the live GATT and stop listening
+    // for adapter state, so a destroyed activity leaks neither the connection nor
+    // the receiver.
+    fun close() {
+        closeGatt()
+        if (adapterReceiverRegistered) {
+            try { context.unregisterReceiver(adapterReceiver) } catch (_: Exception) {}
+            adapterReceiverRegistered = false
         }
     }
 
@@ -182,6 +201,10 @@ class BleManager(private val context: Context, private val js: JsApi) {
 
     @Synchronized
     private fun clearQueue() {
+        // Settle any in-flight op so its JS await (writeValue/readValue) doesn't
+        // hang forever after a mid-command disconnect. Queued-but-unstarted ops
+        // carry no reqId at this layer, so only pendingReqId can be settled.
+        pendingReqId?.let { js.resolve(it, false, errJson(BridgeError.NETWORK, "disconnected")) }
         opQueue.clear()
         opBusy = false
         pendingReqId = null

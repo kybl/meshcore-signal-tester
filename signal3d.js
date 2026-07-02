@@ -6,7 +6,7 @@
 // flavours, CARTO and Esri basemaps, and "none" (a plain floor, no imagery).
 
 import * as THREE from 'three';
-import { MapControls } from './vendor/controls/MapControls.js';
+import { MapControls } from './vendor/controls/MapControls.js?v=1';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 12;    // world units for strongest signal
@@ -193,6 +193,7 @@ export class Signal3DMap {
         this._mapBusy     = false;
         this._overlayMesh  = null;
         this._overlayBusy = false;
+        this._overlayRerun = false;   // an update arrived mid-fetch; re-run when it settles
         this._overlayKey  = null;
         this._filterFn     = null;   // col => boolean, or null (show all)
         this._displayCutoff = 0;    // timestamp ms; 0 = no filter
@@ -628,6 +629,10 @@ export class Signal3DMap {
                 clearTimeout(failTimer);
                 this._setStatus(`Location error: ${err.message}`);
                 if (this.btnEl) { this.btnEl.disabled = false; this.btnEl.classList.remove('hidden'); }
+                // Kill the underlying watch before dropping the id: a transient
+                // error (e.g. timeout) leaves it alive, so a re-tap would
+                // otherwise start a second concurrent watch.
+                if (this._watchId != null) navigator.geolocation.clearWatch(this._watchId);
                 this._watchId = null;
             },
             { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
@@ -717,6 +722,11 @@ export class Signal3DMap {
         for (const p of this._rxPoints) {
             if (p.col === oldCol) p.col = newCol;
         }
+        // Live sent stars share the col namespace, so migrate them too (but not
+        // _histOutgoingPts — those are rebuilt from disk).
+        for (const p of this._outgoingPts) {
+            if (p.col === oldCol) p.col = newCol;
+        }
         if (this._selectedCol === oldCol) {
             this._selectedCol = newCol;
             this._updateInfoPanel();
@@ -729,6 +739,15 @@ export class Signal3DMap {
     splitPoints(oldCol, classifier) {
         let touched = false;
         for (const p of this._rxPoints) {
+            if (p.col !== oldCol) continue;
+            const target = classifier(p.rawId);
+            if (target && target !== oldCol) {
+                p.col = target;
+                touched = true;
+            }
+        }
+        // Same reassignment for live sent stars (leave _histOutgoingPts alone).
+        for (const p of this._outgoingPts) {
             if (p.col !== oldCol) continue;
             const target = classifier(p.rawId);
             if (target && target !== oldCol) {
@@ -772,11 +791,14 @@ export class Signal3DMap {
         );
         this._raycaster.setFromCamera(mouse, this.camera);
 
-        // Static marker sprites (emoji icons and labels) take priority.
-        if (this._pickPinSprite(e, rect)) return;
-
-        const { newCol, clickedPt } = this._pickRxPoint(e, rect);
-        this._commitSelection(newCol, clickedPt);
+        // Pick the front-most dot first so its camera distance can override an
+        // occluded emoji-icon sprite: icons use depthTest, so a lit ball drawn
+        // in front of one hides it on screen — clicking there must select the
+        // ball, not the hidden icon. Label sprites render on top and keep
+        // priority (maxDist only gates non-label icon hits).
+        const dot = this._pickRxPoint(e, rect);
+        if (this._pickPinSprite(e, rect, dot.camDist)) return;
+        this._commitSelection(dot.newCol, dot.clickedPt);
     }
 
     // Apply a new selection: rebuild dots, notify the host and refresh the info
@@ -793,7 +815,7 @@ export class Signal3DMap {
     // Hit-test the static marker sprites. Returns true if the click was handled
     // (toggling a pin via the label's [x] corner, or selecting the marker's
     // column); false if no sprite was hit.
-    _pickPinSprite(e, rect) {
+    _pickPinSprite(e, rect, maxDist = Infinity) {
         if (!this._pinSprites.length) return false;
         const clickableEntries = this._pinSprites.filter(s => !s.isClose);
         const sprites = clickableEntries.map(s => s.sprite);
@@ -802,6 +824,12 @@ export class Signal3DMap {
         const hit = hits[0];
         const entry = clickableEntries.find(s => s.sprite === hit.object);
         if (!entry) return false;
+        // Emoji-icon sprites use depthTest, so a closer lit dot hides them on
+        // screen. Reject a hit on an occluded icon (hit point farther from the
+        // camera than the front-most dot under the cursor) so picking agrees
+        // with rendering, falling through to the dot. Labels render on top and
+        // keep priority.
+        if (!entry.isLabel && this.camera.position.distanceTo(hit.point) > maxDist) return false;
         // For label sprites, check if click landed in the [x] top-right corner.
         // Sprites always face the camera, so we must project the hit offset
         // onto camera right/up vectors (not world X/Y).
@@ -817,7 +845,12 @@ export class Signal3DMap {
             // Normalize to ±0.5 (sprite edge)
             const nx = offset.dot(camRight) / ss.x;
             const ny = offset.dot(camUp)    / ss.y;
-            if (nx > 0.27 && ny > 0.05) {
+            // Confine the toggle to the 📌/✕ glyph at the right edge. The glyph is
+            // ~1 label-height wide, so scale the hotspot by the sprite aspect
+            // ratio — otherwise a long repeater name's tail (far left of the
+            // glyph) would accidentally pin/remove the marker.
+            const hotspotFrac = 0.5 - (ss.y / ss.x) * 0.5;
+            if (nx > hotspotFrac && ny > 0.05) {
                 if (entry.isPinned) this.onRemoveMarker?.(entry.col, entry.pubKeyFullHex);
                 else               this.onPinMarker?.(entry.col, entry.pubKeyFullHex);
                 return true;
@@ -863,10 +896,11 @@ export class Signal3DMap {
             else if (c.d < best.d) best = c;
         }
         if (best) {
-            if (this._clickedPoint === best.p) return { newCol: null, clickedPt: null };
-            return { newCol: best.p.col, clickedPt: best.p };
+            // camDist lets _onCanvasClick reject emoji icons occluded by this dot.
+            if (this._clickedPoint === best.p) return { newCol: null, clickedPt: null, camDist: best.camDist };
+            return { newCol: best.p.col, clickedPt: best.p, camDist: best.camDist };
         }
-        return { newCol: null, clickedPt: null };
+        return { newCol: null, clickedPt: null, camDist: Infinity };
     }
 
     _updateInfoPanel() {
@@ -1352,7 +1386,9 @@ export class Signal3DMap {
         canvas.width  = nx * TILE_PX;
         canvas.height = ny * TILE_PX;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#dfdfdf';
+        // Placeholder for missing/failed tiles: match the theme so it doesn't
+        // glare as a light block on the dark basemap.
+        ctx.fillStyle = this.isDarkMode() ? '#1a1a1a' : '#dfdfdf';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         // "None" source: no imagery, just a plain theme-aware floor (no fetches,
@@ -1784,7 +1820,10 @@ export class Signal3DMap {
         const { w, h } = this._planeDim;
         const n = Math.pow(2, zoom);
         const lonDelta = r * nx / (w * n) * 360;
-        const latDelta = r * ny / (h * n) * 360;
+        // Web-Mercator stretches the y axis by 1/cos(lat), so a given world span
+        // covers cos(lat)× fewer degrees of latitude than the raw scale implies.
+        // Floor cos to avoid a zero/huge span near the poles.
+        const latDelta = r * ny / (h * n) * 360 * Math.max(0.01, Math.cos(center.lat * Math.PI / 180));
         return {
             minLat: center.lat - latDelta, maxLat: center.lat + latDelta,
             minLon: center.lon - lonDelta, maxLon: center.lon + lonDelta,
@@ -1808,23 +1847,20 @@ export class Signal3DMap {
         return { zoom, tl, br };
     }
 
-    async _updateOverlay() {
-        if (!this._tileBounds || this._overlayBusy) return;
-        // Traffic saver: if the map isn't on-screen, don't fetch — just mark that a
-        // refresh is due and let it run when the map becomes visible again.
-        if (!this._isMapVisible()) { this._overlayPending = true; return; }
-        this._overlayPending = false;
-        if (this._mapSource === 'none') { this._removeOverlay(); return; }  // nothing to detail
+    // The detail-overlay target (tile rect + cache key) for the current camera
+    // view, or null when no overlay is warranted. Recomputed after the fetch to
+    // detect a stale view (camera moved during the await).
+    _overlayTarget() {
+        if (!this._tileBounds || this._mapSource === 'none') return null;
         const camBb = this._cameraViewBbox();
-        if (!camBb) { this._removeOverlay(); return; }
-
+        if (!camBb) return null;
         // Find highest zoom where camera view fits in MAX_TILES_AXIS × MAX_TILES_AXIS
         // (capped at the source's own maximum tile level)
         const { zoom: overlayZoom, tl: oTl, br: oBr } = this._fitZoomForBbox(
             camBb.minLon, camBb.maxLat, camBb.maxLon, camBb.minLat,
             TILE_SOURCES[this._mapSource].maxZoom ?? 19);
         // Only show overlay when it offers more detail than the base map
-        if (overlayZoom <= this._tileBounds.zoom) { this._removeOverlay(); return; }
+        if (overlayZoom <= this._tileBounds.zoom) return null;
 
         const maxTile = Math.pow(2, overlayZoom) - 1;
         const otx = Math.floor(oBr.x) - Math.floor(oTl.x) + 1;
@@ -1835,16 +1871,34 @@ export class Signal3DMap {
         const oy0 = Math.max(0, Math.floor(oTl.y) - opy);
         const ox1 = Math.min(maxTile, Math.floor(oBr.x) + opx);
         const oy1 = Math.min(maxTile, Math.floor(oBr.y) + opy);
-        const onx = ox1 - ox0 + 1;
-        const ony = oy1 - oy0 + 1;
-
         const sourceId = this._mapSource;
         const key = `ov/${sourceId}/${overlayZoom}/${ox0}/${oy0}/${ox1}/${oy1}`;
+        return { key, sourceId, overlayZoom, ox0, oy0, ox1, oy1, onx: ox1 - ox0 + 1, ony: oy1 - oy0 + 1 };
+    }
+
+    async _updateOverlay() {
+        if (!this._tileBounds) return;
+        // Don't silently drop an update that arrives mid-fetch — remember it and
+        // re-run once the in-flight fetch settles (see the finally block).
+        if (this._overlayBusy) { this._overlayRerun = true; return; }
+        // Traffic saver: if the map isn't on-screen, don't fetch — just mark that a
+        // refresh is due and let it run when the map becomes visible again.
+        if (!this._isMapVisible()) { this._overlayPending = true; return; }
+        this._overlayPending = false;
+
+        const target = this._overlayTarget();
+        if (!target) { this._removeOverlay(); return; }
+        const { key, sourceId, overlayZoom, ox0, oy0, ox1, oy1, onx, ony } = target;
         if (key === this._overlayKey) return;
 
         this._overlayBusy = true;
         try {
             const texture = await this._stitchTiles(sourceId, overlayZoom, ox0, oy0, onx, ony, false);
+
+            // The camera may have moved during the fetch; if the target key no
+            // longer matches what we fetched for, this texture is for a view
+            // we've left — drop it rather than install a stale overlay.
+            if (this._overlayTarget()?.key !== key) { texture.dispose(); return; }
 
             // Position overlay in world space using the current (fixed) base tileBounds
             const nwLL  = tileToLatLon(ox0,     oy0,     overlayZoom);
@@ -1870,6 +1924,9 @@ export class Signal3DMap {
             this._overlayKey = key;
         } finally {
             this._overlayBusy = false;
+            // Run the update that landed while we were fetching, now against the
+            // current view.
+            if (this._overlayRerun) { this._overlayRerun = false; this._updateOverlay(); }
         }
     }
 
@@ -1997,7 +2054,11 @@ export class Signal3DMap {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-        const dotSize = this._sphereSize * sizeMult * 7;
+        // gl_PointSize / PointsMaterial.size are in device pixels, but the
+        // drawing buffer is scaled by the renderer's pixel ratio (up to 2× on
+        // retina). Multiply by that ratio so dots stay a constant CSS size
+        // (matching _pickRxPoint's CSS-px PICK_RADIUS) regardless of DPR.
+        const dotSize = this._sphereSize * sizeMult * 7 * this.renderer.getPixelRatio();
         const isLit = opacity >= 1.0;
         const mat = new THREE.PointsMaterial({
             map:             tex,

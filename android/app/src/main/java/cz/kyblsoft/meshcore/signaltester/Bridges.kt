@@ -23,7 +23,9 @@ class BleBridge(private val activity: MainActivity) {
     fun connect(reqId: String, deviceId: String) {
         activity.checkBatteryOptimization()
         activity.main.post {
-            activity.ensureConnectPermissions {
+            activity.ensureConnectPermissions(
+                onDenied = { activity.jsApi.resolve(reqId, false, errJson(BridgeError.SECURITY, "Bluetooth permission not granted")) }
+            ) {
                 activity.ble.connect(reqId, deviceId)
             }
         }
@@ -80,8 +82,13 @@ class SerialBridge(private val activity: MainActivity) {
         activity.checkBatteryOptimization()
         activity.main.post {
             // USB doesn't need Bluetooth permissions; location is still requested
-            // so GPS for the map works and the foreground service can start.
-            activity.ensureConnectPermissions(includeBluetooth = false) {
+            // so GPS for the map works and the foreground service can start. But
+            // USB works without location, so a location denial must still connect
+            // (just without GPS) rather than hang or reject.
+            activity.ensureConnectPermissions(
+                includeBluetooth = false,
+                onDenied = { MeshcoreService.start(activity); activity.serial.open(reqId, portId, baudRate) }
+            ) {
                 activity.serial.open(reqId, portId, baudRate)
             }
         }
@@ -112,7 +119,11 @@ class WifiBridge(private val activity: MainActivity) {
         activity.main.post {
             // TCP needs no Bluetooth permission; location is still requested (as
             // for USB) so the GPS map works and the foreground service can start.
-            activity.ensureConnectPermissions(includeBluetooth = false) {
+            // TCP works without location, so a denial must still connect.
+            activity.ensureConnectPermissions(
+                includeBluetooth = false,
+                onDenied = { MeshcoreService.start(activity); activity.wifi.open(reqId, host, port) }
+            ) {
                 activity.wifi.open(reqId, host, port)
             }
         }

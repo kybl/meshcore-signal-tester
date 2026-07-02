@@ -33,6 +33,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -59,7 +60,8 @@ class MainActivity : AppCompatActivity() {
     // bars and can make the page wider than the viewport). The WebView fills
     // this container, so insetting the container resizes the WebView itself.
     private lateinit var rootContainer: FrameLayout
-    private lateinit var jsApi: JsApi
+    lateinit var jsApi: JsApi
+        private set
 
     private val appUrl = "https://appassets.androidplatform.net/assets/www/index.html"
 
@@ -68,26 +70,45 @@ class MainActivity : AppCompatActivity() {
     companion object {
         // Each warning is shown at most once per process lifetime.
         private var batteryCheckShown = false
+
+        // Keys for persisting a pending CSV export across process death while the
+        // SAF "Save as" dialog is open (see onSaveInstanceState).
+        private const val KEY_PENDING_CSV = "pendingCsvContent"
+        private const val KEY_PENDING_CSV_NAME = "pendingCsvName"
+        // A Bundle isn't meant for many-MB payloads; skip persisting very large
+        // exports (accept the rare edge over risking a TransactionTooLarge).
+        private const val MAX_SAVED_CSV_CHARS = 256 * 1024
     }
 
     // ---- scanning state (one picker at a time) ----
     private var scanCallback: ScanCallback? = null
+    // The 20 s "stop scanning to save battery" timer. Held so it can be
+    // cancelled when the picker resolves/cancels early — otherwise it would
+    // later stop a subsequent scan.
+    private var scanTimeoutRunnable: Runnable? = null
     private var pickerDialog: AlertDialog? = null
     private var pickerResolved = false
     private val foundAddrs = ArrayList<String>()
     private val foundNames = ArrayList<String>()
 
-    private var _onPermsGranted: (() -> Unit)? = null
+    private var _onPermsResult: ((Boolean) -> Unit)? = null
 
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        MeshcoreService.start(this)
-        // Connect-flow grant doubles as the trigger to start GPS capture, so the
-        // map geotags packets from connect time without a separate button tap.
-        if (hasLocationPermission()) jsApi.locationPermissionGranted()
-        _onPermsGranted?.invoke()
-        _onPermsGranted = null
+    ) { result ->
+        // Empty map (system dismissed the request without a decision) ⇒ denied.
+        val granted = result.isNotEmpty() && result.values.all { it }
+        // Start the foreground service only when we actually hold location (its
+        // declared FGS type); starting it with everything denied can crash on
+        // Android 14+ (ForegroundServiceDidNotStartInTime).
+        if (hasLocationPermission()) {
+            MeshcoreService.start(this)
+            // Connect-flow grant doubles as the trigger to start GPS capture, so
+            // the map geotags packets from connect time without a separate tap.
+            jsApi.locationPermissionGranted()
+        }
+        _onPermsResult?.invoke(granted)
+        _onPermsResult = null
     }
 
     // The map's "Enable location" button. Separate from requestPerms (the
@@ -216,7 +237,27 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(appUrl)
         wireBackHandler()
 
+        // Restore a pending CSV export if the process was killed while the SAF
+        // "Save as" dialog was open — otherwise the callback writes a 0-byte file.
+        if (savedInstanceState != null) {
+            pendingCsvContent = savedInstanceState.getString(KEY_PENDING_CSV)
+            pendingCsvName = savedInstanceState.getString(KEY_PENDING_CSV_NAME)
+        }
+
         // Permissions are requested lazily at BLE connect time.
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Persist the in-flight CSV content so a process death while the SAF
+        // picker is up doesn't leave the CreateDocument callback with nothing to
+        // write. Size-guarded to stay well under the Binder transaction limit.
+        pendingCsvContent?.let {
+            if (it.length <= MAX_SAVED_CSV_CHARS) {
+                outState.putString(KEY_PENDING_CSV, it)
+                outState.putString(KEY_PENDING_CSV_NAME, pendingCsvName)
+            }
+        }
     }
 
     // Build (or rebuild) this WebView's settings, JS bridges and clients.
@@ -430,6 +471,13 @@ class MainActivity : AppCompatActivity() {
         stopScan()
         location.stop()
         MeshcoreService.stop(this)
+        // Close the live radio connections and unregister the managers' receivers
+        // before tearing down the WebView, so a destroyed activity doesn't leak
+        // the GATT / serial port / TCP socket or the adapter/USB receivers. Each
+        // is guarded so one failure doesn't skip the rest.
+        try { ble.close() } catch (_: Exception) {}
+        try { serial.cleanup() } catch (_: Exception) {}
+        try { wifi.close() } catch (_: Exception) {}
         webView.destroy()
         super.onDestroy()
     }
@@ -449,7 +497,11 @@ class MainActivity : AppCompatActivity() {
         ))
     }
 
-    fun ensureConnectPermissions(includeBluetooth: Boolean = true, onGranted: () -> Unit) {
+    fun ensureConnectPermissions(
+        includeBluetooth: Boolean = true,
+        onDenied: (() -> Unit)? = null,
+        onGranted: () -> Unit
+    ) {
         val missing = Permissions.connectPermissions(includeBluetooth).filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
@@ -459,16 +511,54 @@ class MainActivity : AppCompatActivity() {
             jsApi.locationPermissionGranted()
             onGranted()
         } else {
-            _onPermsGranted = onGranted
+            _onPermsResult = { granted ->
+                if (granted) {
+                    MeshcoreService.start(this)
+                    if (hasLocationPermission()) jsApi.locationPermissionGranted()
+                    onGranted()
+                } else {
+                    // Guide the user to Settings if the perms are permanently
+                    // denied (no prompt will appear again), then reject the call.
+                    maybePromptAppSettings(missing)
+                    onDenied?.invoke()
+                }
+            }
             requestPerms.launch(missing.toTypedArray())
         }
+    }
+
+    // After a denial, if every still-missing permission is permanently denied
+    // (the system will no longer show a prompt), surface a Toast and open the
+    // app's settings screen so the user isn't stuck. Best-effort and defensive.
+    private fun maybePromptAppSettings(perms: List<String>) {
+        val stillMissing = perms.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (stillMissing.isEmpty()) return
+        val permanentlyDenied = stillMissing.all {
+            !ActivityCompat.shouldShowRequestPermissionRationale(this, it)
+        }
+        if (!permanentlyDenied) return
+        Toast.makeText(this, "Permission required — enable it in Settings", Toast.LENGTH_LONG).show()
+        try {
+            startActivity(Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            ))
+        } catch (_: Exception) {}
     }
 
     // ---- device picker (called from BleBridge) --------------------------
 
     fun requestDevice(reqId: String, filtersJson: String) {
         val prefixes = parsePrefixes(filtersJson)
-        main.post { ensureConnectPermissions { startScanDialog(reqId, prefixes) } }
+        main.post {
+            ensureConnectPermissions(
+                onDenied = {
+                    jsApi.resolve(reqId, false, errJson(BridgeError.SECURITY, "Bluetooth permission not granted"))
+                }
+            ) { startScanDialog(reqId, prefixes) }
+        }
     }
 
     // ---- USB serial picker (called from SerialBridge) -------------------
@@ -554,8 +644,12 @@ class MainActivity : AppCompatActivity() {
             ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
             callback
         )
-        // Stop scanning after 20 s to save battery; the dialog stays open.
-        main.postDelayed({ stopScan() }, 20_000)
+        // Stop scanning after 20 s to save battery; the dialog stays open. Held
+        // so an early resolve/cancel can cancel it (see stopScan).
+        scanTimeoutRunnable?.let { main.removeCallbacks(it) }
+        val timeout = Runnable { stopScan() }
+        scanTimeoutRunnable = timeout
+        main.postDelayed(timeout, 20_000)
 
         pickerDialog = AlertDialog.Builder(this)
             .setTitle("Select MeshCore device")
@@ -592,6 +686,10 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun stopScan() {
+        // Cancel the 20 s battery timer so it can't stop a later scan. Runs even
+        // when there's no active scan (resolvePicker/cancelPicker both call here).
+        scanTimeoutRunnable?.let { main.removeCallbacks(it) }
+        scanTimeoutRunnable = null
         val cb = scanCallback ?: return
         scanCallback = null
         try {

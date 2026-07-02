@@ -262,6 +262,31 @@ export class PacketStore {
         await this._write('hashes', os => { for (const r of records) os.put(r); });
     }
 
+    /** Like putHashes but never regresses a hash already on disk: keeps the
+     *  earliest firstSeen and preserves an already-stored type/meta instead of
+     *  overwriting it. Used by the live write-flush, where "new hash" is judged
+     *  against the RAM window and so can be true for a hash still on disk (aged
+     *  out of RAM) — a plain put() there would reset its firstSeen (jumping the
+     *  packet to the top of the time-sorted table) and null out its type/meta. */
+    async putHashesMerge(records) {
+        if (!records || !records.length) return;
+        await this._write('hashes', os => {
+            for (const r of records) {
+                const g = os.get(r.hash);
+                g.onsuccess = () => {
+                    const ex = g.result;
+                    if (!ex) { os.put(r); return; }
+                    os.put({
+                        hash: r.hash,
+                        firstSeen: Math.min(ex.firstSeen ?? Infinity, r.firstSeen ?? Infinity),
+                        type: ex.type ?? r.type ?? null,
+                        meta: ex.meta ?? r.meta ?? null,
+                    });
+                };
+            }
+        });
+    }
+
     async getHash(hash) {
         return this._read('hashes', os => os.get(hash), null, r => r ?? null);
     }
@@ -359,8 +384,8 @@ export class PacketStore {
                         step();
                         return;
                     }
-                    tailPks.add(cur.value[pk]);
                     const go = deliver(cur.value);
+                    tailPks.add(cur.value[pk]);
                     if (go === null) return;
                     if (!go) { resolve(); return; }
                     cur.continue();
@@ -704,7 +729,7 @@ export class PacketStore {
                         if (probe.result === undefined) { cur.delete(); deletedHashes++; }
                         cur.continue();
                     };
-                    probe.onerror = () => cur.continue();
+                    probe.onerror = (e) => { e.preventDefault(); cur.continue(); };
                 };
                 tx.oncomplete = () => resolve();
                 tx.onerror = () => reject(tx.error);

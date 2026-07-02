@@ -185,6 +185,7 @@ class SerialManager(private val context: Context, private val js: JsApi) {
             }
             val p = driver.ports.firstOrNull()
             if (p == null) {
+                connection.close()   // else the opened USB connection FD leaks
                 js.resolve(reqId, false, errJson(BridgeError.NETWORK, "USB device has no serial port"))
                 return@execute
             }
@@ -235,6 +236,17 @@ class SerialManager(private val context: Context, private val js: JsApi) {
 
     fun close(portId: String) {
         if (portId == openPortId) ioExecutor.execute { closeInternal() }
+    }
+
+    // Called from the activity's onDestroy: close the port and stop listening for
+    // USB permission/detach broadcasts, so a destroyed activity leaks neither the
+    // port FD nor the receiver.
+    fun cleanup() {
+        try { closeInternal() } catch (_: Exception) {}
+        if (receiverRegistered) {
+            try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+            receiverRegistered = false
+        }
     }
 
     private fun closeInternal() {
