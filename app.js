@@ -3243,7 +3243,7 @@ class MeshCoreApp {
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
             if (!opts.replaying && !opts.importing && this._storeReady) {
-                this._upsertChartCell(now, snr, rssi, repeater, type);
+                this._upsertChartCell(now, snr, rssi, repeater, type, hash);
             }
         }
         if (loc) {
@@ -3631,6 +3631,10 @@ class MeshCoreApp {
     async _openPacketDetail(hash, col) {
         this._closeAllDetails();
         if (this._storeReady) {
+            // A just-received packet may still sit in the 4 s write buffer —
+            // flush first, or the narrow index scan (disk-only) would miss it
+            // and the detail would silently fail to open.
+            await this._flushWrites();
             // Ensure a fresh narrow index for the current selection, then find
             // which page the hash sits on (one row per hash, so it is unique).
             if (!this._tableNarrowHashes || this._tableNarrowIndexKey !== this._tableNarrowKey())
@@ -5211,7 +5215,7 @@ class MeshCoreApp {
 
     // Fold one live observation into the chart bucket layers (base always, the
     // zoom layer when the time falls inside it).
-    _upsertChartCell(time, snr, rssi, rawId, type = null) {
+    _upsertChartCell(time, snr, rssi, rawId, type = null, hash = null) {
         const fold = layer => {
             const bIdx = Math.floor((time - layer.lo) / layer.width);
             const key = rawId + '|' + bIdx;
@@ -5225,12 +5229,13 @@ class MeshCoreApp {
             }
             g.count++;
             // When a bucket holds exactly one reception it stands for a single
-            // packet, so carry its exact time and type for the tooltip (ms + type
-            // badge). As soon as a second reception folds in, the bucket is a
-            // cluster — drop both (no single time/type). Disk-loaded buckets never
-            // get these fields, so old aggregates correctly show neither.
-            if (g.count === 1) { g.exactTime = time; g.type = type ?? null; }
-            else { g.exactTime = null; g.type = null; }
+            // packet, so carry its exact time, type and hash — the tooltip shows
+            // ms + the type badge, and a chart click opens that packet's detail.
+            // As soon as a second reception folds in, the bucket is a cluster —
+            // drop all three. (Disk-built buckets get exactTime/hash from
+            // bucketObs; type is looked up per-hover from the hashes store.)
+            if (g.count === 1) { g.exactTime = time; g.type = type ?? null; g.hash = hash ?? null; }
+            else { g.exactTime = null; g.type = null; g.hash = null; }
             if (snr != null) {
                 g.snrSum += snr; g.snrN++;
                 if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
