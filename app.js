@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=145';
-import { PacketStore } from './packet-store.js?v=18';
+import { Signal3DMap } from './signal3d.js?v=146';
+import { PacketStore } from './packet-store.js?v=19';
 import { buildCsv, parseCsv } from './csv.js?v=1';
 import { Store } from './storage.js?v=1';
 
@@ -701,12 +701,14 @@ class MeshCoreApp {
             applyRepExpand(Store.bool('repExpand', false));
         }
 
-        // Corner notice buttons
-        // These are position:fixed. The Text-size feature puts a transform on
-        // <body>, which makes <body> the containing block for fixed descendants —
-        // they'd then scroll away with the page instead of staying put. Re-parent
-        // them to <html> (never transformed) so they stay truly viewport-fixed.
-        for (const id of ['filterNotice', 'selNotice']) {
+        // These are position:fixed. The Text-size feature (and the ≥1024px
+        // desktop rule) puts a transform on <body>, which makes <body> the
+        // containing block for fixed descendants — they'd then anchor to the
+        // document instead of the viewport (rendering off-screen, and sizing
+        // their 100vh at the scale factor). Re-parent them to <html> (never
+        // transformed) so they stay truly viewport-fixed. The modal overlays
+        // (help / WiFi / disconnect alarm) hit the same trap, so include them.
+        for (const id of ['filterNotice', 'selNotice', 'helpModal', 'wifiModal', 'disconnectAlarm']) {
             const el = document.getElementById(id);
             if (el) document.documentElement.appendChild(el);
         }
@@ -1141,11 +1143,17 @@ class MeshCoreApp {
 
         const helpModal = document.getElementById('helpModal');
         const openHelp = () => {
+            this._helpReturnFocus = document.activeElement;
             helpModal?.classList.remove('hidden');
             helpModal?.querySelector('.help-modal')?.scrollTo(0, 0);
+            // Move focus into the dialog so keyboard/screen-reader users land in
+            // it (and Escape/close work), then restore it on close.
+            document.getElementById('helpModalClose')?.focus();
         };
         const closeHelp = () => {
             helpModal?.classList.add('hidden');
+            if (this._helpReturnFocus?.focus) this._helpReturnFocus.focus();
+            this._helpReturnFocus = null;
         };
         document.getElementById('helpBtn')?.addEventListener('click', e => {
             e.stopPropagation();
@@ -1430,8 +1438,14 @@ class MeshCoreApp {
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
+        if (!this.device) return;
         await new Promise(r => setTimeout(r, 300));
+        if (!this.device) return;
         await this.sendGetContacts();
+        // A drop (or user cancel) during any of the awaits above already ran
+        // onDisconnected() and reset the UI — bail before we clobber it with a
+        // stale "Connected" state that no live link backs.
+        if (!this.device) return;
 
         // Battery is read from MeshCore opcode 0x0c (voltage in mV) — more
         // accurate than the BLE Battery Service which some devices report as 100%.
@@ -1685,6 +1699,9 @@ class MeshCoreApp {
     async _finishCompanionConnect(port) {
         this.connectionMode = 'companion';
         await this.sendGetContacts();
+        // A drop during the await above swaps serialPort out (onDisconnected) —
+        // don't finalise a "Connected" state the live port no longer backs.
+        if (this.serialPort !== port) return;
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
         this._setActiveTransportBtn(this._serialBtnKind || 'serial', 'Disconnect', () => this.disconnect());
@@ -1715,8 +1732,12 @@ class MeshCoreApp {
         // the following 'log start' parses cleanly.
         await this._serialWriteText('\r\n');
         await new Promise(r => setTimeout(r, 150));
+        if (this.serialPort !== port) return;
         await this._serialWriteText('log start\r\n');   // enable packet logging to file
         await this._serialWriteText('log erase\r\n');   // drop stale backlog; we timestamp at reception
+        // A drop during the command burst above swaps serialPort out — bail
+        // before we finalise a "Connected" state the live port no longer backs.
+        if (this.serialPort !== port) return;
 
         this._neighborSeen = new Map();
         this._pendingRaw = [];
@@ -1745,9 +1766,18 @@ class MeshCoreApp {
     // Write plain text to the serial port (repeater CLI commands).
     async _serialWriteText(text) {
         if (!this.serialPort) return;
-        const writer = this.serialPort.writable.getWriter();
-        try { await writer.write(new TextEncoder().encode(text)); }
-        finally { try { writer.releaseLock(); } catch (e) {} }
+        // Serialise writes through a chain: getWriter() throws while a previous
+        // write still holds the lock, and callers swallow that error — so two
+        // coincident commands (e.g. the neighbours + log polls that fire on the
+        // same 5 s tick) used to silently drop one. Queue them instead.
+        this._serialWriteChain = (this._serialWriteChain ?? Promise.resolve()).then(async () => {
+            const port = this.serialPort;
+            if (!port) return;
+            const writer = port.writable.getWriter();
+            try { await writer.write(new TextEncoder().encode(text)); }
+            finally { try { writer.releaseLock(); } catch (e) {} }
+        }).catch(() => {});
+        return this._serialWriteChain;
     }
 
     async _startSerialReadLoop(port) {
@@ -2497,11 +2527,13 @@ class MeshCoreApp {
             return;
         }
         el.classList.remove('hidden');
+        // d.name and d.id come from the BLE peripheral (advertised/GAP name),
+        // which is attacker-controllable — escape before injecting as HTML.
         el.innerHTML = '<span class="saved-label">Saved:</span>' +
             devices.map(d => `
                 <span class="saved-device">
-                    <button class="saved-btn" data-id="${d.id}">${d.name}</button>
-                    <button class="forget-btn" data-id="${d.id}" title="Forget">✕</button>
+                    <button class="saved-btn" data-id="${this._escHtml(d.id)}">${this._escHtml(d.name)}</button>
+                    <button class="forget-btn" data-id="${this._escHtml(d.id)}" title="Forget">✕</button>
                 </span>
             `).join('');
     }
@@ -2701,11 +2733,17 @@ class MeshCoreApp {
         // (clustered, surviving reload/export) the same way it shows incoming.
         const now = Date.now();
         const sentLoc = this.signalMap?.currentLocation() ?? null;
-        this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
+        // Canonicalise the column so the live star shares the exact column key
+        // the table/other charts use (and that disk-loaded sent points resolve to
+        // via _resolveColReadonly). Using the raw prefix could select a
+        // non-existent column on click. The stored rawId stays raw (resolved on
+        // read). The paired DSC ingest below resolves the same key.
+        const sentCol = this.findOrCreateColumn(pubKeyHex);
+        this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: sentCol, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
         if (!this._storeDead) { this._sentWriteBuf.push({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null }); this._scheduleWriteFlush(); }
         this._scheduleChartRender();
         if (sentLoc && remoteSnr != null) {
-            this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: pubKeyHex, time: now, rawId: pubKeyHex });
+            this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: sentCol, time: now, rawId: pubKeyHex });
         }
 
         // Each DSC response → new row in Received Packets; always use current time so order is correct.
@@ -3057,9 +3095,13 @@ class MeshCoreApp {
             tr.dataset.col = '';
         });
 
-        // Recompute aggregate stats for both columns
+        // Recompute aggregate stats for both columns. _recomputeRepeaterStats
+        // only sees the RAM-window chartPoints, so on a long session it collapses
+        // the split columns' totals (and can delete a column whose history is
+        // still on disk). Re-widen both from the disk chart base afterwards.
         this._recomputeRepeaterStats(existingCol);
         this._recomputeRepeaterStats(collisionKey);
+        this._restoreRepStatsFromBase();
     }
 
     _recomputeRepeaterStats(col) {
@@ -3649,6 +3691,10 @@ class MeshCoreApp {
         }
         // The reload re-applied selection dimming; open the packet's detail on top.
         this.toggleDetailRow(hash, col);
+        // Bring it into view — on a narrowed page the row can be well below the
+        // fold, so without this the only feedback to the chart click would be the
+        // pinned tooltip. block:'nearest' is a no-op when it's already visible.
+        document.getElementById(`row-${hash}`)?.scrollIntoView({ block: 'nearest' });
     }
 
     _syntaxHighlightJson(json) {
@@ -3934,10 +3980,16 @@ class MeshCoreApp {
         const svg = type === 'rssi' ? this.rssiChartSvg : this.snrChartSvg;
         if (!svg) return;
         const rect = svg.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const W = rect.width || 600;
-        const H = rect.height || 180;
+        // The page may be CSS-scaled (desktop/text-size transforms <body>), so
+        // getBoundingClientRect() is in scaled px while _renderChart drew the dots
+        // from svg.clientWidth (layout px). Work in layout px so the hit-test
+        // matches what's on screen: divide the cursor by the scale and size the
+        // geometry from clientWidth/clientHeight, exactly as _renderChart does.
+        const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
+        const mx = (e.clientX - rect.left) / scale;
+        const my = (e.clientY - rect.top) / scale;
+        const W = svg.clientWidth || 600;
+        const H = svg.clientHeight || 180;
         const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
@@ -4147,6 +4199,11 @@ class MeshCoreApp {
             }
             const tAt = this._chartTimeAtClientX(svg, e.clientX);
             if (tAt == null) return;
+            // At full view a zoom-OUT (wheel down) just clamps back to full — a
+            // no-op. Don't swallow it, so the page scrolls instead of the wheel
+            // getting trapped over the full-width chart. Zoom-IN (wheel up) still
+            // works from full view; once zoomed, both directions are handled.
+            if (!this._chartZoom && e.deltaY > 0) return;
             e.preventDefault();
             const factor = e.deltaY < 0 ? 1 / 1.2 : 1.2;
             this._setChartZoom(tAt - (tAt - win.tMin) * factor, tAt + (win.tMax - tAt) * factor);
@@ -4357,22 +4414,6 @@ class MeshCoreApp {
 
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.innerHTML = parts.join('');
-
-        // Find the most recent point per column, then sort best → worst
-        const lastByCol = new Map();
-        for (const p of pts) {
-            if (!lastByCol.has(p.col) || p.time > lastByCol.get(p.col).time) lastByCol.set(p.col, p);
-        }
-        const visible = [...lastByCol.keys()].sort((a, b) => {
-            const pa = lastByCol.get(a), pb = lastByCol.get(b);
-            const va = type === 'rssi' ? pa.rssi : pa.snr;
-            const vb = type === 'rssi' ? pb.rssi : pb.snr;
-            if (vb == null && va == null) return 0;
-            if (vb == null) return -1;
-            if (va == null) return 1;
-            return vb - va;
-        });
-
     }
 
     // Append the static chart frame (Y/X gridlines + labels + axes) to `parts`.
@@ -4590,10 +4631,15 @@ class MeshCoreApp {
         if (!svg) return;
 
         const rect = svg.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const W = rect.width || 600;
-        const H = rect.height || 180;
+        // Work in layout px (svg.clientWidth), the space _renderChart drew the
+        // dots in, so hit-testing matches the screen even when <body> is
+        // CSS-scaled (desktop/text-size zoom). rect.width/clientWidth IS that
+        // scale; the positioning block below multiplies back by it.
+        const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
+        const mx = (e.clientX - rect.left) / scale;
+        const my = (e.clientY - rect.top) / scale;
+        const W = svg.clientWidth || 600;
+        const H = svg.clientHeight || 180;
         const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
         const cw = W - pl - pr;
         const ch = H - pt - pb;
@@ -4695,12 +4741,11 @@ class MeshCoreApp {
         // scrolls with the page.
         this.tooltip.style.display = 'block';
         const nv = type === 'rssi' ? nearest.rssi : nearest.snr;
-        let scale = 1;
-        const tr = getComputedStyle(document.body).transform;
-        const m = tr && tr !== 'none' ? tr.match(/matrix\(([^)]+)\)/) : null;
-        if (m) scale = parseFloat(m[1].split(',')[0]) || 1;
-        const px = (rect.left + xOf(nearest.time) + window.scrollX) / scale;
-        const py = (rect.top  + yOf(nv)           + window.scrollY) / scale;
+        // xOf/yOf are in layout px; the dot's viewport position is rect.left +
+        // xOf*scale. Convert that to body-local (un-scaled, scroll-included)
+        // coordinates for the position:absolute tooltip inside the scaled <body>.
+        const px = (rect.left + xOf(nearest.time) * scale + window.scrollX) / scale;
+        const py = (rect.top  + yOf(nv)           * scale + window.scrollY) / scale;
         const tw = this.tooltip.offsetWidth;
         const th = this.tooltip.offsetHeight;
         const margin = 8;
@@ -4806,8 +4851,14 @@ class MeshCoreApp {
         const LIVE = isAndroid ? 3000 : 60000;
         const reg = this._readReg();
         const now = Date.now();
+        // A backgrounded capture tab has its heartbeat throttled (chained timers
+        // run ~1×/min, OS sleep stops them entirely), so the beat age alone can
+        // wrongly mark a LIVE tab as closed — then offering its session shares the
+        // DB, and declining deletes it out from under the running tab. Web Locks
+        // survive throttling, so exclude any session a live tab still holds.
+        const live = await this._liveTabIds();
         const candidates = Object.entries(reg)
-            .filter(([, e]) => e && e.count > 0 && now - e.beat > LIVE)
+            .filter(([id, e]) => e && e.count > 0 && now - e.beat > LIVE && !live.has(id))
             .sort((a, b) => b[1].beat - a[1].beat);
         if (candidates.length) {
             const [id, e] = candidates[0];
@@ -4818,8 +4869,30 @@ class MeshCoreApp {
             }
             for (const [oid] of candidates) this._deleteSession(oid);  // declined → discard all
         }
-        this._gcStaleSessions();
+        this._gcStaleSessions(live);
         return setTab(mk());
+    }
+
+    // Session ids currently held open by a live same-origin tab (each tab holds a
+    // `mc-tab-<id>` Web Lock for its lifetime). Web Locks are unaffected by
+    // background timer throttling, so this is a reliable "is that tab alive?"
+    // check where the heartbeat timestamp isn't. Empty set if the API is absent.
+    async _liveTabIds() {
+        const ids = new Set();
+        try {
+            if (navigator.locks?.query) {
+                const { held = [] } = await navigator.locks.query();
+                for (const l of held) if (l.name?.startsWith('mc-tab-')) ids.add(l.name.slice(7));
+            }
+        } catch (_) {}
+        return ids;
+    }
+
+    // Hold a lock named for this tab's session for the tab's whole lifetime (the
+    // callback never resolves), so other tabs' _liveTabIds() can see it is alive.
+    // Auto-released by the browser when the tab closes.
+    _holdTabLock() {
+        try { navigator.locks?.request?.('mc-tab-' + this._tabId, () => new Promise(() => {})); } catch (_) {}
     }
 
     _readReg() { try { return JSON.parse(localStorage.getItem('mc_db_reg') || '{}'); } catch (_) { return {}; } }
@@ -4845,18 +4918,19 @@ class MeshCoreApp {
     }
 
     _startDbHeartbeat() {
+        this._holdTabLock();   // let other tabs see this session is alive (throttle-proof)
         this._dbHeartbeat();
         setInterval(() => this._dbHeartbeat(), 15000);   // runs for the app's lifetime
     }
 
     // Garbage-collect databases of closed sessions that hold no data (stale and
     // empty). Sessions that hold data are handled by the resume prompt instead.
-    _gcStaleSessions() {
+    _gcStaleSessions(live = new Set()) {
         const reg = this._readReg();
         const now = Date.now(), STALE = 10 * 60 * 1000;
         let changed = false;
         for (const [id, e] of Object.entries(reg)) {
-            if (id === this._tabId) continue;
+            if (id === this._tabId || live.has(id)) continue;   // never GC a live tab's DB
             if (!e || (!e.count && now - (e.beat || 0) > STALE)) {
                 try { indexedDB.deleteDatabase('meshcore-capture-' + id); } catch (_) {}
                 delete reg[id]; changed = true;
@@ -4989,7 +5063,7 @@ class MeshCoreApp {
             const obs  = this._obsWriteBuf;  this._obsWriteBuf  = [];
             const sent = this._sentWriteBuf; this._sentWriteBuf = [];
             const hs   = this._hashWriteBuf; this._hashWriteBuf = [];
-            if (hs.length)   this.store.putHashes(hs);   // before obs: readers join obs → hashes
+            if (hs.length)   this.store.putHashesMerge(hs);   // before obs: readers join obs → hashes; merge keeps disk firstSeen/type/meta
             if (obs.length)  this.store.putObs(obs);
             if (sent.length) this.store.putSent(sent);
             if (obs.length || sent.length || hs.length) this._dataVer++;
@@ -5322,7 +5396,7 @@ class MeshCoreApp {
         if (!this._storeReady) return;
         if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
         const dirty = this._hashWriteBuf.length || this._obsWriteBuf.length || this._sentWriteBuf.length;
-        if (this._hashWriteBuf.length) { const h = this._hashWriteBuf; this._hashWriteBuf = []; await this.store.putHashes(h); }
+        if (this._hashWriteBuf.length) { const h = this._hashWriteBuf; this._hashWriteBuf = []; await this.store.putHashesMerge(h); }
         if (this._obsWriteBuf.length)  { const o = this._obsWriteBuf;  this._obsWriteBuf  = []; await this.store.putObs(o); }
         if (this._sentWriteBuf.length) { const s = this._sentWriteBuf; this._sentWriteBuf = []; await this.store.putSent(s); }
         if (dirty) this._dataVer++;
@@ -5554,11 +5628,14 @@ class MeshCoreApp {
         const narrowed = this._tableNarrowFn() != null;
         if (narrowed && !this._tableNarrowHashes) await this._buildTableNarrowIndex();
         if (!narrowed) this._tableNarrowHashes = this._tableNarrowSet = null;
-        const total = narrowed ? this._tableNarrowHashes.length : this._tableHashCount;
+        // A concurrent narrowing change can make _buildTableNarrowIndex bail
+        // (leaving null); treat as empty — the follow-up repaginate re-renders.
+        const narrowHashes = narrowed ? (this._tableNarrowHashes ?? []) : null;
+        const total = narrowed ? narrowHashes.length : this._tableHashCount;
         this._tablePageCount = Math.max(1, Math.ceil(total / size));
         this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
         const hashes = narrowed
-            ? await this.store.getHashes(this._tableNarrowHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
+            ? await this.store.getHashes(narrowHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
             : await this.store.pageHashes(this._tablePage * size, size, winFrom);
         const map = new Map();
         for (const h of hashes) {
@@ -5590,6 +5667,11 @@ class MeshCoreApp {
     // heard it. One chunked scan over the obs store; the rawId → matches
     // projection is memoised since rawIds repeat heavily.
     async _buildTableNarrowIndex() {
+        // Capture the narrowing this scan is FOR. Two quick chart-point clicks on
+        // different repeaters start overlapping scans; if a slower earlier scan
+        // finished last it used to stamp the current (newer) key over its own
+        // stale hashes, so the newer selection then paged the wrong repeater.
+        const builtForKey = this._tableNarrowKey();
         const narrowFn = this._tableNarrowFn();
         const matchByRawId = new Map();
         const firstHeard = new Map();   // hash -> earliest matching obs time
@@ -5603,11 +5685,14 @@ class MeshCoreApp {
             // eachObs iterates ascending time, so the first sighting is the earliest.
             if (ok && !firstHeard.has(o.hash)) firstHeard.set(o.hash, o.time);
         });
+        // The narrowing changed while we scanned — our result is stale; don't
+        // overwrite (or mislabel) the index the current selection is using.
+        if (builtForKey !== this._tableNarrowKey()) return;
         this._tableNarrowHashes = [...firstHeard.entries()]
             .sort((a, b) => b[1] - a[1])
             .map(([h]) => h);
         this._tableNarrowSet = new Set(this._tableNarrowHashes);
-        this._tableNarrowIndexKey = this._tableNarrowKey();
+        this._tableNarrowIndexKey = builtForKey;
     }
 
     // Insert / update / remove the prev-next pager beneath the packet table.
@@ -5859,8 +5944,10 @@ class MeshCoreApp {
         if (!deletedHashes) return;
         if (this._tableNarrowHashes) {
             // No way to tell how many of the deleted hashes were in the narrow
-            // index — rebuild it (bounded: finite retention keeps the store small).
-            this._loadTablePage(0, true);
+            // index — rebuild it (bounded: finite retention keeps the store
+            // small). Keep the user on their CURRENT page (clamped) instead of
+            // yanking them back to page 1 on every ~10 s prune tick.
+            this._loadTablePage(this._tablePage, true);
             return;
         }
         this._tableHashCount = Math.max(0, this._tableHashCount - deletedHashes);
@@ -6488,6 +6575,15 @@ class MeshCoreApp {
     }
 
     _applyRepFilter() {
+        // A repeater filter and a single-repeater selection are competing
+        // narrowings, and selection silently wins in _tableNarrowFn while its
+        // own notice is hidden under a filter — so a stale selection under a new
+        // filter paged the wrong repeater with no visible cue. Applying a filter
+        // clears the selection so the filter is the sole narrowing.
+        if (this._repFilterTerms.length && this._selectedCol) {
+            this._selectedCol = null;
+            this.signalMap?.selectColumn(null);
+        }
         // Repaginate the packet table when the filter changed: pages are then
         // drawn from the narrowed hash index, so no pages of entirely hidden
         // rows. Async — the immediate render below narrows the current page's
@@ -6511,7 +6607,6 @@ class MeshCoreApp {
     async _exportCsv() {
         const useDisk = this._storeReady;
         if (this.hashData.size === 0 && !useDisk) return;
-        this._unsavedRxCount = 0;
 
         // Flush any buffered writes so the export reflects everything captured.
         if (useDisk) await this._flushWrites();
@@ -6591,9 +6686,14 @@ class MeshCoreApp {
         });
         const suggestedName = `meshcore-signal-tester-${new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-')}.csv`;
 
-        // Android native app: delegate to SAF picker (shows system "Save as" dialog)
+        // Clear the "unsaved packets" guard only once a save actually happens —
+        // resetting up front would disarm the beforeunload warning even when the
+        // user then cancels the save dialog.
+        // Android native app: delegate to SAF picker (shows system "Save as" dialog).
+        // Fire-and-forget (no result callback), so treat delegation as the save.
         if (window.AndroidFiles?.saveCsvWithPicker) {
             window.AndroidFiles.saveCsvWithPicker(suggestedName, csv);
+            this._unsavedRxCount = 0;
             return;
         }
 
@@ -6606,9 +6706,10 @@ class MeshCoreApp {
                 const writable = await fh.createWritable();
                 await writable.write(csv);
                 await writable.close();
+                this._unsavedRxCount = 0;
                 return;
             } catch (e) {
-                if (e.name === 'AbortError') return; // user cancelled
+                if (e.name === 'AbortError') return; // user cancelled — keep the guard armed
             }
         }
         // Fallback for browsers without showSaveFilePicker
@@ -6621,6 +6722,7 @@ class MeshCoreApp {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        this._unsavedRxCount = 0;
     }
 
     // Back-compat single-file entry point.
@@ -6801,8 +6903,11 @@ class MeshCoreApp {
         // rebuild below: _rebuildChartBase buckets over [from, frozen-now], so if
         // the freeze still held an older value the most recent imported points
         // would be truncated from the base layer and only reappear on a zoom.
+        // Never rewind an already-newer frozen clock: importing an OLDER archive
+        // into a session that holds newer paused/restored data must not truncate
+        // that newer data out of the base layer (which buckets up to frozen-now).
         const lastTime = rows.length ? rows.reduce((m, r) => Math.max(m, r.time), 0) : 0;
-        if (!this._collecting && lastTime) this._chartFrozenAt = lastTime + 1_000;
+        if (!this._collecting && lastTime) this._chartFrozenAt = Math.max(this._chartFrozenAt ?? 0, lastTime + 1_000);
 
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.
@@ -7007,11 +7112,16 @@ class MeshCoreApp {
         const surprise = this._wasConnected && !this._intentionalDisconnect;
         this._wasConnected = false;
         this._intentionalDisconnect = false;
+        // A reconnect cycle already owns the recovery. Return BEFORE touching
+        // _lastDropWasSurprise: each failed retry re-enters here with
+        // _wasConnected false (surprise=false), and clobbering the flag would
+        // wipe the original surprise intent that "reconnect when Bluetooth comes
+        // back on" (_onBleAdapterOn) depends on.
+        if (this._reconnecting) return;
         // Remember whether we'd want to come back: a surprise drop yes, a manual
         // disconnect no. Bluetooth turning back on (e.g. after airplane mode) uses
         // this to decide whether to restart auto-reconnect after it gave up.
         this._lastDropWasSurprise = surprise;
-        if (this._reconnecting) return;   // a reconnect cycle already owns the recovery
         if (surprise) {
             this._playDisconnectAlarm();   // audible cue on every unexpected drop (if sound on)
             if (this._autoReconnect && this._lastConnectedId) this._startAutoReconnect();

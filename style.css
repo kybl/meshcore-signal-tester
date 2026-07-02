@@ -64,6 +64,12 @@ html.light-theme {
    per-component .foo.hidden rules used to beat e.g. .map-controls .btn-primary). */
 .hidden { display: none !important; }
 
+/* Font lives on <html> (not just <body>) so the fixed overlays re-parented to
+   <html> at startup — help / WiFi / disconnect alarm, moved out of the
+   transformed <body> — still inherit it. */
+html {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: var(--bg-gutter);
@@ -1527,6 +1533,9 @@ header .help-icon.active {
 .wifi-field input {
     font-weight: 400; font-size: 15px; padding: 9px 11px;
     border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box;
+    /* The card is white in both themes; force a light field so the default
+       dark color-scheme doesn't render dark wells with light text inside it. */
+    background: #fff; color: #222; color-scheme: light;
 }
 .wifi-field input:focus { outline: none; border-color: #4a90d9; box-shadow: 0 0 0 2px rgba(74, 144, 217, 0.25); }
 .wifi-modal-error {
@@ -2039,6 +2048,10 @@ html.light-theme .map-offline .map-empty {
     top: 10px;
     right: 10px;
     background: rgba(255, 255, 255, 0.92);
+    /* A white card in BOTH themes, so pin its text dark — without this the
+       title/ID inherits the (near-white) dark-theme --text-primary and is
+       invisible on the card. */
+    color: #1a2530;
     border-radius: 8px;
     padding: 7px 11px 8px;
     font-size: 12px;
@@ -2118,7 +2131,9 @@ html.light-theme .map-offline .map-empty {
 .smi-colname {
     font-size: 11px;
     font-weight: normal;
-    color: #8cc;
+    /* On the always-white .map-info card, so a dark teal in both themes —
+       #8cc was near-invisible on white in the (default) dark theme. */
+    color: #1a6080;
     margin-left: 5px;
 }
 
@@ -2225,7 +2240,7 @@ html.light-theme .debug-input-label {
 
 .debug-feedback {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.85);
+    color: var(--text-secondary);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -2328,7 +2343,6 @@ td.col-dim { opacity: 0.25; }
     top: 0;
     left: 0;
     right: 0;
-    padding-top: calc(10px + env(safe-area-inset-top, 0px));
     min-width: 0;
     max-width: none;
     flex-direction: row;
@@ -2344,6 +2358,10 @@ td.col-dim { opacity: 0.25; }
     border: 0;
     border-bottom: 2px solid #f59e0b;
     padding: 9px 14px;
+    /* AFTER the shorthand (which would otherwise reset it): keep the bar's text
+       clear of the status bar in edge-to-edge, its background still bleeding
+       under it. env() is 0 on the web, so this is a no-op there. */
+    padding-top: calc(9px + env(safe-area-inset-top, 0px));
     box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
 }
 .notice-topbar .corner-notice-line1 { color: #fff; font-weight: 700; }

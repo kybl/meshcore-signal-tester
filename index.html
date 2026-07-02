@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=168">
+    <link rel="stylesheet" href="style.css?v=169">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -336,7 +336,7 @@
     </div>
 
     <div id="helpModal" class="help-modal-overlay hidden">
-        <div class="help-modal">
+        <div class="help-modal" role="dialog" aria-modal="true" aria-label="Help">
             <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
             <div class="help-modal-title">MeshCore Signal Tester</div>
             <p class="help-modal-intro">Connects to a MeshCore companion radio (Bluetooth, USB, or — in the Android app — WiFi) or a MeshCore repeater (USB) and monitors incoming mesh packets in real time — tracking which packets were received, via which repeaters, and with what signal quality. The <b>Discover nodes</b> button sends an active discovery request so nearby nodes announce themselves and report the signal quality they measured for you; everything else is passive listening.</p>
@@ -414,6 +414,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=371"></script>
+    <script type="module" src="app.js?v=372"></script>
 </body>
 </html>
