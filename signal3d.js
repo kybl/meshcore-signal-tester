@@ -2054,11 +2054,12 @@ export class Signal3DMap {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-        // gl_PointSize / PointsMaterial.size are in device pixels, but the
-        // drawing buffer is scaled by the renderer's pixel ratio (up to 2× on
-        // retina). Multiply by that ratio so dots stay a constant CSS size
-        // (matching _pickRxPoint's CSS-px PICK_RADIUS) regardless of DPR.
-        const dotSize = this._sphereSize * sizeMult * 7 * this.renderer.getPixelRatio();
+        // gl_PointSize / PointsMaterial.size are in device pixels, so on a
+        // retina buffer (pixel ratio 2) dots render at half this in CSS px.
+        // That per-DPR difference is the look the app was visually tuned to —
+        // multiplying by getPixelRatio() to "normalise" it doubled the balls on
+        // every phone (regression), so it stays as-is deliberately.
+        const dotSize = this._sphereSize * sizeMult * 7;
         const isLit = opacity >= 1.0;
         const mat = new THREE.PointsMaterial({
             map:             tex,
