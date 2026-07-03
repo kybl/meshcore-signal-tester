@@ -2261,13 +2261,16 @@ class MeshCoreApp {
     }
 
     _colStats(col) {
-        const pts = this.chartPoints.filter(p => p.col === col);
-        if (!pts.length) return null;
-        const maxRssi = Math.max(...pts.map(p => p.rssi));
-        const snrPts  = pts.filter(p => p.snr != null);
-        const maxSnr  = snrPts.length ? Math.max(...snrPts.map(p => p.snr)) : null;
-        const last    = pts[pts.length - 1];
-        return { count: pts.length, lastRssi: last.rssi, lastSnr: last.snr ?? null, maxRssi, maxSnr };
+        // Same source as the Seen Repeaters row: session stats maintained at
+        // ingest and widened from disk by _restoreRepStatsFromBase. The old
+        // live-chartPoints computation covered only the RAM window, so for a
+        // disk-only repeater (selected via an older chart dot, or after the RAM
+        // window aged out) it returned null and "Show more" showed nothing —
+        // and its counts contradicted the table row next to it.
+        const a = this.allRepeaters.get(col);
+        if (!a) return null;
+        return { count: a.count, lastRssi: a.lastRssi ?? null, lastSnr: a.lastSnr ?? null,
+                 maxRssi: a.maxRssi ?? null, maxSnr: a.maxSnr ?? null };
     }
 
     _contactsForMapButtons(col) {
@@ -3690,11 +3693,10 @@ class MeshCoreApp {
             this._renderMsgTable();
         }
         // The reload re-applied selection dimming; open the packet's detail on top.
+        // Deliberately NO scrollIntoView: the packet table sits below the 3D map,
+        // so scrolling the row into view yanked the page away from the chart the
+        // user just clicked. The pinned tooltip is the click feedback.
         this.toggleDetailRow(hash, col);
-        // Bring it into view — on a narrowed page the row can be well below the
-        // fold, so without this the only feedback to the chart click would be the
-        // pinned tooltip. block:'nearest' is a no-op when it's already visible.
-        document.getElementById(`row-${hash}`)?.scrollIntoView({ block: 'nearest' });
     }
 
     _syntaxHighlightJson(json) {
@@ -6121,11 +6123,17 @@ class MeshCoreApp {
                 const allPubkeys = mapBtns.map(c => c.pubKeyFullHex).join('|');
                 mapHtml += `<div class="cn-map-btns"><button class="cn-map-btn" data-pubkeys="${this._escHtml(allPubkeys)}">📍 Show on map</button></div>`;
             }
-            let html = `<div class="cn-showmore-row"><label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>${mapHtml}</div>`;
+            // No stats at all → no "Show more" checkbox (it would reveal nothing);
+            // the map button row still renders when the repeater has GPS contacts.
+            const showMoreHtml = stats
+                ? `<label class="cn-showmore-label"><input type="checkbox" id="${checkId}"${showMore ? ' checked' : ''}> Show more</label>`
+                : '';
+            if (!showMoreHtml && !mapHtml) return '';
+            let html = `<div class="cn-showmore-row">${showMoreHtml}${mapHtml}</div>`;
             if (showMore && stats) {
                 html += `<div class="cn-stats">` +
                     `<div>Packets: <b>${stats.count}</b></div>` +
-                    `<div>RSSI: last <b>${stats.lastRssi}</b>, best <b>${stats.maxRssi}</b> dBm</div>` +
+                    `<div>RSSI: last <b>${stats.lastRssi ?? '—'}</b>, best <b>${stats.maxRssi ?? '—'}</b> dBm</div>` +
                     `<div>SNR: last <b>${fSnr(stats.lastSnr)}</b>, best <b>${fSnr(stats.maxSnr)}</b> dB</div>` +
                     `</div>`;
                 if (col && col !== 'direct') {
