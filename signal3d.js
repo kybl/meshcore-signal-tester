@@ -340,6 +340,16 @@ export class Signal3DMap {
         this.controls.addEventListener('end', () => {
             clearTimeout(this._viewUpdateTimer);
             this._viewUpdateTimer = setTimeout(() => this._updateOverlay(), 700);
+            // Fire the dot-detail refresh directly here too (not only via the
+            // debounced 'change' path). enableDamping makes controls.update()
+            // emit a 'change' every frame while the camera settles, which keeps
+            // resetting _notifyViewChange's 350 ms timer so it never fires while
+            // the tab is foregrounded — only backgrounding it (rAF pauses, the
+            // stream stops) let the timer fire, which is why "leave the browser
+            // and return" was the ONLY way to load the zoomed-in points. A
+            // gesture just ended, so re-query the finer grid now. (The detail
+            // TILES above already had this fallback; the dots didn't.)
+            this._fireViewChange();
         });
         // User interaction cancels any running camera fly/turn animation.
         // Follow mode is NOT dropped immediately: small adjustments (pan a bit,
@@ -1273,10 +1283,18 @@ export class Signal3DMap {
     _notifyViewChange() {
         if (!this.onViewChange) return;
         clearTimeout(this._viewChangeTimer);
-        this._viewChangeTimer = setTimeout(() => {
-            const bb = this._cameraViewBbox();
-            if (bb) this.onViewChange(bb, this._metersPerPixel());
-        }, 350);
+        this._viewChangeTimer = setTimeout(() => this._fireViewChange(), 350);
+    }
+
+    // Fire onViewChange NOW for the current camera view (bypasses the debounce).
+    // Called directly on gesture 'end' so a continuous damping 'change' stream
+    // can't starve the debounced path (see the 'end' handler).
+    _fireViewChange() {
+        clearTimeout(this._viewChangeTimer);
+        this._viewChangeTimer = null;
+        if (!this.onViewChange) return;
+        const bb = this._cameraViewBbox();
+        if (bb) this.onViewChange(bb, this._metersPerPixel());
     }
 
     // True when the map can be seen right now: app foreground and the canvas in
