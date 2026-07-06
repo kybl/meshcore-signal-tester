@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js?v=1';
+import { colsOverlap } from './column-key.js?v=1';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 12;    // world units for strongest signal
@@ -1349,22 +1350,13 @@ export class Signal3DMap {
         // so match leniently: equal, or sharing any "/"-segment. A strict ===
         // wrongly reported a collision selection as gone on a cleanup tick and
         // deselected it (clearing the table filter and notice too).
-        const shown = p => this._colsOverlap(p.col, col);
+        const shown = p => colsOverlap(p.col, col);
         const rx = this._histPoints != null ? this._histPoints : this._rxPoints;
         if (rx.some(shown)) return true;
         const sent = this._histOutgoingPts != null
             ? this._histOutgoingPts.concat(this._outgoingPts)
             : this._outgoingPts;
         return sent.some(shown);
-    }
-
-    // Two column keys refer to the same repeater if they are equal or share any
-    // prefix segment of a collision key ("a/b").
-    _colsOverlap(a, b) {
-        if (a === b) return true;
-        if (!a || !b) return false;
-        const sb = b.split('/');
-        return a.split('/').some(x => sb.includes(x));
     }
 
     purgeOlderThan(cutoff) {

@@ -1,0 +1,28 @@
+name: Web tests
+
+# Unit tests for the web app's pure logic (column-key semantics). No build step
+# or dependencies — Node's built-in test runner over the ESM sources.
+on:
+  push:
+    branches: ['**']
+    paths: &paths
+      - '*.js'
+      - 'test/**'
+      - 'package.json'
+      - '.github/workflows/web-tests.yml'
+  pull_request:
+    paths: *paths
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run tests
+        run: node --test

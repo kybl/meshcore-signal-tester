@@ -100,6 +100,7 @@ tasks.register('copyWebApp', Copy) {
         include 'storage.js'
         include 'signal3d.js'
         include 'packet-store.js'
+        include 'column-key.js'
         include 'style.css'
         include 'native-bridge.js'
         include 'logo.svg'
