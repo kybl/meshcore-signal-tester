@@ -1,5 +1,12 @@
 # Changelog
 
+<!-- On a release, the version number must be bumped in several places (see the
+     full list in app.js next to APP_VERSION):
+       - app.js APP_VERSION
+       - android/app/build.gradle versionName (== APP_VERSION) and versionCode
+       - a new dated entry below
+       - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
+
 ## [1.2.2] - 2026-06-27
 
 ### Added

@@ -7,10 +7,16 @@ import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
 
-// Single source of truth for the released app version, shown in the header (and
-// forwarded to the Android wrapper). Bump this on a release alongside the
-// CHANGELOG and the Android versionName. Distinct from the per-asset ?v= cache
-// busters, which change on every edit.
+// Released app version, shown in the header. Distinct from the per-asset ?v=
+// cache busters, which change on every edit.
+//
+// RELEASE VERSION LIVES IN SEVERAL PLACES — keep them in sync when bumping:
+//   1. here (APP_VERSION)                                        — the web version string
+//   2. android/app/build.gradle  → versionName fallback         — must match APP_VERSION
+//   3. android/app/build.gradle  → versionCode fallback         — separate monotonic integer
+//   4. CHANGELOG.md                                             — new dated "## [x.y.z]" entry
+//   5. fastlane/metadata/android/en-US/changelogs/<versionCode>.txt — new file named by versionCode
+// (The F-Droid recipe in fdroiddata auto-updates from the git tag — no manual edit there.)
 const APP_VERSION = '1.2.2-post';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
