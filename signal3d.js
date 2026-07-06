@@ -1343,12 +1343,28 @@ export class Signal3DMap {
     // outgoing-SNR stars. Used to decide if a dropped point should clear the
     // selection.
     _isColShown(col) {
+        // Collision keys are "a/b" (two merged repeater prefixes). A point's col
+        // and the selected col can legitimately differ across the merge boundary
+        // (an ambiguous packet may sit under "a/b" while a sibling is under "a"),
+        // so match leniently: equal, or sharing any "/"-segment. A strict ===
+        // wrongly reported a collision selection as gone on a cleanup tick and
+        // deselected it (clearing the table filter and notice too).
+        const shown = p => this._colsOverlap(p.col, col);
         const rx = this._histPoints != null ? this._histPoints : this._rxPoints;
-        if (rx.some(p => p.col === col)) return true;
+        if (rx.some(shown)) return true;
         const sent = this._histOutgoingPts != null
             ? this._histOutgoingPts.concat(this._outgoingPts)
             : this._outgoingPts;
-        return sent.some(p => p.col === col);
+        return sent.some(shown);
+    }
+
+    // Two column keys refer to the same repeater if they are equal or share any
+    // prefix segment of a collision key ("a/b").
+    _colsOverlap(a, b) {
+        if (a === b) return true;
+        if (!a || !b) return false;
+        const sb = b.split('/');
+        return a.split('/').some(x => sb.includes(x));
     }
 
     purgeOlderThan(cutoff) {
