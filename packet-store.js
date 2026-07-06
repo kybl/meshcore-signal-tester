@@ -600,14 +600,14 @@ export class PacketStore {
      *  cells, grouped by rawId. Keeps one representative per (rawId, cell): the
      *  strongest-RSSI observation, plus a count. Optionally clipped to bbox.
      *  Output is bounded by (#cells × #rawIds), independent of input size. */
-    async gridObs(fromTime, toTime, cellMeters, bbox = null) {
-        if (!this.db || !(cellMeters > 0)) return [];
-        const latCell = cellMeters / 111320;
+    // Aggregate positioned obs into per-repeater grid cells. `cellFn(lat, lon)`
+    // returns the cell indices {gx, gy}; the caller (app.js) supplies the map
+    // LOD binning (maplod.cellIndices) so cell definition lives in one place.
+    async gridObs(fromTime, toTime, cellFn, bbox = null) {
+        if (!this.db || typeof cellFn !== 'function') return [];
         const groups = new Map(); // `${rawId}|${gx}|${gy}` -> representative
         await this._eachPositioned(fromTime, toTime, bbox, r => {
-            const lonCell = cellMeters / (111320 * Math.cos(r.lat * Math.PI / 180) || 1);
-            const gy = Math.round(r.lat / latCell);
-            const gx = Math.round(r.lon / lonCell);
+            const { gx, gy } = cellFn(r.lat, r.lon);
             const key = r.rawId + '|' + gx + '|' + gy;
             let g = groups.get(key);
             if (!g) { g = { rawId: r.rawId, lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time, count: 0 }; groups.set(key, g); }

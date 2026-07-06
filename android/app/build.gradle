@@ -110,6 +110,7 @@ tasks.register('copyWebApp', Copy) {
         include 'column-key.js'
         include 'frame.js'
         include 'geo.js'
+        include 'maplod.js'
         include 'style.css'
         include 'native-bridge.js'
         include 'logo.svg'

@@ -16,6 +16,7 @@ on:
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'
+      - 'maplod.js'
       - 'style.css'
       - 'native-bridge.js'
       - 'logo.svg'

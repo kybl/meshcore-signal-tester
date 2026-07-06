@@ -1,11 +1,12 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=153';
-import { PacketStore } from './packet-store.js?v=20';
+import { PacketStore } from './packet-store.js?v=21';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
+import * as MapLod from './maplod.js?v=1';
 
 // Released app version, shown in the header. Distinct from the per-asset ?v=
 // cache busters, which change on every edit.
@@ -152,6 +153,7 @@ class MeshCoreApp {
         this._wideMapDetail   = null;            // finer cell layer for the zoomed-in bbox {cells, cell, bbox}
         this._wideMapKey      = null;            // identity of the last applied map view (skip same-view re-query)
         this._wideMapReq      = 0;               // monotonic token so only the latest concurrent refresh commits
+        this._mapDetailLevel  = null;            // current LOD pyramid level of the detail layer (hysteresis state)
         this._wideMapSentVer  = -1;              // dataVer the outgoing-SNR map layer was loaded for
         this._pendingMapUpserts = null;          // packets ingested before the base layer exists
         this._mapPushTimer    = null;            // coalesces cell upserts into one geometry push
@@ -5286,12 +5288,11 @@ class MeshCoreApp {
     // clamped to ~4 screen px at the current zoom; output stays bounded
     // (≤ ~2× target) regardless of how many packets the span holds.
 
-    // Same cell key math as PacketStore.gridObs, so RAM upserts and disk-built
-    // layers agree on cell identity.
+    // Cell identity for RAM upserts. Shares the one LOD binning (maplod.cellKey)
+    // with the disk-built layers (gridObs is fed maplod.cellIndices), so they
+    // agree on which cell a point belongs to.
     _mapCellKey(cellMeters, rawId, lat, lon) {
-        const latCell = cellMeters / 111320;
-        const lonCell = cellMeters / (111320 * Math.cos(lat * Math.PI / 180) || 1);
-        return rawId + '|' + Math.round(lon / lonCell) + '|' + Math.round(lat / latCell);
+        return MapLod.cellKey(cellMeters, rawId, lat, lon);
     }
 
     _mapCellsFrom(arr, cellMeters) {
@@ -5399,8 +5400,11 @@ class MeshCoreApp {
                 await this._flushWrites();   // the disk build must include everything buffered
                 const s = await this.store.regionStats(from, Infinity, null);
                 if (s.count) {
-                    const cell = cellFor(s.minLat, s.maxLat, s.minLon, s.maxLon);
-                    const pts = await this.store.gridObs(from, Infinity, cell, null);
+                    // Snap the coarse full-extent cell onto the LOD ladder so the
+                    // base nests with the detail levels and stays stable.
+                    const cell = MapLod.cellMetersForLevel(
+                        MapLod.levelForCellMeters(cellFor(s.minLat, s.maxLat, s.minLon, s.maxLon)));
+                    const pts = await this.store.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(cell, lat, lon), null);
                     this._wideMapBase = { cells: this._mapCellsFrom(pts, cell), cell, at: Date.now() };
                 } else {
                     this._wideMapBase = { cells: new Map(), cell: 0, at: Date.now() };
@@ -5412,30 +5416,45 @@ class MeshCoreApp {
                 if (pend) for (const o of pend) this._upsertMapCell(o);
             }
             const base = this._wideMapBase;
-            // Detail cell is derived from the view bbox itself (it IS the region
-            // whose dot density matters) — no extra disk scan needed for sizing.
-            let dCell = 0;
-            if (bbox && base.cells.size) {
-                dCell = Math.max(cellFor(bbox.minLat, bbox.maxLat, bbox.minLon, bbox.maxLon), (mpp ?? 0) * 4);
-                if (dCell >= base.cell) dCell = 0;   // would not refine — base alone suffices
+            const baseLevel = base.cell ? MapLod.levelForCellMeters(base.cell) : Infinity;
+            // Detail layer: a DISCRETE LOD pyramid level for the view (hysteresis
+            // via _mapDetailLevel), over a bbox padded so the coarse/fine seam
+            // sits off-screen. Discrete + globally-aligned cells mean panning only
+            // reveals edge cells and zoom steps cleanly between levels, instead of
+            // re-clustering every point on every camera nudge (the old continuous
+            // cell size did the latter — clusters flickered on any movement).
+            const PAD = 0.5;
+            let detailCell = 0, detailBbox = null, detailLevel = null;
+            if (bbox && base.cells.size && mpp > 0) {
+                const lvl = MapLod.pickDetailLevel(mpp, this._mapDetailLevel);
+                if (lvl < baseLevel) {   // finer than the base → a detail layer helps
+                    detailLevel = lvl;
+                    detailCell = MapLod.cellMetersForLevel(lvl);
+                    const padLat = (bbox.maxLat - bbox.minLat) * PAD;
+                    const padLon = (bbox.maxLon - bbox.minLon) * PAD;
+                    detailBbox = { minLat: bbox.minLat - padLat, maxLat: bbox.maxLat + padLat,
+                                   minLon: bbox.minLon - padLon, maxLon: bbox.maxLon + padLon };
+                }
             }
-            // Skip the disk re-query when the same view is already loaded —
-            // panning around an already-loaded region costs nothing.
-            const key = dCell
-                ? `${base.at}|${Math.round(dCell)}|`
-                  + [bbox.minLat, bbox.maxLat, bbox.minLon, bbox.maxLon].map(v => Math.round(v * 1e4)).join(',')
+            // Skip the disk re-query when the same level+region is already loaded.
+            // The bbox is keyed at ~100 m, so small pans within a cell don't re-query;
+            // the globally-aligned cells are identical across refreshes regardless.
+            const key = detailCell
+                ? `${base.at}|L${detailLevel}|`
+                  + [detailBbox.minLat, detailBbox.maxLat, detailBbox.minLon, detailBbox.maxLon].map(v => Math.round(v * 1e3)).join(',')
                 : `${base.at}|base`;
             if (key === this._wideMapKey) return;
             let detail = null;
-            if (dCell) {
+            if (detailCell) {
                 await this._flushWrites();   // fine grid must include the freshest packets
-                const fine = await this.store.gridObs(from, Infinity, dCell, bbox);
-                detail = { cells: this._mapCellsFrom(fine, dCell), cell: dCell, bbox };
+                const fine = await this.store.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(detailCell, lat, lon), detailBbox);
+                detail = { cells: this._mapCellsFrom(fine, detailCell), cell: detailCell, bbox: detailBbox };
             }
             // A newer refresh superseded us while we queried — don't clobber its
             // (finer) result with this stale one.
             if (myReq !== this._wideMapReq) return;
             this._wideMapDetail = detail;
+            if (detailLevel != null) this._mapDetailLevel = detailLevel;   // remember for hysteresis
             this._pushMapPoints();
             this._wideMapKey = key;
         } catch (e) {
