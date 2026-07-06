@@ -1,10 +1,11 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=149';
-import { PacketStore } from './packet-store.js?v=19';
+import { Signal3DMap } from './signal3d.js?v=150';
+import { PacketStore } from './packet-store.js?v=20';
 import { buildCsv, parseCsv } from './csv.js?v=1';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=1';
+import { extractFrames } from './frame.js?v=1';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
@@ -1815,27 +1816,18 @@ class MeshCoreApp {
             this._serialReadBuffer = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
         }
 
-        const buf = this._serialReadBuffer;
-        const HDR = 3;
-        let offset = 0;
-        while (buf.length - offset >= HDR) {
-            const type = buf[offset];
-            if (type !== 0x3e && type !== 0x3c) { offset++; continue; }
-            const len = buf[offset + 1] | (buf[offset + 2] << 8);
-            if (len === 0) { offset++; continue; }
-            if (buf.length - offset < HDR + len) break; // wait for the rest of the frame
-            const frame = buf.slice(offset + HDR, offset + HDR + len);
-            offset += HDR + len;
+        const { frames, rest } = extractFrames(this._serialReadBuffer);
+        this._serialReadBuffer = rest;
+        for (const { type, payload } of frames) {
             // Only 0x3e (radio→app) frames come from a companion. 0x3c (app→radio)
             // seen on the read side is a repeater echoing our probe back — ignore
             // it, and use a genuine 0x3e frame as proof this is a companion.
             if (type === 0x3e) {
                 this._sawCompanionFrame = true;
-                try { this.handlePayload(frame); }
+                try { this.handlePayload(payload); }
                 catch (e) { console.error('Frame handling error:', e); }
             }
         }
-        this._serialReadBuffer = offset > 0 ? buf.slice(offset) : buf;
     }
 
     // --- Repeater text-CLI parsing ---

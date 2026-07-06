@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js?v=1';
 import { colsOverlap } from './column-key.js?v=1';
+import { lonLatToTile, tileToLatLon } from './geo.js?v=1';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
 const MAX_HEIGHT     = 12;    // world units for strongest signal
@@ -110,21 +111,6 @@ const TILE_SOURCES = {
 };
 const DEFAULT_SOURCE = 'mapycom-basic';
 
-
-function lonLatToTile(lon, lat, zoom) {
-    const n = Math.pow(2, zoom);
-    const x = (lon + 180) / 360 * n;
-    const latRad = lat * Math.PI / 180;
-    const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
-    return { x, y };
-}
-
-function tileToLatLon(tx, ty, zoom) {
-    const n = Math.pow(2, zoom);
-    const lon = tx / n * 360 - 180;
-    const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n))) * 180 / Math.PI;
-    return { lat, lon };
-}
 
 // 2*tan(fov/2): the recurring factor converting between world size at a given
 // camera distance and on-screen size. Callers needing tan(fov/2) use the

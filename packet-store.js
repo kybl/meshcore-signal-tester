@@ -39,7 +39,9 @@ const PS_DB_VERSION = 3;
 // to the box's neighbourhood rather than all of history.
 const PS_QBITS = 16, PS_QMAX = (1 << PS_QBITS) - 1;
 
-function ps_part1by1(n) {
+// Exported (alongside ps_qx/ps_qy/ps_morton/ps_bigmin) for unit testing the
+// spatial index in isolation — see test/spatial.test.js.
+export function ps_part1by1(n) {
     n &= 0xffff;
     n = (n | (n << 8)) & 0x00ff00ff;
     n = (n | (n << 4)) & 0x0f0f0f0f;
@@ -48,10 +50,11 @@ function ps_part1by1(n) {
     return n >>> 0;
 }
 
-function ps_qx(lon) { return Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX))); }
-function ps_qy(lat) { return Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX))); }
+export const PS_QUANT_MAX = PS_QMAX;
+export function ps_qx(lon) { return Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX))); }
+export function ps_qy(lat) { return Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX))); }
 
-function ps_morton(lat, lon) {
+export function ps_morton(lat, lon) {
     return (ps_part1by1(ps_qx(lon)) | (ps_part1by1(ps_qy(lat)) << 1)) >>> 0;
 }
 
@@ -76,7 +79,7 @@ function ps_loadDim(value, p, set) {
 // Smallest Morton code >= zcur that lies within the box [zmin, zmax]
 // (zmin = morton(SW corner), zmax = morton(NE corner)); -1 if there is none.
 // Tropf & Herzog's BIGMIN, walking bits MSB→LSB.
-function ps_bigmin(zcur, zmin, zmax) {
+export function ps_bigmin(zcur, zmin, zmax) {
     let bm = -1, dmin = zmin >>> 0, dmax = zmax >>> 0;
     for (let p = 31; p >= 0; p--) {
         const bit = (1 << p) >>> 0;
