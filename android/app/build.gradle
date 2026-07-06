@@ -24,7 +24,7 @@ android {
         minSdk 26
         targetSdk 35
         versionCode appVersionCode ? appVersionCode.toInteger() : 6
-        versionName appVersionName ?: "1.2.2"
+        versionName appVersionName ?: "1.2.2-post"
     }
 
     signingConfigs {

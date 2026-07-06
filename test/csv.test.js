@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_HEADER, escapeCsvValue, parseCsvLine, buildCsv, parseCsv } from '../csv.js';
+import { CSV_HEADER, escapeCsvValue, parseCsvLine, splitCsvRecords, buildCsv, parseCsv } from '../csv.js';
 
 // ---- escapeCsvValue -------------------------------------------------------
 
@@ -37,6 +37,34 @@ test('field round-trip: parseCsvLine(escapeCsvValue(v)) recovers v (commas/quote
     for (const v of ['plain', 'a,b,c', 'has "quotes"', 'mix, "both"', '', '42']) {
         assert.deepEqual(parseCsvLine(escapeCsvValue(v)), [String(v)]);
     }
+});
+
+// ---- splitCsvRecords (quote-aware record boundaries) ----------------------
+
+test('splitCsvRecords: plain newlines split records', () => {
+    assert.deepEqual(splitCsvRecords('a,b\r\nc,d'), ['a,b', 'c,d']);
+    assert.deepEqual(splitCsvRecords('a\nb\nc'), ['a', 'b', 'c']);   // bare \n too
+});
+
+test('splitCsvRecords: a newline inside quotes does NOT split the record', () => {
+    assert.deepEqual(splitCsvRecords('a,"x\ny",b'), ['a,"x\ny",b']);
+    assert.deepEqual(splitCsvRecords('"line1\r\nline2",z\r\nnext'), ['"line1\r\nline2",z', 'next']);
+});
+
+test('splitCsvRecords: escaped "" inside a quoted field keeps quote state', () => {
+    // the "" is two toggles (net inside); the following newline must still split
+    assert.deepEqual(splitCsvRecords('"say ""hi""",a\nb'), ['"say ""hi""",a', 'b']);
+});
+
+test('a text field containing a newline round-trips through build → parse', () => {
+    const obs = [{ time: Date.UTC(2026, 0, 1), type: 'GRP_TXT', hash: 'H', rawId: 'AA',
+                   snr: 1, rssi: -90, rawHex: '', lat: 50, lon: 14,
+                   text: 'first line\nsecond line', sender: 'S' }];
+    const { ok, rows } = parseCsv(buildCsv({ observations: obs }));
+    assert.ok(ok);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].csvText, 'first line\nsecond line');   // newline survived
+    assert.equal(rows[0].lat, 50);
 });
 
 // ---- header stability -----------------------------------------------------

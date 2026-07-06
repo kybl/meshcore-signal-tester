@@ -20,6 +20,28 @@ export function escapeCsvValue(v) {
         ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+// Split CSV text into records on newlines, but NOT on a newline inside a quoted
+// field (RFC 4180 allows them, and buildCsv emits them for multi-line message
+// text). A naive text.split(/\r?\n/) would tear such a record apart and lose
+// the row. Quote state toggles on every '"' — an escaped '""' toggles twice
+// (net no change), and no newline ever sits between those two quotes.
+export function splitCsvRecords(text) {
+    const records = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"') { inQ = !inQ; cur += ch; continue; }
+        if (!inQ && (ch === '\n' || ch === '\r')) {
+            if (ch === '\r' && text[i + 1] === '\n') i++;   // treat \r\n as one break
+            records.push(cur); cur = '';
+            continue;
+        }
+        cur += ch;
+    }
+    records.push(cur);
+    return records;
+}
+
 // Split one CSV line into fields, honouring quotes and escaped ("") quotes.
 export function parseCsvLine(line) {
     const cols = [];
@@ -100,7 +122,9 @@ export function buildCsv({ contacts = [], observations = [], sentRows = [] } = {
 // the caller owns user-facing messaging and applying the data.
 export function parseCsv(text) {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
-    const lines = text.split(/\r?\n/);
+    // Quote-aware record split so a newline inside a quoted field doesn't tear
+    // the row apart (parseCsvLine then handles the field-level quoting).
+    const lines = splitCsvRecords(text);
     if (lines.length < 2) return { ok: false, error: 'empty', contacts: [], rows: [], sentRows: [] };
 
     // Embedded contact metadata precedes the real header as '# CONTACT,' lines.
