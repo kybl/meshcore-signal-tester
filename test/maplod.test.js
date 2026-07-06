@@ -5,8 +5,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    cellMetersForLevel, levelForCellMeters, pickDetailLevel, cellIndices, cellKey,
+    cellMetersForLevel, levelForCellMeters, pickDetailLevel, cellIndices, cellKey, coarsenCells,
 } from '../maplod.js';
+
+// Reference aggregation: fold raw observations into cells at a given size the
+// same way packet-store.gridObs does (representative = most-recent, count = n).
+function aggregateRaw(obs, cellMeters) {
+    const m = new Map();
+    for (const r of obs) {
+        const { gx, gy } = cellIndices(cellMeters, r.lat, r.lon);
+        const k = r.rawId + '|' + gx + '|' + gy;
+        const g = m.get(k);
+        if (!g) { m.set(k, { ...r, count: 1 }); }
+        else { g.count++; if (r.time >= g.time) { g.lat = r.lat; g.lon = r.lon; g.snr = r.snr; g.rssi = r.rssi; g.time = r.time; } }
+    }
+    return m;
+}
+function byKey(arr, cellMeters) {
+    const m = new Map();
+    for (const r of arr) m.set(cellKey(cellMeters, r.rawId, r.lat, r.lon), r);
+    return m;
+}
 
 // ---- the ladder -----------------------------------------------------------
 // (Exact rung values track the CELL_BASE_M constant in maplod.js.)
@@ -125,5 +144,53 @@ test('stability: the same geographic point maps to the same cell no matter the p
     const key = cellKey(cell, 'R', 50.05, 14.30);
     for (let i = 0; i < 100; i++) {
         assert.equal(cellKey(cell, 'R', 50.05, 14.30), key);
+    }
+});
+
+// ---- density-driven coarsening (finest query, step up only if too many) ----
+
+test('coarsenCells: coarsening the finest cells equals querying that level directly', () => {
+    // Build a deterministic pseudo-random cloud of raw observations (distinct
+    // times so the most-recent representative is unambiguous), then check that
+    // aggregating raw at level L equals coarsening the level-0 aggregate to L.
+    const obs = [];
+    let seed = 12345;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    for (let i = 0; i < 400; i++) {
+        obs.push({
+            rawId: 'R' + (i % 5),                 // a handful of repeaters
+            lat: 50.00 + rnd() * 0.01,            // ~1 km box
+            lon: 14.40 + rnd() * 0.01,
+            snr: Math.round(rnd() * 20 - 10),
+            rssi: Math.round(-120 + rnd() * 60),
+            time: i + 1,                          // strictly increasing, no ties
+        });
+    }
+    const raw0 = [...aggregateRaw(obs, cellMetersForLevel(0)).values()];  // what gridObs(level 0) returns
+    for (let L = 1; L <= 8; L++) {
+        const cell = cellMetersForLevel(L);
+        const direct = aggregateRaw(obs, cell);                 // query level L directly
+        const coarsened = byKey(coarsenCells(raw0, cell), cell); // step up from level 0
+        assert.equal(coarsened.size, direct.size, `cell count @L${L}`);
+        for (const [k, d] of direct) {
+            const c = coarsened.get(k);
+            assert.ok(c, `missing cell ${k} @L${L}`);
+            assert.equal(c.count, d.count, `count ${k} @L${L}`);       // counts sum exactly
+            assert.equal(c.time, d.time, `rep time ${k} @L${L}`);      // same representative
+            assert.equal(c.lat, d.lat, `rep lat ${k} @L${L}`);
+            assert.equal(c.snr, d.snr, `rep snr ${k} @L${L}`);
+        }
+    }
+});
+
+test('coarsenCells: total count is conserved (every observation stays counted)', () => {
+    const raw0 = [
+        { rawId: 'A', lat: 50.0000, lon: 14.0000, snr: 1, rssi: -100, time: 1, count: 3 },
+        { rawId: 'A', lat: 50.0001, lon: 14.0001, snr: 2, rssi: -101, time: 2, count: 5 },
+        { rawId: 'B', lat: 50.0000, lon: 14.0000, snr: 3, rssi: -102, time: 4, count: 2 },
+    ];
+    const sum = a => a.reduce((s, r) => s + r.count, 0);
+    for (let L = 0; L <= 10; L++) {
+        assert.equal(sum(coarsenCells(raw0, cellMetersForLevel(L))), sum(raw0), `total @L${L}`);
     }
 });

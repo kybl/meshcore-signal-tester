@@ -58,3 +58,27 @@ export function cellKey(cellMeters, rawId, lat, lon) {
     const { gx, gy } = cellIndices(cellMeters, lat, lon);
     return rawId + '|' + gx + '|' + gy;
 }
+
+// Merge already-aggregated cells up to a COARSER size. Each input is a cell
+// representative { rawId, lat, lon, snr, rssi, time, count }. Because the levels
+// nest, coarsening the finest cells yields EXACTLY the same aggregate as querying
+// the coarser level directly: counts sum, and the representative (most-recent
+// observation) is preserved. This lets the map do a single fine query and then
+// step up only if the dot count exceeds its budget — so clustering is driven by
+// DENSITY (how many dots are actually in view), not by the zoom level. A sparse
+// view stays at the finest level (every point shown) no matter how you zoom.
+export function coarsenCells(cells, cellMeters) {
+    const m = new Map();
+    for (const r of cells) {
+        const { gx, gy } = cellIndices(cellMeters, r.lat, r.lon);
+        const k = r.rawId + '|' + gx + '|' + gy;
+        const g = m.get(k);
+        if (!g) {
+            m.set(k, { rawId: r.rawId, lat: r.lat, lon: r.lon, snr: r.snr, rssi: r.rssi, time: r.time, count: r.count });
+        } else {
+            g.count += r.count;
+            if (r.time >= g.time) { g.lat = r.lat; g.lon = r.lon; g.snr = r.snr; g.rssi = r.rssi; g.time = r.time; }
+        }
+    }
+    return [...m.values()];
+}

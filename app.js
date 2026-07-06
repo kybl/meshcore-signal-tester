@@ -6,7 +6,7 @@ import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
-import * as MapLod from './maplod.js?v=3';
+import * as MapLod from './maplod.js?v=4';
 
 // Released app version, shown in the header. Distinct from the per-asset ?v=
 // cache busters, which change on every edit.
@@ -5417,44 +5417,51 @@ class MeshCoreApp {
             }
             const base = this._wideMapBase;
             const baseLevel = base.cell ? MapLod.levelForCellMeters(base.cell) : Infinity;
-            // Detail layer: a DISCRETE LOD pyramid level for the view (hysteresis
-            // via _mapDetailLevel), over a bbox padded so the coarse/fine seam
-            // sits off-screen. Discrete + globally-aligned cells mean panning only
-            // reveals edge cells and zoom steps cleanly between levels, instead of
-            // re-clustering every point on every camera nudge (the old continuous
-            // cell size did the latter — clusters flickered on any movement).
+            // Detail layer for the current view, over a bbox padded so the
+            // coarse/fine seam sits off-screen. Clustering here is DENSITY-driven,
+            // not zoom-driven: we query the viewport at the finest (raw) level and
+            // only coarsen if the dot count would blow the budget. So a sparse view
+            // (e.g. a single A→B track of a few dozen points) shows every point and
+            // stops re-clustering as you zoom — the pixel-based level only decides
+            // *whether* a finer-than-base layer is worth building at all.
             const PAD = 0.5;
-            let detailCell = 0, detailBbox = null, detailLevel = null;
+            let detailBbox = null;
             if (bbox && base.cells.size && mpp > 0) {
-                const lvl = MapLod.pickDetailLevel(mpp, this._mapDetailLevel);
-                if (lvl < baseLevel) {   // finer than the base → a detail layer helps
-                    detailLevel = lvl;
-                    detailCell = MapLod.cellMetersForLevel(lvl);
+                const gateLvl = MapLod.pickDetailLevel(mpp, this._mapDetailLevel);
+                this._mapDetailLevel = gateLvl;   // remember for hysteresis
+                if (gateLvl < baseLevel) {        // zoomed in past the base → detail helps
                     const padLat = (bbox.maxLat - bbox.minLat) * PAD;
                     const padLon = (bbox.maxLon - bbox.minLon) * PAD;
                     detailBbox = { minLat: bbox.minLat - padLat, maxLat: bbox.maxLat + padLat,
                                    minLon: bbox.minLon - padLon, maxLon: bbox.maxLon + padLon };
                 }
             }
-            // Skip the disk re-query when the same level+region is already loaded.
-            // The bbox is keyed at ~100 m, so small pans within a cell don't re-query;
+            // Skip the disk re-query when the same region is already loaded. The
+            // bbox is keyed at ~100 m, so small pans within a cell don't re-query;
             // the globally-aligned cells are identical across refreshes regardless.
-            const key = detailCell
-                ? `${base.at}|L${detailLevel}|`
+            const key = detailBbox
+                ? `${base.at}|det|`
                   + [detailBbox.minLat, detailBbox.maxLat, detailBbox.minLon, detailBbox.maxLon].map(v => Math.round(v * 1e3)).join(',')
                 : `${base.at}|base`;
             if (key === this._wideMapKey) return;
             let detail = null;
-            if (detailCell) {
+            if (detailBbox) {
                 await this._flushWrites();   // fine grid must include the freshest packets
-                const fine = await this.store.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(detailCell, lat, lon), detailBbox);
-                detail = { cells: this._mapCellsFrom(fine, detailCell), cell: detailCell, bbox: detailBbox };
+                // One fine (raw) query over the viewport; step up levels only while
+                // the count exceeds the budget. Coarsening the raw cells is exact
+                // (see MapLod.coarsenCells), so this equals querying that level.
+                let lvl = 0, cell = MapLod.cellMetersForLevel(0);
+                let arr = await this.store.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(cell, lat, lon), detailBbox);
+                while (arr.length > this.MAP_TARGET_DOTS && lvl + 1 < baseLevel) {
+                    lvl++; cell = MapLod.cellMetersForLevel(lvl);
+                    arr = MapLod.coarsenCells(arr, cell);
+                }
+                detail = { cells: this._mapCellsFrom(arr, cell), cell, bbox: detailBbox };
             }
             // A newer refresh superseded us while we queried — don't clobber its
             // (finer) result with this stale one.
             if (myReq !== this._wideMapReq) return;
             this._wideMapDetail = detail;
-            if (detailLevel != null) this._mapDetailLevel = detailLevel;   // remember for hysteresis
             this._pushMapPoints();
             this._wideMapKey = key;
         } catch (e) {
