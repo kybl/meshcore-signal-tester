@@ -4839,6 +4839,20 @@ class MeshCoreApp {
             const totals = await this.store.getKV('totals');
             if (totals && Number.isFinite(totals.totalRxCount)) this.totalRxCount = totals.totalRxCount;
         } catch (_) {}
+        // Fallback when the persisted counter is missing or 0 but the DB holds
+        // data. This happens for a store first captured by an older build (no
+        // 'totals' KV), or one that was resumed once while the counter was absent
+        // — _replayWindow then pins totalRxCount to the (0) KV value and the next
+        // flush writes 0 back, making it permanent. With the count stuck at 0 the
+        // heartbeat records 0, so _chooseSession's resume prompt (which keys off
+        // that count) never fires and the session reloads SILENTLY. Derive the
+        // count from disk so the prompt reflects the data that's actually there.
+        if (!this.totalRxCount) {
+            try {
+                const n = await this.store.countHashes();
+                if (n > 0) this.totalRxCount = n;
+            } catch (_) {}
+        }
         // Start the heartbeat only after counters are restored, so its first write
         // records the real packet count — not a transient 0 that would make a
         // quick reload resume silently (the resume prompt keys off this count).
