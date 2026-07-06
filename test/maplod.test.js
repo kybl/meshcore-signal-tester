@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    cellMetersForLevel, levelForCellMeters, pickDetailLevel, cellIndices, cellKey, snapBboxToCells,
+    cellMetersForLevel, levelForCellMeters, pickDetailLevel, cellIndices, cellKey,
 } from '../maplod.js';
 
 // ---- the ladder -----------------------------------------------------------
@@ -42,17 +42,17 @@ test('pickDetailLevel: finer view (smaller m/px) → not-coarser level (monotone
 });
 
 test('pickDetailLevel: without a previous level, rounds to the nearest ideal', () => {
-    // ideal cell = mpp * TARGET_CELL_PX(24); level = round(log2(ideal/CELL_BASE_M(2)))
-    // mpp=1 → ideal 24 → log2(12)=3.58 → level 4
-    assert.equal(pickDetailLevel(1, null), 4);
-    // mpp=0.1 → ideal 2.4 → log2(1.2)=0.26 → 0
+    // ideal cell = mpp * TARGET_CELL_PX(16); level = round(log2(ideal/CELL_BASE_M(2)))
+    // mpp=1 → ideal 16 → log2(8)=3 → level 3
+    assert.equal(pickDetailLevel(1, null), 3);
+    // mpp=0.1 → ideal 1.6 → log2(0.8)=-0.32 → 0
     assert.equal(pickDetailLevel(0.1, null), 0);
 });
 
 test('pickDetailLevel: hysteresis keeps the level within the dead-band', () => {
     // Settle at some level, then jitter m/px slightly around it: the level must
     // not change (no flicker). Pick an mpp whose ideal sits near a level.
-    const settled = pickDetailLevel(1.0, null);        // level 4
+    const settled = pickDetailLevel(1.0, null);        // level 3
     // small jitters around 1.0 stay at the settled level
     for (const mpp of [0.9, 1.0, 1.1, 1.15, 0.85]) {
         assert.equal(pickDetailLevel(mpp, settled), settled, `jitter ${mpp} flipped the level`);
@@ -60,7 +60,7 @@ test('pickDetailLevel: hysteresis keeps the level within the dead-band', () => {
 });
 
 test('pickDetailLevel: a decisive zoom past the dead-band does switch (and can jump)', () => {
-    const start = pickDetailLevel(1.0, null);          // level 4
+    const start = pickDetailLevel(1.0, null);          // level 3
     // zoom out hard → coarser level
     const coarser = pickDetailLevel(16, start);
     assert.ok(coarser > start);
@@ -126,51 +126,4 @@ test('stability: the same geographic point maps to the same cell no matter the p
     for (let i = 0; i < 100; i++) {
         assert.equal(cellKey(cell, 'R', 50.05, 14.30), key);
     }
-});
-
-// ---- bbox snapping (no partial edge cells) --------------------------------
-
-test('snapBboxToCells: expands outward and lands on whole cell boundaries', () => {
-    const cell = cellMetersForLevel(6);   // 128 m
-    const bbox = { minLat: 50.010, maxLat: 50.030, minLon: 14.400, maxLon: 14.440 };
-    const snapped = snapBboxToCells(bbox, cell);
-    // strictly contains the input (expanded outward, never inward)
-    assert.ok(snapped.minLat <= bbox.minLat, 'minLat expands down');
-    assert.ok(snapped.maxLat >= bbox.maxLat, 'maxLat expands up');
-    assert.ok(snapped.minLon <= bbox.minLon, 'minLon expands down');
-    assert.ok(snapped.maxLon >= bbox.maxLon, 'maxLon expands up');
-    // corners land exactly on cell edges: their indices match the corner point's cell
-    const lo = cellIndices(cell, snapped.minLat + 1e-9, snapped.minLon + 1e-9);
-    const loEdge = cellIndices(cell, snapped.minLat, snapped.minLon);
-    assert.equal(lo.gx, loEdge.gx);
-    assert.equal(lo.gy, loEdge.gy);
-});
-
-test('snapBboxToCells: every point in the original bbox stays inside the snapped bbox', () => {
-    const cell = cellMetersForLevel(4);   // 32 m
-    const bbox = { minLat: -33.905, maxLat: -33.880, minLon: 151.200, maxLon: 151.235 };
-    const s = snapBboxToCells(bbox, cell);
-    for (const lat of [bbox.minLat, (bbox.minLat + bbox.maxLat) / 2, bbox.maxLat]) {
-        for (const lon of [bbox.minLon, (bbox.minLon + bbox.maxLon) / 2, bbox.maxLon]) {
-            assert.ok(lat >= s.minLat && lat <= s.maxLat, `lat ${lat} inside`);
-            assert.ok(lon >= s.minLon && lon <= s.maxLon, `lon ${lon} inside`);
-        }
-    }
-});
-
-test('snapBboxToCells: the snapped span is a whole number of cells', () => {
-    // The clean grid-alignment property: after snapping, both the lat and lon
-    // extents are exact integer multiples of the cell size. (Strict idempotence
-    // doesn't hold near a boundary — snapping shifts the mid-latitude, which
-    // nudges the lon cell width — so we assert the invariant that actually holds.)
-    const cell = cellMetersForLevel(6);
-    const bbox = { minLat: 50.010, maxLat: 50.030, minLon: 14.400, maxLon: 14.440 };
-    const s = snapBboxToCells(bbox, cell);
-    // snapBboxToCells derives lonCell from the INPUT bbox mid-latitude.
-    const latCell = cell / 111320;
-    const lonCell = cell / (111320 * Math.cos(((bbox.minLat + bbox.maxLat) / 2) * Math.PI / 180));
-    const latSpanCells = (s.maxLat - s.minLat) / latCell;
-    const lonSpanCells = (s.maxLon - s.minLon) / lonCell;
-    assert.ok(Math.abs(latSpanCells - Math.round(latSpanCells)) < 1e-6, `lat span ${latSpanCells}`);
-    assert.ok(Math.abs(lonSpanCells - Math.round(lonSpanCells)) < 1e-6, `lon span ${lonSpanCells}`);
 });
