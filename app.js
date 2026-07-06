@@ -1,17 +1,17 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=150';
+import { Signal3DMap } from './signal3d.js?v=151';
 import { PacketStore } from './packet-store.js?v=20';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
-import * as ColumnKey from './column-key.js?v=1';
+import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
 
 // Single source of truth for the released app version, shown in the header (and
 // forwarded to the Android wrapper). Bump this on a release alongside the
 // CHANGELOG and the Android versionName. Distinct from the per-asset ?v= cache
 // busters, which change on every edit.
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.2-post';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
 // burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow
@@ -3376,9 +3376,14 @@ class MeshCoreApp {
             if (msgFilterBar) msgFilterBar.classList.add('hidden');
             if (msgTableScroll) msgTableScroll.style.display = 'none';
             if (msgTableEmpty) {
-                msgTableEmpty.textContent = cutoff
-                    ? 'No packets in the current display window.'
-                    : 'Waiting for data…';
+                // Narrowed to a repeater/filter with nothing in view: say so, so
+                // the empty table reads as "this selection is empty" (deselect via
+                // the top-right notice) rather than "no data captured at all".
+                msgTableEmpty.textContent = narrowFn
+                    ? (this._selectedCol
+                        ? 'No packets from this repeater in the current display window.'
+                        : 'No packets match the filter in the current display window.')
+                    : (cutoff ? 'No packets in the current display window.' : 'Waiting for data…');
                 msgTableEmpty.classList.remove('hidden');
             }
             this.msgTableHead.innerHTML = '';
@@ -4948,12 +4953,7 @@ class MeshCoreApp {
     // (used to colour downsampled overlay points; live ingest uses
     // findOrCreateColumn, which may promote/merge).
     _resolveColReadonly(rawId) {
-        if (rawId === 'direct' || rawId === 'unknown') return rawId;
-        if (this.repeaterColumns.includes(rawId)) return rawId;
-        for (const col of this.repeaterColumns) {
-            if (ColumnKey.colMatchesRawIdReadonly(col, rawId)) return col;
-        }
-        return rawId;
+        return ColumnKey.resolveColumnReadonly(rawId, this.repeaterColumns);
     }
 
     // (Re)build the disk render caches (chart overlay, map grid, paginated table)

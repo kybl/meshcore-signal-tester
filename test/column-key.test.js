@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     idPrecision, idSuffix, colHead, components, colsOverlap,
-    colMinPrecision, colMatchesRawId, colMatchesRawIdReadonly, resolveColumn,
+    colMinPrecision, colMatchesRawId, colMatchesRawIdReadonly,
+    resolveColumn, resolveColumnReadonly,
 } from '../column-key.js';
 
 // Replay resolveColumn's events onto a column list exactly as the app shell
@@ -177,6 +178,37 @@ test('resolveColumn: a short ambiguous id stays in the existing collision key', 
 test('resolveColumn: direct is idempotent and self-contained', () => {
     assert.deepEqual(resolve('direct', []).cols, ['direct']);
     assert.deepEqual(resolve('direct', ['direct']).events, []);
+});
+
+// ---- resolveColumnReadonly (disk attribution) ----------------------------
+
+test('resolveColumnReadonly: pseudo cols and exact matches pass through', () => {
+    assert.equal(resolveColumnReadonly('direct', ['direct']), 'direct');
+    assert.equal(resolveColumnReadonly('unknown', []), 'unknown');
+    assert.equal(resolveColumnReadonly('5E9F', ['5E9F']), '5E9F');
+});
+
+test('resolveColumnReadonly: an id ambiguous over two siblings resolves to the collision key, not the first sibling', () => {
+    // The reported bug: order put a specific sibling before the collision, so a
+    // short ambiguous id resolved to it and the collision column got no rows.
+    const cols = ['5E9F', '5EAB', '5E9F/5EAB'];
+    assert.equal(resolveColumnReadonly('5E', cols), '5E9F/5EAB');
+    // ...regardless of column order
+    assert.equal(resolveColumnReadonly('5E', ['5E9F/5EAB', '5E9F', '5EAB']), '5E9F/5EAB');
+});
+
+test('resolveColumnReadonly: a specific id still resolves to its own column', () => {
+    const cols = ['5E9F', '5EAB', '5E9F/5EAB'];
+    assert.equal(resolveColumnReadonly('5E9F', cols), '5E9F');
+    assert.equal(resolveColumnReadonly('5EAB', cols), '5EAB');
+});
+
+test('resolveColumnReadonly: an id matching only a collision key resolves to it', () => {
+    assert.equal(resolveColumnReadonly('12', ['12AB/12CD']), '12AB/12CD');
+});
+
+test('resolveColumnReadonly: an unknown id resolves to itself (own column)', () => {
+    assert.equal(resolveColumnReadonly('99', ['5E9F', '5EAB']), '99');
 });
 
 // ---- invariants -----------------------------------------------------------

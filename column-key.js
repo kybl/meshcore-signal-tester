@@ -72,6 +72,30 @@ export function colMatchesRawIdReadonly(col, rawId) {
     return idSuffix(head, p) === idSuffix(rawId, p);
 }
 
+// Read-only projection: which EXISTING column a rawId belongs to, WITHOUT
+// creating/promoting/splitting. Used to attribute disk-loaded observations to
+// the live column model (point colours, the packet-table narrow index, stats).
+// Must agree with resolveColumn on collisions: an id ambiguous over several
+// specific siblings belongs in their collision key "a/b" — returning the first
+// prefix match instead made the collision column a "ghost" with no rows, so
+// selecting its header narrowed the table to nothing (and it vanished).
+export function resolveColumnReadonly(rawId, columns) {
+    if (rawId === 'direct' || rawId === 'unknown') return rawId;
+    if (columns.includes(rawId)) return rawId;
+    const matches = columns.filter(col => colMatchesRawIdReadonly(col, rawId));
+    if (!matches.length) return rawId;
+    const specifics = matches.filter(m => !m.includes('/'));
+    // Ambiguous over ≥2 specific siblings → their collision key (if it exists).
+    if (specifics.length >= 2) {
+        const ck = specifics.slice().sort().join('/');
+        if (columns.includes(ck)) return ck;
+    }
+    // Specific enough to name exactly one column → that column.
+    if (specifics.length === 1) return specifics[0];
+    // Only collision keys match → the id belongs in one.
+    return matches.find(m => m.includes('/')) ?? matches[0];
+}
+
 // Pure mirror of app's findOrCreateColumn DECISION. Operates on a COPY of the
 // column list and returns:
 //   { key, events } — the resolved column key for `rawId`, plus the ordered

@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js?v=1';
-import { colsOverlap } from './column-key.js?v=1';
+import { colsOverlap } from './column-key.js?v=2';
 import { lonLatToTile, tileToLatLon } from './geo.js?v=1';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
@@ -442,8 +442,19 @@ export class Signal3DMap {
             }
             _twistAngle = newAngle;
         }, { passive: true });
-        canvas.addEventListener('touchend',   () => { _twistAngle = null; }, { passive: true });
-        canvas.addEventListener('touchcancel',() => { _twistAngle = null; }, { passive: true });
+        // Also clear _userDragging here (not only on the controls' 'end'): a
+        // missed 'end' — an interrupted gesture, or the app backgrounded mid-drag
+        // on a WebView — would leave it stuck true, which permanently blocks
+        // _maybeRebuildDots. Then a detail-grid refresh loaded after the gesture
+        // is never rendered until something else clears the flag (which is why an
+        // app switch "fixed" it). Clear once the last finger lifts / on cancel.
+        canvas.addEventListener('touchend',   e => { _twistAngle = null; if (!e.touches || e.touches.length === 0) this._userDragging = false; }, { passive: true });
+        canvas.addEventListener('touchcancel',() => { _twistAngle = null; this._userDragging = false; }, { passive: true });
+        canvas.addEventListener('pointerup',    () => { this._userDragging = false; }, { passive: true });
+        canvas.addEventListener('pointercancel',() => { this._userDragging = false; }, { passive: true });
+        // A gesture can't survive the app going to the background — never stay
+        // "dragging" across a visibility change.
+        document.addEventListener('visibilitychange', () => { if (document.hidden) this._userDragging = false; });
     }
 
     // Distinguish click from drag: only fire _onCanvasClick when the pointer
