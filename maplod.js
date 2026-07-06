@@ -11,9 +11,9 @@
 // and forth at a boundary). Levels nest (floor-based grid), so a level is a
 // clean 2× coarsening of the one below.
 
-const CELL_BASE_M   = 5;    // finest cell edge, metres (level 0)
-const MAX_LEVEL     = 24;   // 5 m · 2^24 ≈ 84 000 km — covers any extent
-const TARGET_CELL_PX = 46;  // aim a cell at ~this many screen px (coarse ⇒ fewer, steadier dots)
+const CELL_BASE_M   = 2;    // finest cell edge, metres (level 0) — deep zoom separates points ~2 m apart
+const MAX_LEVEL     = 25;   // 2 m · 2^25 ≈ 67 000 km — covers any extent
+const TARGET_CELL_PX = 24;  // aim a cell at ~this many screen px (smaller ⇒ less clustering, more dots)
 const HYSTERESIS    = 0.7;  // levels of dead-band before switching (stability)
 
 // Cell edge length in metres at a pyramid level (0 = finest).
@@ -57,4 +57,22 @@ export function cellIndices(cellMeters, lat, lon) {
 export function cellKey(cellMeters, rawId, lat, lon) {
     const { gx, gy } = cellIndices(cellMeters, lat, lon);
     return rawId + '|' + gx + '|' + gy;
+}
+
+// Expand a bbox OUTWARD to whole cell boundaries at the given size. Querying a
+// cell-aligned region means no cell straddles the edge, so every returned cell
+// aggregates ALL its observations (stable representative/count) instead of a
+// pan-dependent subset — that partial-edge-cell effect made dots flicker as the
+// view moved. Uses the bbox mid-latitude for the lon cell (cos varies little
+// across a zoomed-in detail bbox).
+export function snapBboxToCells(bbox, cellMeters) {
+    const midLat = (bbox.minLat + bbox.maxLat) / 2;
+    const latCell = cellMeters / 111320;
+    const lonCell = cellMeters / (111320 * Math.cos(midLat * Math.PI / 180) || 1);
+    return {
+        minLat: Math.floor(bbox.minLat / latCell) * latCell,
+        maxLat: Math.ceil(bbox.maxLat / latCell) * latCell,
+        minLon: Math.floor(bbox.minLon / lonCell) * lonCell,
+        maxLon: Math.ceil(bbox.maxLon / lonCell) * lonCell,
+    };
 }

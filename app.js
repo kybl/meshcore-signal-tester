@@ -6,7 +6,7 @@ import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
-import * as MapLod from './maplod.js?v=1';
+import * as MapLod from './maplod.js?v=2';
 
 // Released app version, shown in the header. Distinct from the per-asset ?v=
 // cache busters, which change on every edit.
@@ -5434,6 +5434,11 @@ class MeshCoreApp {
                     const padLon = (bbox.maxLon - bbox.minLon) * PAD;
                     detailBbox = { minLat: bbox.minLat - padLat, maxLat: bbox.maxLat + padLat,
                                    minLon: bbox.minLon - padLon, maxLon: bbox.maxLon + padLon };
+                    // Snap the query region to whole cell boundaries so no cell
+                    // straddles the edge. A partial edge cell aggregates only the
+                    // observations inside the bbox, so its representative/count
+                    // shifts as you pan — that was the residual mid-pan churn.
+                    detailBbox = MapLod.snapBboxToCells(detailBbox, detailCell);
                 }
             }
             // Skip the disk re-query when the same level+region is already loaded.
