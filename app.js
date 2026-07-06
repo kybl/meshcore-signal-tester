@@ -2215,10 +2215,17 @@ class MeshCoreApp {
 
     _contactsByPrefix(hexPrefix) {
         if (!hexPrefix || hexPrefix === 'direct') return [];
-        const p = hexPrefix.toLowerCase();
+        // A collision column key is "a/b" (two merged repeater prefixes). Match
+        // contacts for EITHER segment — the literal "a/b" never startsWith-matches
+        // a pubkey (no slashes), which made a collision repeater's location, name
+        // and 3D-map eye button look unknown until its marker happened to be on
+        // the map (via "Show all repeaters", whose markers resolve the col the
+        // other way, through _colForPubKey which does split on "/").
+        const segs = hexPrefix.toLowerCase().split('/').filter(s => s && s !== 'unknown');
+        if (!segs.length) return [];
         const out = [];
         for (const [key, val] of this._contacts)
-            if (key.startsWith(p)) out.push(val);
+            if (segs.some(p => key.startsWith(p))) out.push(val);
         return out;
     }
 
