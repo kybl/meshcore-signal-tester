@@ -6904,13 +6904,16 @@ class MeshCoreApp {
     // Build the text shown in the Android foreground-service notification from
     // the current state: the base connection status, plus a speaker icon when
     // sound alerts are armed and capture is live, plus a paused marker when the
-    // capture is stopped. No-op outside the Android wrapper.
+    // capture is stopped. In "disconnect only" mode there's no per-packet sound
+    // (only a drop alarm), so the speaker is shown parenthesised — (🔊) — to
+    // signal that it's armed but mostly quiet. No-op outside the Android wrapper.
     _refreshNativeStatus() {
         let text = this._lastStatusText || '';
         if (this._canSend()) {
-            const soundOn = (this.soundSelect?.value || 'off') !== 'off';
+            const mode = this.soundSelect?.value || 'off';
             if (!this._collecting) text += ' — paused';
-            else if (soundOn) text = '🔊 ' + text;
+            else if (mode === 'disconnect') text = '(🔊) ' + text;   // alarm-only → parenthesised
+            else if (mode !== 'off') text = '🔊 ' + text;
         }
         try { window.AndroidScreen?.setStatus?.(text); } catch (e) {}
     }
