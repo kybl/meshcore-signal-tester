@@ -1,0 +1,12 @@
+{
+  "name": "meshcore-browser-check",
+  "private": true,
+  "type": "module",
+  "description": "Agent/local headless-browser regression harness — not part of the app or its tests.",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.40.0"
+  }
+}
