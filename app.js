@@ -90,6 +90,8 @@ class MeshCoreApp {
         this.repeaterSortDir = -1;
         this.hashCounter = 0;
         this.chartPoints = [];
+        this._recentCountCache = null;   // memoized per-column 5-min counts (sort key #1); refreshed ~1×/s
+        this._recentCountAt = 0;
         this.chartColors = new Map();
         this._sentSnrHistory = []; // { time, snr, col, label }
         this._dscSeq = 0;
@@ -3251,12 +3253,23 @@ class MeshCoreApp {
     // --- Column management ---
 
     _sortColumns() {
-        const FIVE_MIN = 5 * 60 * 1000;
-        const cutoff = Date.now() - FIVE_MIN;
-        const recentCount = new Map();
-        for (const p of this.chartPoints) {
-            if (p.time >= cutoff) recentCount.set(p.col, (recentCount.get(p.col) ?? 0) + 1);
+        // Key #1 (recentCount) scans all of chartPoints (up to the whole RAM
+        // window — thousands of points), but this runs ~7×/s during capture and
+        // the 5-min window shifts slowly. Recompute at most ~1×/s and reuse it
+        // across the intervening render sorts; column order lagging by up to a
+        // second is imperceptible, and while data is arriving the next tick
+        // refreshes it anyway.
+        const now = Date.now();
+        if (!this._recentCountCache || now - this._recentCountAt >= 1000) {
+            const cutoff = now - 5 * 60 * 1000;
+            const rc = new Map();
+            for (const p of this.chartPoints) {
+                if (p.time >= cutoff) rc.set(p.col, (rc.get(p.col) ?? 0) + 1);
+            }
+            this._recentCountCache = rc;
+            this._recentCountAt = now;
         }
+        const recentCount = this._recentCountCache;
         // #2 tiebreaker: how many of the newest _tablePageSize packets (table page
         // 0) each column appears on. Precomputed once per page-0 load in
         // _loadTablePage (not here) — this runs ~7×/s during capture, so it must
