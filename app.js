@@ -3249,6 +3249,26 @@ class MeshCoreApp {
 
     // --- Column management ---
 
+    // Per-column occurrence count among the newest _tablePageSize unique packets
+    // (the table's first page). Used as a sort key so columns that actually have
+    // rows on the visible first page rank above ones whose packets are all older
+    // / off-page (which, for loaded historical data, otherwise sort purely by
+    // last RSSI and show up first with empty cells). Mirrors _renderMsgTable's
+    // page-0 assembly: the disk page-0 snapshot merged with the live RAM tail,
+    // newest-first, capped at the page size.
+    _firstPageColCounts() {
+        const cutoff = this._displayCutoffNow();
+        const m = this._tablePage === 0 ? new Map(this._tablePageData) : new Map();
+        for (const [h, d] of this.hashData) m.set(h, d);
+        const rows = [...m.values()]
+            .filter(d => !d._stub && (!cutoff || d.firstSeen >= cutoff))
+            .sort((a, b) => b.firstSeen - a.firstSeen)
+            .slice(0, this._tablePageSize);
+        const counts = new Map();
+        for (const d of rows) for (const col of d.repeaters.keys()) counts.set(col, (counts.get(col) ?? 0) + 1);
+        return counts;
+    }
+
     _sortColumns() {
         const FIVE_MIN = 5 * 60 * 1000;
         const cutoff = Date.now() - FIVE_MIN;
@@ -3256,10 +3276,16 @@ class MeshCoreApp {
         for (const p of this.chartPoints) {
             if (p.time >= cutoff) recentCount.set(p.col, (recentCount.get(p.col) ?? 0) + 1);
         }
+        // #2 tiebreaker: how many of the newest _tablePageSize packets each column
+        // appears on (see _firstPageColCounts).
+        const pageCount = this._firstPageColCounts();
         this.repeaterColumns.sort((a, b) => {
             const ra = recentCount.get(a) ?? 0;
             const rb = recentCount.get(b) ?? 0;
             if (rb !== ra) return rb - ra;
+            const pa = pageCount.get(a) ?? 0;
+            const pb = pageCount.get(b) ?? 0;
+            if (pb !== pa) return pb - pa;
             const da = this.allRepeaters.get(a);
             const db = this.allRepeaters.get(b);
             const lrA = da?.lastRssi ?? -Infinity;
@@ -5574,6 +5600,10 @@ class MeshCoreApp {
         }
         this._tablePageData = map;
         this._renderCacheAt = boundary;   // rows newer than this are the live tail
+        // Re-order columns now that the first page is known, so freshly loaded
+        // historical data ranks columns by first-page presence (sort key #2)
+        // immediately rather than only on the next live/prune tick.
+        if (this._tablePage === 0) this._sortColumns();
         this._renderMsgTable();
         this._refreshTablePager();
     }
