@@ -29,6 +29,8 @@ class FilesBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun saveCsv(filename: String, content: String) {
         try {
+            // Encode once and reuse for both the write and the reported size.
+            val bytes = content.toByteArray(Charsets.UTF_8)
             if (Build.VERSION.SDK_INT >= 29) {
                 val values = ContentValues().apply {
                     put(MediaStore.Downloads.DISPLAY_NAME, filename)
@@ -38,7 +40,7 @@ class FilesBridge(private val activity: MainActivity) {
                 val resolver = activity.contentResolver
                 val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                     ?: throw Exception("MediaStore insert returned null")
-                resolver.openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+                resolver.openOutputStream(uri)?.use { it.write(bytes) }
                 values.clear()
                 values.put(MediaStore.Downloads.IS_PENDING, 0)
                 resolver.update(uri, values, null, null)
@@ -46,10 +48,10 @@ class FilesBridge(private val activity: MainActivity) {
                 @Suppress("DEPRECATION")
                 val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 dir.mkdirs()
-                FileOutputStream(File(dir, filename)).use { it.write(content.toByteArray(Charsets.UTF_8)) }
+                FileOutputStream(File(dir, filename)).use { it.write(bytes) }
             }
             main.post {
-                Toast.makeText(activity, "Saved to Downloads: $filename", Toast.LENGTH_LONG).show()
+                Toast.makeText(activity, "Saved to Downloads: $filename (${formatBytesSI(bytes.size)})", Toast.LENGTH_LONG).show()
             }
         } catch (e: Exception) {
             main.post {

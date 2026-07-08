@@ -42,6 +42,19 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
+
+// Human-readable byte size in SI (decimal, base-1000) units — B, kB, MB, GB —
+// as requested for the "file saved" toast (not binary KiB/MiB). One decimal
+// place from kB up; whole bytes below 1 kB.
+internal fun formatBytesSI(bytes: Int): String {
+    if (bytes < 1000) return "$bytes B"
+    val units = arrayOf("kB", "MB", "GB", "TB")
+    var value = bytes.toDouble() / 1000.0
+    var i = 0
+    while (value >= 1000.0 && i < units.size - 1) { value /= 1000.0; i++ }
+    return String.format(Locale.US, "%.1f %s", value, units[i])
+}
 
 class MainActivity : AppCompatActivity() {
 
@@ -163,8 +176,10 @@ class MainActivity : AppCompatActivity() {
         pendingCsvName = null
         if (uri == null) return@registerForActivityResult   // user cancelled the dialog
         try {
-            contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
-            Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved.", Toast.LENGTH_LONG).show()
+            // Encode once and reuse for both the write and the reported size.
+            val bytes = content.toByteArray(Charsets.UTF_8)
+            contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+            Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(bytes.size)}).", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
