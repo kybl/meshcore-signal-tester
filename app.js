@@ -19,7 +19,7 @@ import * as ChartZoom from './chart-zoom.js?v=1';
 //   4. CHANGELOG.md                                             — new dated "## [x.y.z]" entry
 //   5. fastlane/metadata/android/en-US/changelogs/<versionCode>.txt — new file named by versionCode
 // (The F-Droid recipe in fdroiddata auto-updates from the git tag — no manual edit there.)
-const APP_VERSION = '1.2.2-post';
+const APP_VERSION = '1.2.3';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
 // burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow

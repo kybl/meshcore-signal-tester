@@ -7,6 +7,30 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
+## [1.2.3] - 2026-07-08
+
+### Changed
+
+- **2D charts now follow live data while zoomed in** — during measurement a
+  zoomed SNR/RSSI chart keeps up with new packets at the right edge and stays
+  within the recorded time range, instead of drifting onto old or empty time.
+- **Smoother, steadier 3D-map clustering** — points no longer flicker or shuffle
+  as you move or zoom the camera, more individual points are shown when you zoom
+  into a sparse area, and points appear right after zooming in.
+- **Received Packets columns are ordered by recent activity** — the most active
+  repeaters lead, and columns with nothing in the newest packets no longer jump
+  to the front (noticeable right after loading saved data).
+- **CSV export shows the saved file's size**, and the notification's speaker
+  icon appears as "(🔊)" when sound is set to "Disconnect only".
+
+### Fixed
+
+- **CSV export/import now preserves messages that contain line breaks.**
+- **The Received Packets table no longer clears** when you open certain repeater
+  columns.
+- **The "Load previously captured data?" prompt reliably appears** when you
+  reopen the app with saved data.
+
 ## [1.2.2] - 2026-06-27
 
 ### Added
