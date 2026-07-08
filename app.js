@@ -3839,11 +3839,18 @@ class MeshCoreApp {
         this._renderChart('rssi');
     }
 
-    _chartYBounds(type) {
+    // Y range for the chart. Scaled to the points inside the CURRENT X window
+    // [tMin,tMax] (defaults to everything) — not the whole cached layer — so the
+    // scale doesn't jump when the data source flips between the coarse full-extent
+    // base layer and the finer zoom layer (which cover different time spans) while
+    // panning/zooming. Callers pass the window they render/hit-test with.
+    _chartYBounds(type, tMin = -Infinity, tMax = Infinity) {
+        const inWin = p => p.time >= tMin && p.time <= tMax;
         const pts = this._visibleChartPoints();
         // Avoid spread on potentially large arrays (Math.min(...arr) has an arg-count limit)
         let vMin = Infinity, vMax = -Infinity;
         for (const p of pts) {
+            if (!inWin(p)) continue;
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
             if (v < vMin) vMin = v;
@@ -3851,6 +3858,7 @@ class MeshCoreApp {
         }
         if (type === 'snr') {
             for (const p of this._visibleSentSnrPts()) {
+                if (!inWin(p)) continue;
                 if (p.snr < vMin) vMin = p.snr;
                 if (p.snr > vMax) vMax = p.snr;
             }
@@ -3898,7 +3906,7 @@ class MeshCoreApp {
         const now = this._chartFrozenAt ?? Date.now();
         const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
         const tMin = win.tMin, tMax = win.tMax;
-        const { yMin, yMax } = this._chartYBounds(type);
+        const { yMin, yMax } = this._chartYBounds(type, tMin, tMax);
         const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
         const padX = this._dotSize * 3.5 + 2;          // match _renderChart's data inset
@@ -4298,8 +4306,19 @@ class MeshCoreApp {
         const full = this._chartFullWindow;
         let tMin = full.tMin, tMax = full.tMax;
         if (this._chartZoom) {
-            tMin = Math.max(full.tMin, this._chartZoom.tMin);
-            tMax = Math.min(full.tMax, this._chartZoom.tMax);
+            let z = this._chartZoom;
+            // Smooth live-follow / prune-ride: recompute the window against the
+            // current `now` every frame so the edge glides, instead of moving only
+            // on the 2 s tick (_advanceLiveZoom keeps _chartZoom itself in sync for
+            // the disk cache — this is the display window, derived the same way).
+            if (!this._chartFrozenAt) {
+                const disp = ChartZoom.advanceZoomWindow(
+                    z, now, { displayLifetime: this.DISPLAY_LIFETIME, hashLifetime: this.HASH_LIFETIME },
+                    this._chartFollowLive);
+                if (disp) z = disp;
+            }
+            tMin = Math.max(full.tMin, z.tMin);
+            tMax = Math.min(full.tMax, z.tMax);
             if (tMax - tMin < 1) { tMin = full.tMin; tMax = full.tMax; }
         }
         this._lastChartWindow = { tMin, tMax };
@@ -4309,7 +4328,7 @@ class MeshCoreApp {
             if (type === 'rssi') { yMin = -130; yMax = -30; yStep = 20; }
             else                 { yMin = -20;  yMax = 15;  yStep = 5;  }
         } else {
-            ({ yMin, yMax, yStep } = this._chartYBounds(type));
+            ({ yMin, yMax, yStep } = this._chartYBounds(type, tMin, tMax));
         }
         // Adapt yStep so major gridlines are ~35 px apart (more when taller, fewer when short)
         const maxMajorLines = Math.max(2, Math.floor(ch / 35));
@@ -4589,7 +4608,7 @@ class MeshCoreApp {
         const now = this._chartFrozenAt ?? Date.now();
         const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
         const tMin = win.tMin, tMax = win.tMax;
-        const { yMin, yMax } = this._chartYBounds(type);
+        const { yMin, yMax } = this._chartYBounds(type, tMin, tMax);
         const tRange = Math.max(1, tMax - tMin);
         const yRange = Math.max(1e-9, yMax - yMin);
 
