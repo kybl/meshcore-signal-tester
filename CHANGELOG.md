@@ -43,6 +43,10 @@
   when you select it.
 - **The "Load previously captured data?" prompt reliably appears** when you
   reopen the app with saved data.
+- **No more burst of queued beeps** when you return to the app after it was in
+  the background — per-packet sounds are no longer scheduled while hidden (the
+  phone suspends audio in the background, so they used to pile up and all play
+  at once on return).
 
 ## [1.2.2] - 2026-06-27
 

@@ -6298,6 +6298,13 @@ class MeshCoreApp {
         const mode = this.soundSelect?.value ?? 'off';
         // 'disconnect' = alarm on drop only, no per-packet beep (see _playDisconnectAlarm).
         if (mode === 'off' || mode === 'disconnect') return;
+        // Don't schedule per-packet sounds while the page is backgrounded. On
+        // mobile the browser suspends the AudioContext when hidden, freezing its
+        // clock — every beep scheduled against that frozen time would then fire at
+        // once the moment you return and the context resumes (a wall of noise).
+        // Skipping while hidden avoids both the pile-up and the burst; you can't
+        // hear per-packet beeps in the background anyway. (Capture is unaffected.)
+        if (document.hidden) return;
         if (!this.audioCtx) this.audioCtx = new AudioContext();
         const ctx = this.audioCtx;
         if (ctx.state === 'suspended') ctx.resume();
