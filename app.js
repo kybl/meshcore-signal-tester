@@ -7,6 +7,7 @@ import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
 import * as MapLod from './maplod.js?v=4';
+import * as ChartZoom from './chart-zoom.js?v=1';
 
 // Released app version, shown in the header. Distinct from the per-asset ?v=
 // cache busters, which change on every edit.
@@ -121,6 +122,7 @@ class MeshCoreApp {
         this._chartFrozenAt = Date.now();
         this._lastDataTime = 0;          // newest observation time seen (live or restored); used to freeze the chart at the last point when not collecting
         this._chartZoom = null;          // {tMin,tMax} X-axis zoom window (null = auto/live)
+        this._chartFollowLive = false;   // zoom window pinned to the live (right) edge → tracks now while measuring
         this._lastChartWindow = null;    // [tMin,tMax] the charts were last drawn with
         this._chartFullWindow = null;    // [tMin,tMax] un-zoomed extent (for clamping)
 
@@ -263,7 +265,7 @@ class MeshCoreApp {
         document.querySelectorAll('.chart-svg-wrap').forEach(
             wrap => this._attachResizeHandle(wrap, 'chart-resize-handle', 80));
         setInterval(() => {
-            if (!this._chartFrozenAt) this._scheduleChartRender();
+            if (!this._chartFrozenAt) { this._advanceLiveZoom(); this._scheduleChartRender(); }
             if (isFinite(this.DISPLAY_LIFETIME)) {
                 this.signalMap?.setDisplayCutoff?.(this._displayCutoffNow());
                 this._renderRepTable();
@@ -3985,6 +3987,9 @@ class MeshCoreApp {
         // (and the Reset button) around for it.
         if (tMax - tMin >= (full.tMax - full.tMin) * 0.99) { this._clearChartZoom(); return; }
         this._chartZoom = { tMin, tMax };
+        // If the window reaches the live/right edge, arm live-follow so it tracks
+        // now while measuring (see _advanceLiveZoom). tMax was clamped to full.tMax.
+        this._chartFollowLive = tMax >= full.tMax - 1;
         this._updateZoomResetBtns();
         this._scheduleChartRender();        // instant: rescale the current cache
         this._scheduleChartCacheRefresh();  // then refine resolution for the new window
@@ -3993,6 +3998,7 @@ class MeshCoreApp {
     _clearChartZoom() {
         const had = !!this._chartZoom;
         this._chartZoom = null;
+        this._chartFollowLive = false;
         this._updateZoomResetBtns();
         if (had) { this._scheduleChartRender(); this._scheduleChartCacheRefresh(); }
     }
@@ -4017,7 +4023,32 @@ class MeshCoreApp {
         if (nMin < full.tMin) { nMin = full.tMin; nMax = nMin + span; }
         if (nMax > full.tMax) { nMax = full.tMax; nMin = nMax - span; }
         this._chartZoom = { tMin: nMin, tMax: nMax };
+        // Panning onto the right edge (re)arms live-follow; panning away disarms it.
+        this._chartFollowLive = nMax >= full.tMax - 1;
         this._updateZoomResetBtns();
+        this._scheduleChartRender();
+        this._scheduleChartCacheRefresh();
+    }
+
+    // While measuring (chart live, not frozen) keep an active zoom window tracking
+    // the data as time advances, in the two edge cases the user expects:
+    //   (1) the window is pinned to the live/right edge (_chartFollowLive) → keep
+    //       its right edge at now, so it shows the newest records instead of
+    //       standing still while new data streams in off-screen;
+    //   (2) pruning / a finite Display window is trimming old points and the
+    //       window's left edge has reached the prune cutoff → ride the cutoff
+    //       forward so the window keeps showing live data instead of sitting over
+    //       already-removed (empty) space.
+    // The span is preserved. Manually panning away from the right edge clears the
+    // follow flag (_panChartZoom); panning back re-arms it. Driven by the 2 s tick.
+    _advanceLiveZoom() {
+        if (!this._chartZoom || this._chartFrozenAt) return;
+        const next = ChartZoom.advanceZoomWindow(
+            this._chartZoom, Date.now(),
+            { displayLifetime: this.DISPLAY_LIFETIME, hashLifetime: this.HASH_LIFETIME },
+            this._chartFollowLive);
+        if (!next) return;
+        this._chartZoom = next;
         this._scheduleChartRender();
         this._scheduleChartCacheRefresh();
     }

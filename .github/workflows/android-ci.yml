@@ -17,6 +17,7 @@ on:
       - 'frame.js'
       - 'geo.js'
       - 'maplod.js'
+      - 'chart-zoom.js'
       - 'style.css'
       - 'native-bridge.js'
       - 'logo.svg'
