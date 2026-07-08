@@ -1,8 +1,9 @@
 Version 1.2.3
 
-- 2D charts now follow live data while zoomed in — the view keeps up with new packets instead of drifting onto old or empty time.
+- 2D charts now follow live data while zoomed in, and you can tap a chart point to open that packet.
+- The 2D-chart tooltip shows the time down to the millisecond and the packet type.
 - Smoother, steadier 3D-map clustering — points no longer flicker as you move the camera, and more show when zoomed into sparse areas.
 - Received Packets columns are ordered by recent activity, so the most active repeaters lead.
 - CSV export now shows the saved file's size.
 
-Fixed: CSV export/import now preserves messages with line breaks; the Received Packets table no longer clears when opening some columns; the "load previously captured data?" prompt reliably appears on reopen.
+Fixed: CSV export/import now preserves messages with line breaks; the 3D-map show/hide button works for collision repeaters; no more duplicate repeater rows on long runs; the "load previously captured data?" prompt reliably appears on reopen.

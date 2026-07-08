@@ -9,11 +9,18 @@
 
 ## [1.2.3] - 2026-07-09
 
+### Added
+
+- **Tap a point in a 2D chart to open that packet** in the Received Packets
+  table.
+
 ### Changed
 
 - **2D charts now follow live data while zoomed in** — during measurement a
   zoomed SNR/RSSI chart keeps up with new packets at the right edge and stays
   within the recorded time range, instead of drifting onto old or empty time.
+- **The 2D-chart tooltip shows the time down to the millisecond and the packet
+  type**, plus how many receptions a clustered point stands for.
 - **Smoother, steadier 3D-map clustering** — points no longer flicker or shuffle
   as you move or zoom the camera, more individual points are shown when you zoom
   into a sparse area, and points appear right after zooming in.
@@ -26,8 +33,14 @@
 ### Fixed
 
 - **CSV export/import now preserves messages that contain line breaks.**
+- **The 3D-map show/hide (eye) button now works for repeaters that share an ID
+  prefix** (collision columns).
+- **No more duplicate rows for the same repeater** when it is seen at different
+  ID lengths over a long run.
 - **The Received Packets table no longer clears** when you open certain repeater
   columns.
+- **Seen Repeaters no longer scrolls on its own** — it jumps to a repeater only
+  when you select it.
 - **The "Load previously captured data?" prompt reliably appears** when you
   reopen the app with saved data.
 
