@@ -4025,6 +4025,17 @@ class MeshCoreApp {
         this._chartZoom = { tMin: nMin, tMax: nMax };
         // Panning onto the right edge (re)arms live-follow; panning away disarms it.
         this._chartFollowLive = nMax >= full.tMax - 1;
+        // While measuring, snap to the live edge boundaries immediately (don't wait
+        // for the next tick): a left pan can't drag the window older than the prune
+        // cutoff — into removed / never-shown space — and a right pan re-pins live.
+        // Same rules as _advanceLiveZoom, so a drag just "sticks" at the boundary.
+        if (!this._chartFrozenAt) {
+            const corrected = ChartZoom.advanceZoomWindow(
+                this._chartZoom, Date.now(),
+                { displayLifetime: this.DISPLAY_LIFETIME, hashLifetime: this.HASH_LIFETIME },
+                this._chartFollowLive);
+            if (corrected) this._chartZoom = corrected;
+        }
         this._updateZoomResetBtns();
         this._scheduleChartRender();
         this._scheduleChartCacheRefresh();
