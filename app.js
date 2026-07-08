@@ -76,7 +76,16 @@ class MeshCoreApp {
         this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
-        this.hashData = new Map();
+        // RECENT RAM WINDOW ONLY (hash → per-packet aggregate), bounded by
+        // _ramWindowMs(). NOT the full capture — older packets live only on disk
+        // (this.store). So never derive "what exists over all time" from this:
+        //   • repeater set        → this.repeaterColumns
+        //   • per-repeater stats   → this.allRepeaters (kept in sync with disk)
+        //   • total / active count → this.store.countHashes() (RAM only as fallback)
+        //   • windowed points/rows → a disk query merged with the live tail
+        // Reading it for an all-time question silently misses history (that was the
+        // "Show all repeaters" / resume-prompt class of bug).
+        this._recentPackets = new Map();
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
@@ -229,7 +238,7 @@ class MeshCoreApp {
     // The <p> text itself is set elsewhere (connect handlers) to reflect status.
     _updateEmptyState() {
         if (!this.emptyState) return;
-        const hasData = this.hashData.size > 0 || (this._tableHashCount || 0) > 0;
+        const hasData = this._recentPackets.size > 0 || (this._tableHashCount || 0) > 0;
         this.emptyState.classList.toggle('hidden', hasData);
     }
 
@@ -1007,7 +1016,7 @@ class MeshCoreApp {
         const seen = new Set();
         // Iterate every known repeater column — the same set shown in Seen
         // Repeaters and clickable individually — not just those in the live RAM
-        // window (this.hashData). Otherwise "Show all repeaters" found nothing
+        // window (this._recentPackets). Otherwise "Show all repeaters" found nothing
         // for loaded/older data whose recent window holds no packets, even though
         // each repeater still shows on the map when clicked one by one.
         for (const col of this.repeaterColumns) {
@@ -2728,7 +2737,7 @@ class MeshCoreApp {
             ? Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('')
             : null;
         const adHash = 'AD:' + pubKeyHex;
-        const existing = this.hashData.get(adHash);
+        const existing = this._recentPackets.get(adHash);
         const tagKnown = this._discoverTags?.has(tag);
         const nodeName = existing?.meta?.name ?? null;
         const meta = {
@@ -2911,7 +2920,7 @@ class MeshCoreApp {
     // Resolve `rawId` to a column, creating/promoting/splitting/merging columns
     // as needed. The DECISION lives in the pure ColumnKey.resolveColumn (unit-
     // tested); this shell applies the side-effect events it returns to migrate
-    // the real data (columns, stats, hashData, chart/map/table). Applying the
+    // the real data (columns, stats, _recentPackets, chart/map/table). Applying the
     // events after the decision is equivalent to the old interleaving: the
     // decision reads only the column list + stored minPrecision (before any
     // mutation), so the deferred migrations don't change it.
@@ -2936,8 +2945,8 @@ class MeshCoreApp {
             this.repeaterColumns.push(collisionKey);
         }
 
-        // hashData: per (hash, repeater) entry
-        for (const [, data] of this.hashData) {
+        // _recentPackets: per (hash, repeater) entry
+        for (const [, data] of this._recentPackets) {
             const entry = data.repeaters.get(existingCol);
             if (!entry) continue;
             const ePrec = entry.rawId ? this.idPrecision(entry.rawId) : existingPrec;
@@ -3041,7 +3050,7 @@ class MeshCoreApp {
             this.allRepeaters.delete(oldKey);
         }
 
-        for (const data of this.hashData.values()) {
+        for (const data of this._recentPackets.values()) {
             if (data.repeaters.has(oldKey)) {
                 data.repeaters.set(newKey, data.repeaters.get(oldKey));
                 data.repeaters.delete(oldKey);
@@ -3113,7 +3122,7 @@ class MeshCoreApp {
         const now = opts.timestamp ?? Date.now();
         if (now > this._lastDataTime) this._lastDataTime = now;
         if (!opts.importing) this._rxTimestamps.push(now);
-        const isNewHash = !this.hashData.has(hash);
+        const isNewHash = !this._recentPackets.has(hash);
         const prevColCount = this.repeaterColumns.length;
         const canonicalKey = this.findOrCreateColumn(repeater);
 
@@ -3128,7 +3137,7 @@ class MeshCoreApp {
         if (opts.remoteSnr != null) repEntry.remoteSnr = opts.remoteSnr;
 
         if (isNewHash) {
-            this.hashData.set(hash, {
+            this._recentPackets.set(hash, {
                 repeaters: new Map([[canonicalKey, repEntry]]),
                 firstSeen: now,
                 lastSeen: now,
@@ -3139,7 +3148,7 @@ class MeshCoreApp {
                 packet,
             });
         } else {
-            const data = this.hashData.get(hash);
+            const data = this._recentPackets.get(hash);
             // When importing, skip (hash, repeater) pairs that already exist — existing data wins
             if (opts.importing && data.repeaters.has(canonicalKey)) return;
             data.lastSeen = now;
@@ -3206,7 +3215,7 @@ class MeshCoreApp {
         }
 
         // Sound stays immediate (cheap, and its timing matters).
-        const data = this.hashData.get(hash);
+        const data = this._recentPackets.get(hash);
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
         if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr);
@@ -3362,7 +3371,7 @@ class MeshCoreApp {
         const narrowFn = this._tableNarrowFn();
         const m = new Map(this._tablePageData);
         if (this._tablePage === 0) {
-            for (const [h, d] of this.hashData) {
+            for (const [h, d] of this._recentPackets) {
                 if (d.lastSeen <= this._renderCacheAt) continue;
                 // When narrowed the snapshot holds only matching hashes — keep the
                 // tail consistent so hidden rows don't eat the page cap.
@@ -3487,7 +3496,7 @@ class MeshCoreApp {
     // maps hash → column (or null), captured before msgTableBody was replaced.
     _reinsertOpenDetailRows(openDetails) {
         for (const [hash, col] of openDetails) {
-            if (!this._tableSource().has(hash) && !this.hashData.has(hash)) continue;
+            if (!this._tableSource().has(hash) && !this._recentPackets.has(hash)) continue;
             // Drop detail for a column that is now filtered out
             if (col && !this._colMatchesRepFilter(col)) continue;
             const row = document.getElementById(`row-${hash}`);
@@ -3650,7 +3659,7 @@ class MeshCoreApp {
     }
 
     _buildDetailRow(hash, col = null) {
-        const data = this._tableSource().get(hash) || this.hashData.get(hash);
+        const data = this._tableSource().get(hash) || this._recentPackets.get(hash);
         if (!data) return '';
         // Span every rendered column (the table shows the union of live + disk
         // columns, which can exceed repeaterColumns).
@@ -4650,7 +4659,7 @@ class MeshCoreApp {
         // carry the type directly; single-reception buckets carry the packet hash —
         // resolve the type from the RAM hash table here, and from disk async below.
         const pType = (!isSent && single)
-            ? (nearest.type ?? (nearest.hash ? this.hashData.get(nearest.hash)?.type : null))
+            ? (nearest.type ?? (nearest.hash ? this._recentPackets.get(nearest.hash)?.type : null))
             : null;
         const typeBadge = pType
             ? `<span class="ct-type" title="${this._escHtml(pType)}">${this._escHtml(this._abbreviateType(pType))}</span>`
@@ -5565,14 +5574,14 @@ class MeshCoreApp {
 
     // --- Packet table pagination over disk history (wide / "All" view) ---
 
-    // The current disk page snapshot. Callers fall back to live hashData for
-    // tail rows (packets newer than the snapshot) via `?? this.hashData.get(h)`.
+    // The current disk page snapshot. Callers fall back to live _recentPackets for
+    // tail rows (packets newer than the snapshot) via `?? this._recentPackets.get(h)`.
     _tableSource() {
         return this._tablePageData;
     }
 
     // Build one page of the table from disk: the newest `_tablePageSize` hashes
-    // (by firstSeen) and all their observations, assembled into hashData-shaped
+    // (by firstSeen) and all their observations, assembled into _recentPackets-shaped
     // entries so _renderMsgTable can render them unchanged.
     // The column predicate that narrows which packets the table shows, or null
     // when it shows everything. A repeater SELECTION (single column) takes
@@ -5745,12 +5754,12 @@ class MeshCoreApp {
         if (this._storeReady && !this._chartBase) this._ensureChartBase();
         const lifetime = this._ramWindowMs();
         const toRemove = [];
-        for (const [hash, data] of this.hashData.entries()) {
+        for (const [hash, data] of this._recentPackets.entries()) {
             if (now - data.lastSeen > lifetime) toRemove.push(hash);
         }
 
         if (!toRemove.length) {
-            // No hashData expired, but chartPoints / map points may still need pruning
+            // No _recentPackets expired, but chartPoints / map points may still need pruning
             if (isFinite(lifetime)) {
                 const cutoff = now - lifetime;
                 const before = this.chartPoints.length;
@@ -5773,8 +5782,8 @@ class MeshCoreApp {
         setTimeout(() => {
             const cutoff = Date.now() - lifetime;
             for (const hash of toRemove) {
-                const data = this.hashData.get(hash);
-                if (data && data.lastSeen <= cutoff) this.hashData.delete(hash);
+                const data = this._recentPackets.get(hash);
+                if (data && data.lastSeen <= cutoff) this._recentPackets.delete(hash);
             }
             if (isFinite(lifetime)) {
                 this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
@@ -5846,7 +5855,7 @@ class MeshCoreApp {
                     if (!this.repeaterColumns.includes(rId)) this.repeaterColumns.push(rId);
                     p.col = rId;
                 }
-                for (const data of this.hashData.values()) {
+                for (const data of this._recentPackets.values()) {
                     const entry = data.repeaters.get(col);
                     if (!entry) continue;
                     const rId = entry.rawId ?? col;
@@ -5888,7 +5897,7 @@ class MeshCoreApp {
     }
 
     _clearAllData() {
-        this.hashData.clear();
+        this._recentPackets.clear();
         this.chartPoints = [];
         this._sentSnrHistory = [];
         this._wideChartPoints = [];
@@ -6250,7 +6259,7 @@ class MeshCoreApp {
         document.querySelectorAll('#msgTableBody tr[id^="row-"]').forEach(tr => {
             if (!sel) { tr.style.display = ''; return; }
             const hash = tr.id.slice(4);
-            const data = this._tableSource().get(hash) || this.hashData.get(hash);
+            const data = this._tableSource().get(hash) || this._recentPackets.get(hash);
             tr.style.display = data?.repeaters.has(sel) ? '' : 'none';
         });
         // Keep detail rows in sync with their parent row
@@ -6502,7 +6511,7 @@ class MeshCoreApp {
     // --- Stats & status ---
 
     _updateStats() {
-        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.hashData.size === 0 && !this._storeReady;
+        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this._recentPackets.size === 0 && !this._storeReady;
         const displayCutoff = this._displayCutoffNow();
         // "Active" = unique packets in the Display window. A finite window is
         // never wider than the RAM window (max Display = 1 h = the RAM budget),
@@ -6511,8 +6520,8 @@ class MeshCoreApp {
         // countHashes() on load, then incremented per new hash) so it doesn't
         // collapse to just the recent RAM tail after a long capture.
         const visibleHashes = displayCutoff
-            ? Array.from(this.hashData.values()).filter(d => d.lastSeen >= displayCutoff).length
-            : (this._storeReady ? this._tableHashCount : this.hashData.size);
+            ? Array.from(this._recentPackets.values()).filter(d => d.lastSeen >= displayCutoff).length
+            : (this._storeReady ? this._tableHashCount : this._recentPackets.size);
         this.activeHashesEl.textContent = visibleHashes;
         this.totalRxEl.textContent = this.totalRxCount;
         const visibleRepeaters = displayCutoff
@@ -6627,7 +6636,7 @@ class MeshCoreApp {
 
     async _exportCsv() {
         const useDisk = this._storeReady;
-        if (this.hashData.size === 0 && !useDisk) return;
+        if (this._recentPackets.size === 0 && !useDisk) return;
 
         // Flush any buffered writes so the export reflects everything captured.
         if (useDisk) await this._flushWrites();
@@ -6664,7 +6673,7 @@ class MeshCoreApp {
                 sent.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label, lat: r.lat, lon: r.lon }));
             sentSource = sent;
         } else {
-            for (const [hash, data] of this.hashData) {
+            for (const [hash, data] of this._recentPackets) {
                 if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
                 for (const [col, rep] of data.repeaters) {
                     if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
@@ -6805,13 +6814,13 @@ class MeshCoreApp {
 
         await new Promise(r => setTimeout(r, 0)); // yield to let the browser repaint
 
-        // Count what's actually stored, not just the small RAM window. hashData
+        // Count what's actually stored, not just the small RAM window. _recentPackets
         // only holds the recent in-memory window (often a few dozen hashes), while
-        // the disk may hold many thousands — so reporting hashData.size here showed
+        // the disk may hold many thousands — so reporting _recentPackets.size here showed
         // a confusingly tiny number. Use the on-disk distinct-hash total when the
         // store is ready (this also warns correctly after a reload, when the RAM
         // window can be empty even though the disk is full).
-        let existingCount = this.hashData.size;
+        let existingCount = this._recentPackets.size;
         if (this._storeReady) {
             try { existingCount = await this.store.countHashes(); } catch (_) {}
         }
