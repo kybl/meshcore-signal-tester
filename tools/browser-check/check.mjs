@@ -73,7 +73,17 @@ function sampleCsv() {
         { id: 'BBBB02', n: 20, rssi: -90 },
         { id: 'CCCC03', n: 10, rssi: -60 },    // fewest packets, strongest signal
     ];
-    const rows = [H.join(',')];
+    // A contact (name + GPS) per repeater, pubkey starting with the repeater id so
+    // _contactsByPrefix matches it — this is what "Show all repeaters" needs.
+    const contacts = specs.map((s, i) => ({
+        pubKeyFullHex: (s.id.toLowerCase() + '0'.repeat(64)).slice(0, 64),
+        name: 'Rep-' + s.id,
+        lat: (50.06 + i * 0.001).toFixed(6),
+        lon: (14.41 + i * 0.001).toFixed(6),
+    }));
+    const rows = [];
+    for (const c of contacts) rows.push('# CONTACT,' + [c.pubKeyFullHex, c.name, c.lat, c.lon].join(','));
+    rows.push(H.join(','));
     let h = 0x4000;
     let step = 0;
     for (const s of specs) {
@@ -87,7 +97,8 @@ function sampleCsv() {
             rows.push([t, 'RX_LOG_DATA', (h++).toString(16), s.id, snr, '', s.rssi, '', lat, lon, '', ''].join(','));
         }
     }
-    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0), order: specs.map(s => s.id) };
+    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0), order: specs.map(s => s.id),
+             contactCount: contacts.length };
 }
 
 // ---- assertions ------------------------------------------------------------
@@ -141,6 +152,20 @@ async function main() {
     check('Received Packets column order = by first-page count',
         JSON.stringify(cols) === JSON.stringify(order),
         `expected ${JSON.stringify(order)}, got ${JSON.stringify(cols)}`);
+
+    // 3b) End-to-end smoke of "Show all repeaters": with GPS contacts present the
+    // button pins them and flips to "Hide all repeaters". (A fresh import keeps
+    // everything in the live model, so this doesn't reproduce the RAM-pruned state
+    // the original bug needed — it exercises the path, it isn't a guard for that
+    // exact condition; that fix is verified by reading the code.)
+    const showBtn = await page.$('#showAllRepeatersBtn');
+    const beforeText = (await showBtn.textContent()).trim();
+    await showBtn.click();
+    await page.waitForTimeout(400);
+    const afterText = (await page.textContent('#showAllRepeatersBtn')).trim();
+    check('"Show all repeaters" pins them (button flips to "Hide all repeaters")',
+        beforeText === 'Show all repeaters' && afterText === 'Hide all repeaters',
+        `before "${beforeText}", after "${afterText}"`);
 
     // 4) Clear data empties the table and resets the counter.
     await page.getByText('Clear data', { exact: false }).first().click();

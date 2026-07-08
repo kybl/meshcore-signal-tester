@@ -1002,18 +1002,15 @@ class MeshCoreApp {
         document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.toggleFollowUser());
     }
 
-    _activeCols() {
-        const cols = new Set();
-        for (const [, data] of this.hashData) {
-            for (const col of data.repeaters.keys()) cols.add(col);
-        }
-        return cols;
-    }
-
     _contactsWithGps() {
         const out = [];
         const seen = new Set();
-        for (const col of this._activeCols()) {
+        // Iterate every known repeater column — the same set shown in Seen
+        // Repeaters and clickable individually — not just those in the live RAM
+        // window (this.hashData). Otherwise "Show all repeaters" found nothing
+        // for loaded/older data whose recent window holds no packets, even though
+        // each repeater still shows on the map when clicked one by one.
+        for (const col of this.repeaterColumns) {
             for (const c of this._contactsByPrefix(col)) {
                 if (!seen.has(c.pubKeyFullHex) && c.name && (c.lat !== 0 || c.lon !== 0)) {
                     seen.add(c.pubKeyFullHex);

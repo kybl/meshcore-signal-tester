@@ -43,6 +43,10 @@
   when you select it.
 - **The "Load previously captured data?" prompt reliably appears** when you
   reopen the app with saved data.
+- **"Show all repeaters" now works for loaded or long-running sessions** — it
+  places every known repeater that has a position, not only the ones that sent a
+  packet in the recent in-memory window (previously it could do nothing even
+  though each repeater still appeared when clicked individually).
 - **No more burst of queued beeps** when you return to the app after it was in
   the background — per-packet sounds keep playing while the phone still allows
   audio, but once it suspends audio in the background they're skipped instead of
