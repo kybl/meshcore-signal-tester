@@ -6298,16 +6298,17 @@ class MeshCoreApp {
         const mode = this.soundSelect?.value ?? 'off';
         // 'disconnect' = alarm on drop only, no per-packet beep (see _playDisconnectAlarm).
         if (mode === 'off' || mode === 'disconnect') return;
-        // Don't schedule per-packet sounds while the page is backgrounded. On
-        // mobile the browser suspends the AudioContext when hidden, freezing its
-        // clock — every beep scheduled against that frozen time would then fire at
-        // once the moment you return and the context resumes (a wall of noise).
-        // Skipping while hidden avoids both the pile-up and the burst; you can't
-        // hear per-packet beeps in the background anyway. (Capture is unaffected.)
-        if (document.hidden) return;
         if (!this.audioCtx) this.audioCtx = new AudioContext();
         const ctx = this.audioCtx;
-        if (ctx.state === 'suspended') ctx.resume();
+        // Only schedule when the context is actually RUNNING — not merely when the
+        // page is visible. Backgrounding doesn't suspend audio right away, so beeps
+        // keep playing for a while (which is fine); gating on document.hidden would
+        // kill those needlessly. Once the OS suspends the context its clock
+        // (currentTime) freezes, so a beep scheduled then would fire the instant it
+        // resumes — and all the ones queued while suspended would blast at once on
+        // return. So while it isn't running, ask it to resume for next time and skip
+        // this beep. (Only sound is gated; capture is unaffected.)
+        if (ctx.state !== 'running') { ctx.resume?.(); return; }
         const now = ctx.currentTime;
         const baseFreq = 700;
 
@@ -7168,6 +7169,10 @@ if (document.readyState === 'loading') {
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
         monitor?._syncWakeLock();
+        // Recover audio promptly on return so the next packet beeps without a
+        // one-packet delay. Nothing was queued while suspended (see _playRxSound),
+        // so this can't unleash a backlog.
+        monitor?.audioCtx?.resume?.();
     } else {
         monitor?.releaseWakeLock();
     }
