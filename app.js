@@ -3,6 +3,7 @@ import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=153';
 import { CaptureModel } from './capture-model.js?v=1';
 import { TableCache } from './table-cache.js?v=1';
+import { ChartCache } from './chart-cache.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -145,14 +146,10 @@ class MeshCoreApp {
         this.RENDER_BUDGET_MS = 60 * 60 * 1000;  // raw points kept in RAM (≥ this much recent history)
         this.MAX_RAW_VIEW    = 40000;            // above this a window renders downsampled
         this.DOWNSAMPLE_BUCKETS = 1500;          // time-bucket count for wide-window charts
-        this._wideChartPoints = [];              // chart render array, derived from the bucket cache
-        this._wideSentPoints  = [];              // outgoing-SNR layer (disk) — live tail via _sentChartAt
-        this._chartBase       = null;            // incremental time-bucket cache {cells: Map, width, lo}
-        this._chartZoomLayer  = null;            // finer buckets over the zoom window {cells, width, lo, from, to}
-        this._sentChartAt     = 0;               // time the sent layer reflects
-        this._chartArrTimer   = null;            // coalesces bucket upserts into one array rebuild
-        this._chartBaseBuilding = false;         // a _rebuildChartBase() is in flight (self-heal guard)
-        this._chartBaseHealAt = 0;               // last self-heal attempt, to debounce retries
+        // The 2D charts' time-bucket cache (base + zoom layers, render array,
+        // disk sent layer) lives in ChartCache — its state is private there;
+        // app-level concerns are injected. Created after the fields it closes
+        // over are initialised (see below, next to TableCache).
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this.MAP_TARGET_DOTS  = 2500;            // dot budget for the map grid layers
         this._wideMapBase     = null;            // RAM cell cache: full-extent map layer {cells: Map, cell, at}
@@ -173,6 +170,18 @@ class MeshCoreApp {
             narrowFn:      () => this._tableNarrowFn(),
             narrowKey:     () => this._tableNarrowKey(),
             displayCutoff: () => this._displayCutoffNow(),
+        });
+        this.charts = new ChartCache(this.model, {
+            bucketCount:     this.DOWNSAMPLE_BUCKETS,
+            resolveCol:      id => this._resolveColReadonly(id),
+            idPrecision:     id => this.idPrecision(id),
+            displayCutoff:   () => this._displayCutoffNow(),
+            displayLifetime: () => this.DISPLAY_LIFETIME,
+            frozenAt:        () => this._chartFrozenAt,
+            zoomWindow:      () => this._chartZoom,
+            seedColumn:      rawId => this.findOrCreateColumn(rawId),
+            onDerived:       () => this._scheduleChartRender(),
+            afterBaseBuild:  () => this._restoreRepStatsFromBase(),
         });
 
         this.initUI();
@@ -3155,7 +3164,7 @@ class MeshCoreApp {
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
             if (!opts.replaying && !opts.importing && this.model.ready) {
-                this._upsertChartCell(now, snr, rssi, repeater, type, hash);
+                this.charts.upsert(now, snr, rssi, repeater, type, hash);
             }
         }
         if (loc) {
@@ -4032,10 +4041,10 @@ class MeshCoreApp {
         clearTimeout(this._chartCacheTimer);
         this._chartCacheTimer = setTimeout(() => {
             if (this._chartZoom) {
-                this._rebuildChartZoomLayer();
+                this.charts.rebuildZoomLayer();
             } else {
-                this._chartZoomLayer = null;
-                this._rebuildChartArrays();
+                this.charts.dropZoomLayer();
+                this.charts.derive();
             }
         }, 140);
     }
@@ -4989,15 +4998,14 @@ class MeshCoreApp {
         this._wideMapBase = null;       // window changed → recompute the base layer
         this._wideMapDetail = null;
         this._wideMapKey = null;
-        this._chartBase = null;         // window changed → rebuild the bucket cache
-        this._chartZoomLayer = null;
+        this.charts.dropLayers();       // window changed → rebuild the bucket cache
         await this.model.flush();
         const boundary = Date.now();    // rewind the tail base only after caches land
         try {
             await Promise.all([
                 this._refreshWideMap(),       // spatial downsample for the 3D map
                 this._loadTablePage(0, true), // paginate the packet table over disk
-                this._rebuildChartBase(),     // time-bucket cache for the 2D charts
+                this.charts.rebuildBase(),    // time-bucket cache for the 2D charts
             ]);
             // Rewind the table's tail boundary to the pre-rebuild instant so the
             // live tail and the rebuilt caches can't leave a gap between them.
@@ -5012,84 +5020,9 @@ class MeshCoreApp {
     }
 
     // --- 2D-chart bucket cache -------------------------------------------
-    // Same model as the 3D map's cell cache: an in-RAM Map of time buckets
-    // (key `rawId|bIdx`), kept current by folding each live packet into its bucket
-    // (_upsertChartCell). Time buckets expire exactly — a bucket covers a fixed
-    // time range, so once its end leaves a finite Display window it is provably
-    // empty and is dropped. Disk is read only to BUILD a layer:
-    //   - base:  once per Display window (and a growth escape valve for "All"),
-    //   - zoom:  on zoom-in / zoom-window change (finer buckets over the window).
-    // Zooming OUT needs no disk at all — the base stays maintained by upserts.
-
-    // Re-establish the wide/All chart bucket cache if it is missing during live
-    // capture. That cache is the ONLY source the charts read in a wide window
-    // (see _visibleChartPoints), and _upsertChartCell cannot fold into a null
-    // base — so if a build ever fails (the catch below) or is dropped, nothing
-    // else would rebuild it until the next Display change, freezing the charts
-    // at their last state while disk and the 3D map keep filling. Self-heal,
-    // debounced and non-overlapping, so capture recovers on its own.
-    _ensureChartBase() {
-        if (!this.model.ready || this._chartBaseBuilding) return;
-        if (Date.now() - this._chartBaseHealAt < 1000) return;
-        this._chartBaseHealAt = Date.now();
-        this._chartBaseBuilding = true;
-        this._rebuildChartBase().finally(() => { this._chartBaseBuilding = false; });
-    }
-
-    async _rebuildChartBase() {
-        if (!this.model.ready) return;
-        // Standalone callers (escape valve, self-heal) may have unflushed writes;
-        // flush so the rebuilt base includes the packets that triggered it.
-        await this.model.flush();
-        // Pin the window this build is for; if Display changes while we await disk
-        // a newer build owns the base, so discard this (possibly different-window)
-        // result rather than clobbering it.
-        const lifetime = this.DISPLAY_LIFETIME;
-        // Bucket over the same window the charts actually render: [from, nowRef].
-        // nowRef is the frozen chart clock (import / paused) or live now. Bounding
-        // the upper edge matters because bucketObs derives the bucket width from
-        // the queried span: with an unbounded `to`, any obs newer than nowRef
-        // (e.g. leftover live captures, or rows newer than an imported-and-frozen
-        // session) would stretch the width, collapsing all in-view points into a
-        // couple of buckets — they'd render as one vertical column until a zoom
-        // (whose layer is window-bounded) rebuilt a finer grid. Using nowRef for
-        // `from` too keeps the window consistent with the frozen clock.
-        const nowRef = this._chartFrozenAt ?? Date.now();
-        const from = isFinite(lifetime) ? nowRef - lifetime : -Infinity;
-        try {
-            const { buckets, width, lo } = await this.model.bucketObs(from, nowRef, this.DOWNSAMPLE_BUCKETS);
-            if (this.DISPLAY_LIFETIME !== lifetime) return;
-            const cells = new Map();
-            for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
-            this._chartBase = { cells, width, lo };
-            // Seed canonical repeater columns from the disk buckets, applying the
-            // same promote/merge as live ingest (findOrCreateColumn). Without this,
-            // a node seen at several path-prefix lengths (e.g. 11 / 1122 / 112233)
-            // splits into one bare column PER length whenever its live column has
-            // aged out of the RAM window — because the read-only resolver maps each
-            // unmatched prefix to itself — so a long run shows the same repeater as
-            // several rows. Seeding here (before the sent-point resolve and the
-            // Seen-Repeaters restore below) collapses the prefixes into one column,
-            // and still forms a collision key for genuinely ambiguous shorter ones.
-            // Shortest-first so a short prefix promotes into the longer label.
-            const seedRaw = new Set();
-            for (const b of cells.values()) {
-                if (b.rawId && b.rawId !== 'direct' && b.rawId !== 'unknown') seedRaw.add(b.rawId);
-            }
-            for (const r of [...seedRaw].sort((a, c) => this.idPrecision(a) - this.idPrecision(c))) {
-                this.findOrCreateColumn(r);
-            }
-            const sent = [];
-            await this.model.eachSent(from, nowRef, r =>
-                sent.push({ time: r.time, snr: r.snr, col: this._resolveColReadonly(r.rawId), label: r.label }));
-            this._wideSentPoints = sent;
-            this._sentChartAt = Date.now();   // live sent points after this are the tail
-            this._rebuildChartArrays();
-            this._restoreRepStatsFromBase();
-        } catch (e) {
-            console.warn('Chart base build failed:', e);
-        }
-    }
+    // Lives in this.charts (ChartCache): the base/zoom bucket layers, the live
+    // upsert folding, the render-array derivation and the disk sent layer are
+    // all private there; app-level concerns are injected in the constructor.
 
     // Restore Seen Repeaters entries from the disk chart layer. The live model
     // (allRepeaters) exists only in RAM, bounded by the RAM window (~60 min):
@@ -5103,34 +5036,11 @@ class MeshCoreApp {
     // last value per metric, like live ingestion); only lastSeen is approximate
     // (≈ the newest bucket's midpoint).
     _restoreRepStatsFromBase() {
-        const base = this._chartBase;
         // No base yet (e.g. it was dropped and not rebuilt): kick a rebuild so the
         // Seen Repeaters table can be re-seeded from disk once it lands, instead of
         // silently staying empty after the RAM tail ages out.
-        if (!base) { if (this.model.ready) this._ensureChartBase(); return; }
-        const agg = new Map();
-        for (const b of base.cells.values()) {
-            const col = this._resolveColReadonly(b.rawId);
-            let a = agg.get(col);
-            if (!a) {
-                a = { count: 0, lastSeen: -1, maxSnr: null, maxRssi: null,
-                      lastSnr: null, lastRssi: null, minPrecision: Infinity,
-                      _lastSnrT: -Infinity, _lastRssiT: -Infinity };
-                agg.set(col, a);
-            }
-            a.count += b.count;
-            if (b.snrMax  != null && (a.maxSnr  == null || b.snrMax  > a.maxSnr))  a.maxSnr  = b.snrMax;
-            if (b.rssiMax != null && (a.maxRssi == null || b.rssiMax > a.maxRssi)) a.maxRssi = b.rssiMax;
-            if (b.time > a.lastSeen) a.lastSeen = b.time;
-            // True last SNR/RSSI: the newest actual reading across buckets, each
-            // tracked by its own observation time, exactly as live ingestion keeps
-            // the last non-null value per metric (independent — the latest packet
-            // with an RSSI may differ from the latest with an SNR).
-            if (b.lastSnr  != null && b.lastSnrT  > a._lastSnrT)  { a._lastSnrT  = b.lastSnrT;  a.lastSnr  = b.lastSnr; }
-            if (b.lastRssi != null && b.lastRssiT > a._lastRssiT) { a._lastRssiT = b.lastRssiT; a.lastRssi = b.lastRssi; }
-            const prec = this.idPrecision(b.rawId);
-            if (prec < a.minPrecision) a.minPrecision = prec;
-        }
+        const agg = this.charts.aggregateRepeaterStats();
+        if (!agg) { if (this.model.ready) this.charts.ensureBase(); return; }
         let changed = false;
         for (const [col, a] of agg) {
             const live = this.allRepeaters.get(col);
@@ -5152,129 +5062,6 @@ class MeshCoreApp {
             this._updateStats();
         }
     }
-
-    // Finer buckets over the (padded) zoom window, so zooming in reveals real
-    // detail instead of magnifying the base's coarse buckets. The ±1-span pad
-    // gives _decimateChartPts a neighbour point outside each edge for the
-    // edge-crossing connecting lines (the clip trims the overshoot).
-    async _rebuildChartZoomLayer() {
-        const z = this._chartZoom;
-        if (!z || !this.model.ready) return;
-        const zspan = z.tMax - z.tMin;
-        try {
-            const { buckets, width, lo } = await this.model.bucketObs(z.tMin - zspan, z.tMax + zspan, this.DOWNSAMPLE_BUCKETS);
-            const cells = new Map();
-            for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
-            this._chartZoomLayer = { cells, width, lo, from: z.tMin - zspan, to: z.tMax + zspan };
-            this._rebuildChartArrays();
-        } catch (e) {
-            console.warn('Chart zoom-layer build failed:', e);
-        }
-    }
-
-    // Fold one live observation into the chart bucket layers (base always, the
-    // zoom layer when the time falls inside it).
-    _upsertChartCell(time, snr, rssi, rawId, type = null, hash = null) {
-        const fold = layer => {
-            const bIdx = Math.floor((time - layer.lo) / layer.width);
-            const key = rawId + '|' + bIdx;
-            let g = layer.cells.get(key);
-            if (!g) {
-                g = { rawId, bIdx, time: layer.lo + bIdx * layer.width + Math.floor(layer.width / 2),
-                      count: 0, snrMin: null, snrMax: null, snrSum: 0, snrN: 0,
-                      rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0,
-                      lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null };
-                layer.cells.set(key, g);
-            }
-            g.count++;
-            // When a bucket holds exactly one reception it stands for a single
-            // packet, so carry its exact time, type and hash — the tooltip shows
-            // ms + the type badge, and a chart click opens that packet's detail.
-            // As soon as a second reception folds in, the bucket is a cluster —
-            // drop all three. (Disk-built buckets get exactTime/hash from
-            // bucketObs; type is looked up per-hover from the hashes store.)
-            if (g.count === 1) { g.exactTime = time; g.type = type ?? null; g.hash = hash ?? null; }
-            else { g.exactTime = null; g.type = null; g.hash = null; }
-            if (snr != null) {
-                g.snrSum += snr; g.snrN++;
-                if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
-                if (g.snrMax == null || snr > g.snrMax) g.snrMax = snr;
-                if (time >= (g.lastSnrT ?? -Infinity)) { g.lastSnrT = time; g.lastSnr = snr; }
-            }
-            if (rssi != null) {
-                g.rssiSum += rssi; g.rssiN++;
-                if (g.rssiMin == null || rssi < g.rssiMin) g.rssiMin = rssi;
-                if (g.rssiMax == null || rssi > g.rssiMax) g.rssiMax = rssi;
-                if (time >= (g.lastRssiT ?? -Infinity)) { g.lastRssiT = time; g.lastRssi = rssi; }
-            }
-            return bIdx;
-        };
-        const base = this._chartBase;
-        if (!base) { this._ensureChartBase(); return; }   // self-heal; the point is on disk
-        const bIdx = fold(base);
-        // "All" keeps a fixed bucket width from its build, so a long session can
-        // outgrow the bucket budget — rebuild once with a wider bucket when the
-        // index runs 3x past it. (Finite windows slide: the index grows but the
-        // live bucket count stays ~constant via expiry, so no rebuild is needed.)
-        if (!isFinite(this.DISPLAY_LIFETIME) && bIdx > this.DOWNSAMPLE_BUCKETS * 3) {
-            this._chartBase = null;
-            this._ensureChartBase();
-            return;
-        }
-        const zl = this._chartZoomLayer;
-        if (zl && time >= zl.from && time <= zl.to) fold(zl);
-        this._scheduleChartArrays();
-    }
-
-    _scheduleChartArrays() {
-        if (this._chartArrTimer) return;
-        this._chartArrTimer = setTimeout(() => { this._chartArrTimer = null; this._rebuildChartArrays(); }, 200);
-    }
-
-    // Derive the render array (_wideChartPoints) from the active bucket layer:
-    // avg point per bucket, plus min/max spread once a bucket holds >1 packet.
-    // Also purges base buckets that expired from a finite Display window (exact —
-    // the bucket's whole time range is past the cutoff).
-    _rebuildChartArrays() {
-        const base = this._chartBase;
-        if (!base) return;
-        const cutoff = this._displayCutoffNow();
-        if (cutoff) {
-            for (const [k, b] of base.cells) {
-                if (base.lo + (b.bIdx + 1) * base.width < cutoff) base.cells.delete(k);
-            }
-        }
-        // Use the zoom layer only while it actually covers the current zoom
-        // window — after a pan/zoom change the stale layer would be missing the
-        // newly exposed range, so fall back to the (complete, coarser) base
-        // until the rebuilt layer lands.
-        const zl = this._chartZoomLayer;
-        const z = this._chartZoom;
-        const layer = (z && zl && zl.from <= z.tMin && zl.to >= z.tMax) ? zl : base;
-        const cps = [];
-        for (const b of layer.cells.values()) {
-            const col = this._resolveColReadonly(b.rawId);
-            const snrAvg  = b.snrN  ? b.snrSum  / b.snrN  : null;
-            const rssiAvg = b.rssiN ? b.rssiSum / b.rssiN : null;
-            // Single-reception bucket (count 1, live-folded): expose the packet's
-            // exact time and type so the tooltip can show ms + the type badge.
-            // Disk-loaded or clustered buckets lack exactTime, so they fall back to
-            // the bucket time and show neither.
-            const single = b.count === 1 && b.exactTime != null;
-            cps.push({ time: single ? b.exactTime : b.time, snr: snrAvg, rssi: rssiAvg,
-                       col, rawId: b.rawId, _bucket: true, count: b.count,
-                       type: single ? b.type : undefined, hash: single ? b.hash : undefined,
-                       _exactTime: single });
-            if (b.count > 1) {
-                if (b.snrMin != null) cps.push({ time: b.time, snr: b.snrMin, rssi: b.rssiMin, col, rawId: b.rawId, _bucket: true, count: b.count });
-                if (b.snrMax != null) cps.push({ time: b.time, snr: b.snrMax, rssi: b.rssiMax, col, rawId: b.rawId, _bucket: true, count: b.count });
-            }
-        }
-        cps.sort((a, b) => a.time - b.time);
-        this._wideChartPoints = cps;
-        this._scheduleChartRender();
-    }
-
 
     // The 3D map renders from an in-RAM cell cache (per-repeater spatial grid).
     // Disk is read only to BUILD a layer — never periodically:
@@ -5559,7 +5346,7 @@ class MeshCoreApp {
         // Safety net: if the wide/All chart cache went missing (a failed rebuild)
         // it would otherwise stay null until the next Display change, freezing the
         // charts. Re-establish it here too, in case no packet arrives to do so.
-        if (this.model.ready && !this._chartBase) this._ensureChartBase();
+        if (this.model.ready && !this.charts.hasBase) this.charts.ensureBase();
         const lifetime = this._ramWindowMs();
         const toRemove = [];
         for (const [hash, data] of this.model.recentEntries()) {
@@ -5686,7 +5473,7 @@ class MeshCoreApp {
 
         // Column keys changed (demotions/dissolves) — re-derive the chart render
         // array so its cached col fields match the new column model.
-        this._scheduleChartArrays();
+        this.charts.scheduleDerive();
 
         // Step 3 above deleted every repeater whose points aged out of the RAM
         // window — but with a Display window wider than that window (e.g. "All"),
@@ -5708,12 +5495,7 @@ class MeshCoreApp {
         // model.clearAll() below wipes the recent window, write buffers and disk.
         this.chartPoints = [];
         this._sentSnrHistory = [];
-        this._wideChartPoints = [];
-        this._wideSentPoints = [];
-        this._chartBase = null;
-        this._chartZoomLayer = null;
-        this._sentChartAt = 0;
-        clearTimeout(this._chartArrTimer); this._chartArrTimer = null;
+        this.charts.clear();
         this.table.clear();
         this._wideMapBase = null;
         this._wideMapDetail = null;
@@ -6374,12 +6156,13 @@ class MeshCoreApp {
     }
 
     // Visible points come from the incrementally maintained bucket cache
-    // (_wideChartPoints, see _rebuildChartArrays) — live packets are already
+    // (charts.renderPoints(), see ChartCache.derive) — live packets are already
     // folded in, so there is no separate tail. Pre-ready the cache is empty and
     // the cutoff-filtered live RAM points serve directly — same path, no branch.
     _visibleChartPoints() {
         const cutoff = this._displayCutoffNow();
-        let pts = this._wideChartPoints.length ? this._wideChartPoints : this.chartPoints;
+        const cached = this.charts.renderPoints();
+        let pts = cached.length ? cached : this.chartPoints;
         // The bucket cache is pruned only opportunistically (at array rebuilds),
         // so enforce the Display cutoff at read time for both sources.
         if (cutoff) pts = pts.filter(p => p.time >= cutoff);
@@ -6393,10 +6176,11 @@ class MeshCoreApp {
         const cutoff = this._displayCutoffNow();
         const z = this._chartZoom;
         const tail = this._sentSnrHistory.filter(p =>
-            p.time > this._sentChartAt &&
+            p.time > this.charts.sentAt &&
             (!cutoff || p.time >= cutoff) &&
             (!z || (p.time >= z.tMin && p.time <= z.tMax)));
-        let pts = tail.length ? this._wideSentPoints.concat(tail) : this._wideSentPoints;
+        const layer = this.charts.sentPoints();
+        let pts = tail.length ? layer.concat(tail) : layer;
         if (cutoff) pts = pts.filter(p => p.time >= cutoff);
         if (z) pts = pts.filter(p => p.time >= z.tMin && p.time <= z.tMax);
         return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
@@ -6728,7 +6512,7 @@ class MeshCoreApp {
 
         // Freeze the chart clock at the last imported packet's time (+1 s) so all
         // imported data stays in view. This must happen BEFORE the wide-view
-        // rebuild below: _rebuildChartBase buckets over [from, frozen-now], so if
+        // rebuild below: charts.rebuildBase buckets over [from, frozen-now], so if
         // the freeze still held an older value the most recent imported points
         // would be truncated from the base layer and only reappear on a zoom.
         // Never rewind an already-newer frozen clock: importing an OLDER archive

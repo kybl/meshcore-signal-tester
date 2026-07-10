@@ -15,6 +15,7 @@ on:
       - 'packet-store.js'
       - 'capture-model.js'
       - 'table-cache.js'
+      - 'chart-cache.js'
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'

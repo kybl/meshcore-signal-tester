@@ -109,6 +109,7 @@ tasks.register('copyWebApp', Copy) {
         include 'packet-store.js'
         include 'capture-model.js'
         include 'table-cache.js'
+        include 'chart-cache.js'
         include 'column-key.js'
         include 'frame.js'
         include 'geo.js'
