@@ -5,6 +5,7 @@ import { CaptureModel } from './capture-model.js?v=1';
 import { TableCache } from './table-cache.js?v=1';
 import { ChartCache } from './chart-cache.js?v=1';
 import { MapCache } from './map-cache.js?v=1';
+import { TimeWindows } from './time-windows.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -87,8 +88,9 @@ class MeshCoreApp {
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
-        this.HASH_LIFETIME    = 15 * 60 * 1000;
-        this.DISPLAY_LIFETIME = Infinity; // separate display window; Infinity = same as HASH_LIFETIME
+        // The Display/Auto-remove windows, the RAM render budget and the frozen
+        // chart clock live in TimeWindows (one owner for cutoff/RAM-window math).
+        this.windows = new TimeWindows();
         this.cleanupInterval = null;
         this._connectionMonitor = null;
         this._monitorDelay = null;
@@ -126,7 +128,6 @@ class MeshCoreApp {
         this._collecting = false;
         this._keepScreenOn = Store.bool('keepScreenOn', true);
         this._unsavedRxCount = 0; // packets received since last CSV export
-        this._chartFrozenAt = Date.now();
         this._lastDataTime = 0;          // newest observation time seen (live or restored); used to freeze the chart at the last point when not collecting
         this._chartZoom = null;          // {tMin,tMax} X-axis zoom window (null = auto/live)
         this._chartFollowLive = false;   // zoom window pinned to the live (right) edge → tracks now while measuring
@@ -143,7 +144,6 @@ class MeshCoreApp {
         // are private inside it; everything here goes through its named methods.
         this.model = new CaptureModel();
         this.model.totalsProvider = () => ({ totalRxCount: this.totalRxCount });
-        this.RENDER_BUDGET_MS = 60 * 60 * 1000;  // raw points kept in RAM (≥ this much recent history)
         this.MAX_RAW_VIEW    = 40000;            // above this a window renders downsampled
         this.DOWNSAMPLE_BUCKETS = 1500;          // time-bucket count for wide-window charts
         // The 2D charts' time-bucket cache (base + zoom layers, render array,
@@ -159,15 +159,15 @@ class MeshCoreApp {
             resolveCol:    id => this._resolveColReadonly(id),
             narrowFn:      () => this._tableNarrowFn(),
             narrowKey:     () => this._tableNarrowKey(),
-            displayCutoff: () => this._displayCutoffNow(),
+            displayCutoff: () => this.windows.displayCutoff(),
         });
         this.charts = new ChartCache(this.model, {
             bucketCount:     this.DOWNSAMPLE_BUCKETS,
             resolveCol:      id => this._resolveColReadonly(id),
             idPrecision:     id => this.idPrecision(id),
-            displayCutoff:   () => this._displayCutoffNow(),
-            displayLifetime: () => this.DISPLAY_LIFETIME,
-            frozenAt:        () => this._chartFrozenAt,
+            displayCutoff:   () => this.windows.displayCutoff(),
+            displayLifetime: () => this.windows.displayMs,
+            frozenAt:        () => this.windows.frozenAt,
             zoomWindow:      () => this._chartZoom,
             seedColumn:      rawId => this.findOrCreateColumn(rawId),
             onDerived:       () => this._scheduleChartRender(),
@@ -178,8 +178,8 @@ class MeshCoreApp {
         this.mapCache = new MapCache(this.model, {
             targetDots:      2500,   // dot budget for the map grid layers
             resolveCol:      id => this._resolveColReadonly(id),
-            displayLifetime: () => this.DISPLAY_LIFETIME,
-            displayCutoff:   () => this._displayCutoffNow(),
+            displayLifetime: () => this.windows.displayMs,
+            displayCutoff:   () => this.windows.displayCutoff(),
             lastView:        () => this._lastMapView,
             pushPoints:      pts => this.signalMap?.setHistoricalPoints?.(pts),
             pushSentPoints:  pts => this.signalMap?.setHistoricalSentPoints?.(pts),
@@ -203,14 +203,14 @@ class MeshCoreApp {
         if (this._collecting) {
             btn.textContent = '⏹ Stop';
             btn.classList.add('collecting');
-            this._chartFrozenAt = null;
+            this.windows.frozenAt = null;
         } else {
             btn.textContent = '▶ Resume';
             btn.classList.remove('collecting');
             // Not collecting → freeze the chart at the last point (so it sits at
             // the right edge with breathing room), not at the wall clock, which
             // could leave a gap if the last packet arrived a while ago.
-            if (!this._chartFrozenAt) this._chartFrozenAt = (this._lastDataTime || Date.now()) + 1000;
+            if (!this.windows.frozenAt) this.windows.frozenAt = (this._lastDataTime || Date.now()) + 1000;
         }
         // While connected, the frame is green when collecting and yellow when
         // paused (Stopped). When disconnected, leave the frame colour alone —
@@ -271,9 +271,9 @@ class MeshCoreApp {
         document.querySelectorAll('.chart-svg-wrap').forEach(
             wrap => this._attachResizeHandle(wrap, 'chart-resize-handle', 80));
         setInterval(() => {
-            if (!this._chartFrozenAt) { this._advanceLiveZoom(); this._scheduleChartRender(); }
-            if (isFinite(this.DISPLAY_LIFETIME)) {
-                this.signalMap?.setDisplayCutoff?.(this._displayCutoffNow());
+            if (!this.windows.frozenAt) { this._advanceLiveZoom(); this._scheduleChartRender(); }
+            if (isFinite(this.windows.displayMs)) {
+                this.signalMap?.setDisplayCutoff?.(this.windows.displayCutoff());
                 this._renderRepTable();
                 this._renderMsgTable();
             }
@@ -460,12 +460,10 @@ class MeshCoreApp {
             // leaves selectedIndex -1 and value "" → +""*1000 = 0 = instant
             // expiry. Fall back to the default in that case.
             if (ttlSelect.selectedIndex < 0) { ttlSelect.value = dflt; Store.set('ttl', dflt); }
-            const v = ttlSelect.value;
-            this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
+            this.windows.retentionMs = TimeWindows.msFromSelect(ttlSelect.value);
             ttlSelect.addEventListener('change', () => {
-                const v = ttlSelect.value;
-                this.HASH_LIFETIME = v === 'Infinity' ? Infinity : +v * 1000;
-                Store.set('ttl', v);
+                this.windows.retentionMs = TimeWindows.msFromSelect(ttlSelect.value);
+                Store.set('ttl', ttlSelect.value);
                 this._updateHideSelectOptions();
             });
         }
@@ -3348,7 +3346,7 @@ class MeshCoreApp {
         const msgFilterBar = document.getElementById('msgFilterBar');
 
         const filter = this._msgFilter.toLowerCase().trim();
-        const cutoff = this._displayCutoffNow();
+        const cutoff = this.windows.displayCutoff();
         const narrowFn = this._tableNarrowFn();
         // Rows = the disk page snapshot plus, on page 0, the live recent-window
         // tail — merged, windowed, sorted and capped by TableCache (the one
@@ -3865,7 +3863,7 @@ class MeshCoreApp {
         const ch = H - pt - pb;
         // Use the exact window the chart was last rendered with, so hit-testing
         // stays aligned with the dots even when the X axis is zoomed.
-        const now = this._chartFrozenAt ?? Date.now();
+        const now = this.windows.frozenAt ?? Date.now();
         const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
         const tMin = win.tMin, tMax = win.tMax;
         const { yMin, yMax } = this._chartYBounds(type, tMin, tMax);
@@ -3999,10 +3997,10 @@ class MeshCoreApp {
         // for the next tick): a left pan can't drag the window older than the prune
         // cutoff — into removed / never-shown space — and a right pan re-pins live.
         // Same rules as _advanceLiveZoom, so a drag just "sticks" at the boundary.
-        if (!this._chartFrozenAt) {
+        if (!this.windows.frozenAt) {
             const corrected = ChartZoom.advanceZoomWindow(
                 this._chartZoom, Date.now(),
-                { displayLifetime: this.DISPLAY_LIFETIME, hashLifetime: this.HASH_LIFETIME },
+                { displayLifetime: this.windows.displayMs, hashLifetime: this.windows.retentionMs },
                 this._chartFollowLive);
             if (corrected) this._chartZoom = corrected;
         }
@@ -4023,10 +4021,10 @@ class MeshCoreApp {
     // The span is preserved. Manually panning away from the right edge clears the
     // follow flag (_panChartZoom); panning back re-arms it. Driven by the 2 s tick.
     _advanceLiveZoom() {
-        if (!this._chartZoom || this._chartFrozenAt) return;
+        if (!this._chartZoom || this.windows.frozenAt) return;
         const next = ChartZoom.advanceZoomWindow(
             this._chartZoom, Date.now(),
-            { displayLifetime: this.DISPLAY_LIFETIME, hashLifetime: this.HASH_LIFETIME },
+            { displayLifetime: this.windows.displayMs, hashLifetime: this.windows.retentionMs },
             this._chartFollowLive);
         if (!next) return;
         this._chartZoom = next;
@@ -4242,14 +4240,14 @@ class MeshCoreApp {
         const cw = W - pl - pr;
         const ch = H - pt - pb;
 
-        const now = this._chartFrozenAt ?? Date.now();
+        const now = this.windows.frozenAt ?? Date.now();
         const defaultWindow = 5 * 60000;
         let autoTMin;
         // The Display window defines the X axis; Auto-remove only caps it when
         // Display is "All" (nothing older exists then).
-        if (isFinite(this.DISPLAY_LIFETIME)) autoTMin = now - this.DISPLAY_LIFETIME;
+        if (isFinite(this.windows.displayMs)) autoTMin = now - this.windows.displayMs;
         else if (!hasAnyData) autoTMin = now - defaultWindow;
-        else if (isFinite(this.HASH_LIFETIME)) autoTMin = now - this.HASH_LIFETIME;
+        else if (isFinite(this.windows.retentionMs)) autoTMin = now - this.windows.retentionMs;
         else {
             autoTMin = allInPts.length ? this._earliestTime(allInPts) : Infinity;
             if (allOutPts.length) autoTMin = Math.min(autoTMin, this._earliestTime(allOutPts));
@@ -4273,9 +4271,9 @@ class MeshCoreApp {
             // current `now` every frame so the edge glides, instead of moving only
             // on the 2 s tick (_advanceLiveZoom keeps _chartZoom itself in sync for
             // the disk cache — this is the display window, derived the same way).
-            if (!this._chartFrozenAt) {
+            if (!this.windows.frozenAt) {
                 const disp = ChartZoom.advanceZoomWindow(
-                    z, now, { displayLifetime: this.DISPLAY_LIFETIME, hashLifetime: this.HASH_LIFETIME },
+                    z, now, { displayLifetime: this.windows.displayMs, hashLifetime: this.windows.retentionMs },
                     this._chartFollowLive);
                 if (disp) z = disp;
             }
@@ -4567,7 +4565,7 @@ class MeshCoreApp {
 
         // Use the exact window the chart was last rendered with, so hit-testing
         // stays aligned with the dots even when the X axis is zoomed.
-        const now = this._chartFrozenAt ?? Date.now();
+        const now = this.windows.frozenAt ?? Date.now();
         const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
         const tMin = win.tMin, tMax = win.tMax;
         const { yMin, yMax } = this._chartYBounds(type, tMin, tMax);
@@ -4701,23 +4699,6 @@ class MeshCoreApp {
 
     // --- Durable storage: write-through, startup replay, downsampled views ---
 
-    // How much recent history to keep materialised in RAM. Never more than the
-    // retention bound; otherwise the larger of the display window and the render
-    // budget, so Display changes within the budget need no disk round-trip.
-    _ramWindowMs() {
-        // Until the store finishes opening there is no disk to fall back to,
-        // so keep everything that should be visible in RAM (bounded by
-        // retention, else the display window, else unbounded). Once ready,
-        // RAM is bounded by the render budget.
-        if (!this.model.ready) {
-            if (isFinite(this.HASH_LIFETIME)) return this.HASH_LIFETIME;
-            if (isFinite(this.DISPLAY_LIFETIME)) return this.DISPLAY_LIFETIME;
-            return Infinity;
-        }
-        const ret  = isFinite(this.HASH_LIFETIME) ? this.HASH_LIFETIME : Infinity;
-        const disp = isFinite(this.DISPLAY_LIFETIME) ? this.DISPLAY_LIFETIME : 0;
-        return Math.min(Math.max(disp, this.RENDER_BUDGET_MS), ret);
-    }
 
     // Decide which database this tab uses. Data is isolated per browser tab so
     // two tabs capturing different devices never share a store (#5). Whenever
@@ -4916,7 +4897,7 @@ class MeshCoreApp {
         if (!this._collecting) {
             try {
                 const span = await this.model.obsSpan(-Infinity, Infinity);
-                if (span) this._chartFrozenAt = span.max + 1000;
+                if (span) this.windows.frozenAt = span.max + 1000;
             } catch (_) {}
         }
         this._scheduleChartRender();
@@ -4935,7 +4916,7 @@ class MeshCoreApp {
     // observations through the normal ingest path, so columns / collision state
     // reconstruct identically. Used on startup and after a renderer-crash reload.
     async _replayWindow() {
-        const w = this._ramWindowMs();
+        const w = this.windows.ramWindowMs(this.model.ready);
         const from = isFinite(w) ? Date.now() - w : -Infinity;
         const obsList = [];
         await this.model.eachObs(from, Infinity, r => { obsList.push(r); });
@@ -4977,7 +4958,7 @@ class MeshCoreApp {
         // to the render budget. The session keeps running on its RAM window.
         if (this._quotaPruning || !this.model.ready) return;
         this._quotaPruning = true;
-        this.model.pruneOlderThan(Date.now() - this.RENDER_BUDGET_MS)
+        this.model.pruneOlderThan(Date.now() - this.windows.renderBudgetMs)
             .then(n => this._afterDiskPrune(n))
             .finally(() => { this._quotaPruning = false; });
     }
@@ -5144,15 +5125,15 @@ class MeshCoreApp {
         // RAM is bounded by the render budget (and never exceeds retention).
         // Disk keeps full history when Auto-remove is "Never"; when it is finite,
         // history is truly deleted from disk too.
-        if (isFinite(this.HASH_LIFETIME) && this.model.ready) {
-            this.model.pruneOlderThan(now - this.HASH_LIFETIME)
+        if (isFinite(this.windows.retentionMs) && this.model.ready) {
+            this.model.pruneOlderThan(now - this.windows.retentionMs)
                 .then(n => this._afterDiskPrune(n));
         }
         // Safety net: if the wide/All chart cache went missing (a failed rebuild)
         // it would otherwise stay null until the next Display change, freezing the
         // charts. Re-establish it here too, in case no packet arrives to do so.
         if (this.model.ready && !this.charts.hasBase) this.charts.ensureBase();
-        const lifetime = this._ramWindowMs();
+        const lifetime = this.windows.ramWindowMs(this.model.ready);
         const toRemove = [];
         for (const [hash, data] of this.model.recentEntries()) {
             if (now - data.lastSeen > lifetime) toRemove.push(hash);
@@ -5355,19 +5336,15 @@ class MeshCoreApp {
         }
     }
 
-    _displayCutoffNow() {
-        return isFinite(this.DISPLAY_LIFETIME) ? Date.now() - this.DISPLAY_LIFETIME : 0;
-    }
 
     _applyHideSelect() {
         const hideSelect = document.getElementById('hideSelect');
         if (!hideSelect) return;
-        const v = hideSelect.value;
-        this.DISPLAY_LIFETIME = (v === 'all' || v === 'Infinity') ? Infinity : +v * 1000;
+        this.windows.displayMs = TimeWindows.msFromSelect(hideSelect.value);
         // The displayed time range changed, so any X-zoom window no longer matches.
         this._chartZoom = null;
         this._updateZoomResetBtns();
-        const cutoff = this._displayCutoffNow();
+        const cutoff = this.windows.displayCutoff();
         this.signalMap?.setDisplayCutoff?.(cutoff);
         this._scheduleChartRender();
         this._renderRepTable();
@@ -5382,12 +5359,11 @@ class MeshCoreApp {
     _updateHideSelectOptions() {
         const hideSelect = document.getElementById('hideSelect');
         if (!hideSelect) return;
-        const ttlMs = this.HASH_LIFETIME;
         let currentValid = false;
         for (const opt of hideSelect.options) {
             if (opt.value === 'same') { opt.disabled = false; currentValid ||= (hideSelect.value === 'same'); continue; }
-            const ms = opt.value === 'Infinity' ? Infinity : +opt.value * 1000;
-            opt.disabled = isFinite(ttlMs) && ms > ttlMs;
+            // The Display ≤ Auto-remove invariant lives in TimeWindows.
+            opt.disabled = !this.windows.allowsDisplay(TimeWindows.msFromSelect(opt.value));
             if (!opt.disabled && hideSelect.value === opt.value) currentValid = true;
         }
         if (!currentValid) {
@@ -5403,7 +5379,7 @@ class MeshCoreApp {
         if (!this.repTableBody) return;
         const key = this.repeaterSortKey;
         const dir = this.repeaterSortDir;
-        const cutoff = this._displayCutoffNow();
+        const cutoff = this.windows.displayCutoff();
         const entries = Array.from(this.allRepeaters.entries())
             .filter(([id, d]) => this._colMatchesRepFilter(id) && (!cutoff || d.lastSeen >= cutoff));
 
@@ -5892,7 +5868,7 @@ class MeshCoreApp {
 
     _updateStats() {
         if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.model.recentSize === 0 && !this.model.ready;
-        const displayCutoff = this._displayCutoffNow();
+        const displayCutoff = this.windows.displayCutoff();
         // "Active" = unique packets in the Display window. A finite window is
         // never wider than the RAM window (max Display = 1 h = the RAM budget),
         // so the cutoff-filtered RAM set is exact. Display="All" can exceed RAM,
@@ -5960,7 +5936,7 @@ class MeshCoreApp {
     // folded in, so there is no separate tail. Pre-ready the cache is empty and
     // the cutoff-filtered live RAM points serve directly — same path, no branch.
     _visibleChartPoints() {
-        const cutoff = this._displayCutoffNow();
+        const cutoff = this.windows.displayCutoff();
         const cached = this.charts.renderPoints();
         let pts = cached.length ? cached : this.chartPoints;
         // The bucket cache is pruned only opportunistically (at array rebuilds),
@@ -5973,7 +5949,7 @@ class MeshCoreApp {
         // Sent points are few, so the disk layer plus a plain live tail (points
         // newer than the layer) suffices. While zoomed, clamp the tail to the
         // zoom window so out-of-window stars don't skew the Y bounds.
-        const cutoff = this._displayCutoffNow();
+        const cutoff = this.windows.displayCutoff();
         const z = this._chartZoom;
         const tail = this._sentSnrHistory.filter(p =>
             p.time > this.charts.sentAt &&
@@ -6221,9 +6197,9 @@ class MeshCoreApp {
 
         // Ensure imported historical data isn't immediately cleaned up by TTL
         const ttlSelect = document.getElementById('ttlSelect');
-        if (ttlSelect && isFinite(this.HASH_LIFETIME)) {
+        if (ttlSelect && isFinite(this.windows.retentionMs)) {
             ttlSelect.value = 'Infinity';
-            this.HASH_LIFETIME = Infinity;
+            this.windows.retentionMs = Infinity;
             Store.set('ttl', 'Infinity');
             this._updateHideSelectOptions();
         }
@@ -6319,7 +6295,7 @@ class MeshCoreApp {
         // into a session that holds newer paused/restored data must not truncate
         // that newer data out of the base layer (which buckets up to frozen-now).
         const lastTime = rows.length ? rows.reduce((m, r) => Math.max(m, r.time), 0) : 0;
-        if (!this._collecting && lastTime) this._chartFrozenAt = Math.max(this._chartFrozenAt ?? 0, lastTime + 1_000);
+        if (!this._collecting && lastTime) this.windows.frozenAt = Math.max(this.windows.frozenAt ?? 0, lastTime + 1_000);
 
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.

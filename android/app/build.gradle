@@ -111,6 +111,7 @@ tasks.register('copyWebApp', Copy) {
         include 'table-cache.js'
         include 'chart-cache.js'
         include 'map-cache.js'
+        include 'time-windows.js'
         include 'column-key.js'
         include 'frame.js'
         include 'geo.js'

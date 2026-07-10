@@ -167,6 +167,27 @@ async function main() {
         beforeText === 'Show all repeaters' && afterText === 'Hide all repeaters',
         `before "${beforeText}", after "${afterText}"`);
 
+    // 3c) Changing the Display and Auto-remove windows exercises the
+    // time-window handlers (select parsing, the Display ≤ Auto-remove option
+    // gating, and the wide-view rebuild). The sample data is 10–130 min old, so
+    // Display=1h shows a strict subset and Display=All restores everything.
+    await page.selectOption('#hideSelect', '3600');    // Display = 1 h
+    await page.waitForTimeout(1200);
+    const rows1h = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    await page.selectOption('#hideSelect', 'all');     // Display = All
+    await page.waitForTimeout(1200);
+    const rowsAll = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    check('Display=1h narrows the table, Display=All restores it',
+        rows1h > 0 && rowsAll > rows1h, `1h → ${rows1h} rows, All → ${rowsAll} rows`);
+    await page.selectOption('#ttlSelect', '3600');     // Auto-remove = 1 h (fires its handler)
+    await page.waitForTimeout(600);
+    const disabledOpts = await page.$$eval('#hideSelect option', os => os.filter(o => o.disabled).map(o => o.value));
+    check('Auto-remove=1h disables longer Display options (3h/12h), keeps All',
+        disabledOpts.includes('10800') && disabledOpts.includes('43200') && !disabledOpts.includes('all'),
+        `disabled: ${JSON.stringify(disabledOpts)}`);
+    await page.selectOption('#ttlSelect', 'Infinity'); // restore
+    await page.waitForTimeout(400);
+
     // 4) Clear data empties the table and resets the counter.
     await page.getByText('Clear data', { exact: false }).first().click();
     await page.waitForTimeout(1500);

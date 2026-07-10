@@ -17,6 +17,7 @@ on:
       - 'table-cache.js'
       - 'chart-cache.js'
       - 'map-cache.js'
+      - 'time-windows.js'
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'
