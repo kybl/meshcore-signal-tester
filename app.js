@@ -5077,6 +5077,14 @@ class MeshCoreApp {
         // Re-create the (now empty) chart/map cache layers so live upserts have
         // somewhere to land — nothing else rebuilds them outside Display changes.
         this._refreshWideView();
+        // Contacts were wiped and the sync marker reset — on a live companion
+        // link, re-pull the full list right away. Previously this happened only
+        // by coincidence (the next auto-reconnect, or a stall-watchdog retry of
+        // an in-flight fetch, re-requesting with the now-zero marker), so the
+        // reload looked random: sometimes instant, sometimes not at all.
+        if (this.connectionMode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+            this.sendGetContacts().catch(() => {});
+        }
     }
 
     // A disk prune deleted `deletedHashes` hash records — keep the RAM-maintained
