@@ -51,6 +51,23 @@
   audio, but once it suspends audio in the background they're skipped instead of
   piling up and all playing at once on return.
 
+### Internal
+
+- **Unit test suite** (`node --test`, 84 tests) covering CSV round-trips, the
+  spatial index, tile/geo math, serial framing, repeater ID collision handling,
+  the 3D-map LOD pyramid, and the chart zoom window — run automatically by a new
+  GitHub Actions workflow on every push.
+- Several self-contained pieces of logic were **extracted from `app.js` into
+  pure, tested modules**: `column-key.js` (repeater ID prefix/collision
+  semantics), `frame.js` (serial frame extraction), `geo.js` (map tile math),
+  `maplod.js` (3D-map level-of-detail pyramid), and `chart-zoom.js` (live-follow
+  zoom window).
+- **Headless-browser regression harness** (`tools/browser-check`) that drives
+  the real page in Chromium — imports a CSV and asserts the stats, column order,
+  and "Show all repeaters" behave; used before every build.
+- Every place the release version number lives is now **cross-referenced in
+  comments**, so bumps can't miss one.
+
 ## [1.2.2] - 2026-06-27
 
 ### Added
