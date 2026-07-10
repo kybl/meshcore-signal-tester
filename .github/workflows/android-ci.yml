@@ -18,6 +18,7 @@ on:
       - 'chart-cache.js'
       - 'map-cache.js'
       - 'time-windows.js'
+      - 'contacts-directory.js'
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'

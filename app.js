@@ -6,6 +6,7 @@ import { TableCache } from './table-cache.js?v=1';
 import { ChartCache } from './chart-cache.js?v=1';
 import { MapCache } from './map-cache.js?v=1';
 import { TimeWindows } from './time-windows.js?v=1';
+import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -105,8 +106,9 @@ class MeshCoreApp {
         this.chartColors = new Map();
         this._sentSnrHistory = []; // { time, snr, col, label }
         this._dscSeq = 0;
-        this._contacts = new Map(); // pubKeyFullHex → {name, type, lat, lon, lastAdvert, lastmod}
-        this._contactsLastmod = 0;
+        // The synced contact list (entries, prefix lookups, persistence and the
+        // incremental-sync marker) lives in ContactsDirectory — created below,
+        // next to the other models (it persists through this.model).
         this._contactsReceiving = false;
         this._contactsRetries = 0;
         this._contactsLastStallSize = -1;
@@ -183,6 +185,11 @@ class MeshCoreApp {
             lastView:        () => this._lastMapView,
             pushPoints:      pts => this.signalMap?.setHistoricalPoints?.(pts),
             pushSentPoints:  pts => this.signalMap?.setHistoricalSentPoints?.(pts),
+        });
+        this.contacts = new ContactsDirectory({
+            ready:          () => this.model.ready,
+            persist:        payload => this.model.setKV('contacts', payload),
+            onCountChanged: () => this._updateContactsCount(),
         });
 
         this.initUI();
@@ -862,7 +869,7 @@ class MeshCoreApp {
                     b.classList.toggle('active', on);
                     b.setAttribute('aria-pressed', on ? 'true' : 'false');
                 },
-                nameForCol:    col => this._contactNameForCol(col),
+                nameForCol:    col => this.contacts.nameForCol(col),
                 isLiveCapture: () => this._collecting,   // tiles follow the user only while live
                 isDarkMode:    () => !document.documentElement.classList.contains('light-theme'),
                 initialSource:  sourceSel?.value,
@@ -1007,22 +1014,10 @@ class MeshCoreApp {
     }
 
     _contactsWithGps() {
-        const out = [];
-        const seen = new Set();
-        // Iterate every known repeater column — the same set shown in Seen
-        // Repeaters and clickable individually — not just those in the live RAM
-        // window (model.recent*). Otherwise "Show all repeaters" found nothing
-        // for loaded/older data whose recent window holds no packets, even though
-        // each repeater still shows on the map when clicked one by one.
-        for (const col of this.repeaterColumns) {
-            for (const c of this._contactsByPrefix(col)) {
-                if (!seen.has(c.pubKeyFullHex) && c.name && (c.lat !== 0 || c.lon !== 0)) {
-                    seen.add(c.pubKeyFullHex);
-                    out.push(c);
-                }
-            }
-        }
-        return out;
+        // Every known repeater column — the same set shown in Seen Repeaters —
+        // not just those in the live RAM window (the "Show all repeaters did
+        // nothing for loaded data" bug).
+        return this.contacts.withGps(this.repeaterColumns);
     }
 
     _allRepeatersShown() {
@@ -2115,10 +2110,10 @@ class MeshCoreApp {
     // retry counter.
     async _sendGetContactsCmd() {
         // CMD_GET_CONTACTS = 0x04; optional 4-byte LE lastmod for incremental sync
-        const cmd = new Uint8Array(this._contactsLastmod > 0 ? 5 : 1);
+        const cmd = new Uint8Array(this.contacts.lastmod > 0 ? 5 : 1);
         cmd[0] = 0x04;
-        if (this._contactsLastmod > 0)
-            new DataView(cmd.buffer).setUint32(1, this._contactsLastmod, true);
+        if (this.contacts.lastmod > 0)
+            new DataView(cmd.buffer).setUint32(1, this.contacts.lastmod, true);
         this._armContactsWatchdog();
         try { await this._sendFrame(cmd); }
         catch (e) { this._setContactsError('Contact request failed: ' + (e?.message || e)); }
@@ -2207,9 +2202,8 @@ class MeshCoreApp {
         if (payload.length >= 140) lat = ((payload[136] | (payload[137] << 8) | (payload[138] << 16) | (payload[139] << 24)) | 0) / 1e6;
         if (payload.length >= 144) lon = ((payload[140] | (payload[141] << 8) | (payload[142] << 16) | (payload[143] << 24)) | 0) / 1e6;
         if (payload.length >= 148) lastmod = payload[144] | (payload[145] << 8) | (payload[146] << 16) | (payload[147] << 24);
-        this._contacts.set(pubKeyFull, { name: name || null, type, lat, lon, lastAdvert, lastmod, pubKeyFullHex: pubKeyFull });
-        this._scheduleContactsPersist();
-        // NB: do NOT advance _contactsLastmod here. The incremental-sync marker
+        this.contacts.put({ name: name || null, type, lat, lon, lastAdvert, lastmod, pubKeyFullHex: pubKeyFull });
+        // NB: do NOT advance contacts.lastmod here. The incremental-sync marker
         // must only move forward once a FULL contact list has been received
         // (END_OF_CONTACTS). Advancing it per-contact meant an interrupted fetch
         // (e.g. another client grabbed the single-client companion) left the
@@ -2217,61 +2211,7 @@ class MeshCoreApp {
         // skipped the missing contacts — and only restarting the app (which
         // resets the marker to 0) recovered. Re-fetching a contact we already
         // have via push is a harmless upsert.
-        this._updateContactsCount();
         return pubKeyFull;
-    }
-
-    _contactsByPrefix(hexPrefix) {
-        // A collision column key is "a/b" (two merged repeater prefixes). Match
-        // contacts for EITHER component — the literal "a/b" never startsWith-
-        // matches a pubkey (no slashes), which made a collision repeater's
-        // location, name and 3D-map eye button look unknown until its marker
-        // happened to be on the map (via "Show all repeaters", whose markers
-        // resolve the col the other way, through _colForPubKey which splits "/").
-        const segs = ColumnKey.components(hexPrefix).map(s => s.toLowerCase());
-        if (!segs.length) return [];
-        const out = [];
-        for (const [key, val] of this._contacts)
-            if (segs.some(p => key.startsWith(p))) out.push(val);
-        return out;
-    }
-
-    _contactByPrefix(hexPrefix) {
-        return this._contactsByPrefix(hexPrefix)[0] ?? null;
-    }
-
-    // Map a contact's full public key back to the live repeater column it
-    // belongs to. Columns are keyed by a short hash *prefix* of the repeater id
-    // (often just 2 hex chars, sometimes promoted longer, or an "a/b" collision
-    // key) — NOT by a fixed 6-char pubkey slice. A pinned map marker must resolve
-    // its real column this way; keying it off slice(0,6) instead selects a
-    // phantom column that matches no data, so the dots, table and chart all come
-    // up empty (looking as if everything were filtered out). Picks the longest
-    // (most specific) matching prefix. Null when no current column matches.
-    _colForPubKey(pubKeyHex) {
-        if (!pubKeyHex) return null;
-        const pk = pubKeyHex.toLowerCase();
-        let bestKey = null, bestLen = -1;
-        for (const key of this.repeaterColumns) {
-            for (const seg of key.split('/')) {
-                if (seg === 'direct' || seg === 'unknown') continue;
-                // Column keys are stored upper-case, contact pub keys lower-case,
-                // so compare case-insensitively. Return the ORIGINAL key so it
-                // still matches the rx data / _selectedCol exactly.
-                const s = seg.toLowerCase();
-                if (s && pk.startsWith(s) && s.length > bestLen) {
-                    bestKey = key; bestLen = s.length;
-                }
-            }
-        }
-        return bestKey;
-    }
-
-    _contactNameForCol(col) {
-        const matches = this._contactsByPrefix(col);
-        if (!matches.length) return null;
-        if (matches.length === 1) return matches[0].name ?? null;
-        return matches.map(c => c.name ?? '?').join(' / ');
     }
 
     _colStats(col) {
@@ -2287,15 +2227,10 @@ class MeshCoreApp {
                  maxRssi: a.maxRssi ?? null, maxSnr: a.maxSnr ?? null };
     }
 
-    _contactsForMapButtons(col) {
-        const matches = this._contactsByPrefix(col);
-        return matches.filter(c => c.name && (c.lat !== 0 || c.lon !== 0));
-    }
-
     // Toggle whether all GPS contacts of a repeater column are kept on the 3D
     // map permanently. Driven by the pushpin button in the map infobox (A).
     _toggleMapPinForCol(col) {
-        const contacts = this._contactsForMapButtons(col);
+        const contacts = this.contacts.gpsFor(col);
         if (!contacts.length) return;
         const anyPinned = contacts.some(c => this._mapPins.has(c.pubKeyFullHex));
         for (const c of contacts) {
@@ -2312,7 +2247,7 @@ class MeshCoreApp {
         const seen = new Set();
         // Auto-show currently selected repeater if it has GPS coords
         if (this._selectedCol && (!this._repFilterTerms.length || this._colMatchesRepFilter(this._selectedCol))) {
-            for (const c of this._contactsForMapButtons(this._selectedCol)) {
+            for (const c of this.contacts.gpsFor(this._selectedCol)) {
                 if (seen.has(c.pubKeyFullHex)) continue;
                 seen.add(c.pubKeyFullHex);
                 const isPinned = this._mapPins.has(c.pubKeyFullHex);
@@ -2324,12 +2259,12 @@ class MeshCoreApp {
         // Permanently pinned contacts not already shown via auto-select
         for (const pubKeyFullHex of this._mapPins) {
             if (seen.has(pubKeyFullHex)) continue;
-            const contact = this._contacts.get(pubKeyFullHex);
+            const contact = this.contacts.get(pubKeyFullHex);
             if (!contact?.name || (contact.lat === 0 && contact.lon === 0)) continue;
             // Resolve the live data column so clicking the marker selects the
             // same key the dots/table/chart use; fall back to a 6-char prefix
             // only when the repeater isn't currently in the data.
-            const col = this._colForPubKey(pubKeyFullHex) ?? pubKeyFullHex.slice(0, 6);
+            const col = this.contacts.colForPubKey(pubKeyFullHex, this.repeaterColumns) ?? pubKeyFullHex.slice(0, 6);
             if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
             seen.add(pubKeyFullHex);
             markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name,
@@ -2342,29 +2277,18 @@ class MeshCoreApp {
 
     _colHasMapMarker(col) {
         if (!col) return false;
-        if (col === this._selectedCol && this._contactsForMapButtons(col).length) return true;
+        if (col === this._selectedCol && this.contacts.gpsFor(col).length) return true;
         for (const pubKeyFullHex of this._mapPins) {
-            if (this._colForPubKey(pubKeyFullHex) === col) return true;
+            if (this.contacts.colForPubKey(pubKeyFullHex, this.repeaterColumns) === col) return true;
         }
         return false;
     }
 
     _updateContactsCount() {
-        if (this.contactsCountEl) this.contactsCountEl.textContent = this._contacts.size;
-        if (this.contactsHstat) this.contactsHstat.style.display = this._contacts.size > 0 ? '' : 'none';
+        if (this.contactsCountEl) this.contactsCountEl.textContent = this.contacts.size;
+        if (this.contactsHstat) this.contactsHstat.style.display = this.contacts.size > 0 ? '' : 'none';
     }
 
-    // Persist contacts (debounced) to the session DB so they survive a reload /
-    // renderer-crash rebuild — restored in _initStore. The incremental-sync
-    // marker is saved too, so a reconnect resumes from it instead of re-pulling
-    // the whole contact list.
-    _scheduleContactsPersist() {
-        if (!this.model.ready) return;
-        clearTimeout(this._contactsPersistTimer);
-        this._contactsPersistTimer = setTimeout(() => {
-            this.model.setKV('contacts', { entries: [...this._contacts.values()], lastmod: this._contactsLastmod });
-        }, 1000);
-    }
 
     _updateSoundHighlight() {
         const label = this.soundSelect?.closest('.sound-toggle');
@@ -2596,8 +2520,8 @@ class MeshCoreApp {
             this._contactsFetchActive = false;
             this._setContactsLoading(false);
             if (payload.length >= 5)
-                this._contactsLastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
-            this._scheduleContactsPersist();   // full list received → persist with the new sync marker
+                this.contacts.lastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
+            this.contacts.schedulePersist();   // full list received → persist with the new sync marker
             this._updateContactsCount();
             this._lastColKey = null; // force column header redraw with names
             this._renderMsgTable();
@@ -2844,8 +2768,8 @@ class MeshCoreApp {
         const lat = p.appData?.hasLocation ? (p.appData.location?.latitude ?? 0) : 0;
         const lon = p.appData?.hasLocation ? (p.appData.location?.longitude ?? 0) : 0;
         const lastAdvert = p.timestamp ? Math.floor(new Date(p.timestamp).getTime() / 1000) : 0;
-        const existing = this._contacts.get(pubKeyFullHex);
-        this._contacts.set(pubKeyFullHex, {
+        const existing = this.contacts.get(pubKeyFullHex);
+        this.contacts.put({
             name: advName || existing?.name || null,
             type: advType ?? existing?.type ?? null,
             lat: lat || existing?.lat || 0,
@@ -2854,8 +2778,6 @@ class MeshCoreApp {
             lastmod: existing?.lastmod || 0,
             pubKeyFullHex,
         });
-        if (!existing) this._updateContactsCount();
-        this._scheduleContactsPersist();
     }
 
     _escHtml(s) {
@@ -3435,7 +3357,7 @@ class MeshCoreApp {
         if (colKey === this._lastColKey) return;
         this._lastColKey = colKey;
         const repHeaders = visibleCols.map(r => {
-            const cName = this._contactNameForCol(r);
+            const cName = this.contacts.nameForCol(r);
             const nameTag = cName ? `<br><span class="col-contact-name">${this._escHtml(cName)}</span>` : '';
             return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
         }).join('');
@@ -3644,7 +3566,7 @@ class MeshCoreApp {
             const uplinkPart = rs != null
                 ? ` &nbsp; Uplink SNR <span style="color:${this._signalColor(rs, 13, -10, 0)};font-weight:700">${this._fmtSnr(rs)} dB</span>`
                 : '';
-            const colContact = this._contactByPrefix(col);
+            const colContact = this.contacts.firstByPrefix(col);
             const colName = colContact?.name ?? null;
             header = `<div class="detail-sig">` +
                 `<span class="rl-dot" style="${this._repDotStyle(col)}"></span>` +
@@ -3667,7 +3589,7 @@ class MeshCoreApp {
         let metaHtml = '';
         if (data.meta?.pubKeyFull) {
             const pk = data.meta.pubKeyFull.toUpperCase().match(/.{1,8}/g).join(' ');
-            const contact = this._contacts.get(data.meta.pubKeyFull);
+            const contact = this.contacts.get(data.meta.pubKeyFull);
             const name = contact?.name ?? data.meta.name ?? null;
             const TYPE_NAMES = { 1: 'Chat', 2: 'Repeater', 3: 'Room server', 4: 'Sensor' };
             const typeName = contact?.type != null ? (TYPE_NAMES[contact.type] ?? `Type ${contact.type}`) : null;
@@ -4605,7 +4527,7 @@ class MeshCoreApp {
         const dotShape = isSent
             ? `<span style="color:${color};font-size:13px;line-height:1;margin-right:5px;vertical-align:middle;flex-shrink:0">★</span>`
             : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${this._repDotStyle(nearest.col)};margin-right:5px;vertical-align:middle;flex-shrink:0"></span>`;
-        const cName = this._contactNameForCol(nearest.col);
+        const cName = this.contacts.nameForCol(nearest.col);
         const nameHtml = cName ? `<span class="ct-colname">${this._escHtml(cName)}</span>` : '';
         // Packet-type badge — the 2-char payload abbreviation (full type on hover),
         // pushed to the end of the name line. Only for single incoming packets:
@@ -4880,12 +4802,7 @@ class MeshCoreApp {
         // Restore persisted contacts (names, GPS, types) so the repeater map
         // markers and column names survive a reload / renderer-crash rebuild.
         try {
-            const saved = await this.model.getKV('contacts');
-            if (saved && Array.isArray(saved.entries)) {
-                for (const c of saved.entries) if (c?.pubKeyFullHex) this._contacts.set(c.pubKeyFullHex, c);
-                if (Number.isFinite(saved.lastmod)) this._contactsLastmod = saved.lastmod;
-                this._updateContactsCount();
-            }
+            this.contacts.restore(await this.model.getKV('contacts'));
         } catch (_) {}
         await this._replayWindow();
         // Not collecting on startup: freeze the chart at the newest stored point
@@ -5295,9 +5212,7 @@ class MeshCoreApp {
         this._mapPins.clear();
         // Contacts are data too — wipe them from RAM now and cancel any pending
         // persist so it can't re-write them after store.clearAll() empties the DB.
-        this._contacts.clear();
-        this._contactsLastmod = 0;
-        clearTimeout(this._contactsPersistTimer);
+        this.contacts.clear();
         this.signalMap?.selectColumn(null);
         this.signalMap?.clearPoints?.();
         if (this.msgTableBody) this.msgTableBody.innerHTML = '';
@@ -5411,7 +5326,7 @@ class MeshCoreApp {
             const lsc = this._signalColor(d.lastSnr,  13, -10, 0);
             const isSel = repeater === sel;
             const rowCls = sel ? (isSel ? 'rl-row-sel' : 'rl-row-dim') : '';
-            const cName = this._contactNameForCol(repeater);
+            const cName = this.contacts.nameForCol(repeater);
             const nameTag = cName ? `<span class="rl-name">${this._escHtml(cName)}</span>` : '';
             return `<tr data-col="${this._escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
                 <td class="rl-id rl-id-clickable"><span class="rl-dot" style="${this._repDotStyle(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
@@ -5480,9 +5395,9 @@ class MeshCoreApp {
             // than a "Show more" checkbox that reveals nothing.
             if (!col) return '';
             const stats = col ? this._colStats(col) : null;
-            const contacts = col && col !== 'direct' ? this._contactsByPrefix(col) : [];
+            const contacts = col && col !== 'direct' ? this.contacts.byPrefix(col) : [];
             const contactsWithName = contacts.filter(c => c.name);
-            const mapBtns = col ? this._contactsForMapButtons(col) : [];
+            const mapBtns = col ? this.contacts.gpsFor(col) : [];
             const checkId = `${noticePrefix}ShowMore`;
             let mapHtml = '';
             // Only when the repeater's GPS location is known: a "Show on map"
@@ -5531,7 +5446,7 @@ class MeshCoreApp {
                     const pks = (btn.dataset.pubkeys || '').split('|').filter(Boolean);
                     // Turn the map camera toward the repeater (centroid of its GPS
                     // contacts), then scroll the 3D map into view.
-                    const locs = pks.map(pk => this._contacts.get(pk))
+                    const locs = pks.map(pk => this.contacts.get(pk))
                                     .filter(c => c && (c.lat || c.lon));
                     if (locs.length) {
                         const lat = locs.reduce((s, c) => s + c.lat, 0) / locs.length;
@@ -5562,7 +5477,7 @@ class MeshCoreApp {
                 }
                 const nameEl = document.getElementById('filterNoticeName');
                 if (nameEl) {
-                    const cName = exactCol ? this._contactNameForCol(exactCol) : null;
+                    const cName = exactCol ? this.contacts.nameForCol(exactCol) : null;
                     nameEl.textContent = cName ? ` ${cName}` : '';
                     nameEl.style.display = cName ? '' : 'none';
                 }
@@ -5584,7 +5499,7 @@ class MeshCoreApp {
                 this._applyDotStyle(dot, this._selectedCol);
                 const nameEl = document.getElementById('selNoticeName');
                 if (nameEl) {
-                    const cName = this._contactNameForCol(this._selectedCol);
+                    const cName = this.contacts.nameForCol(this._selectedCol);
                     nameEl.textContent = cName ? ` ${cName}` : '';
                     nameEl.style.display = cName ? '' : 'none';
                 }
@@ -5901,7 +5816,7 @@ class MeshCoreApp {
         for (const col of data.repeaters.keys()) {
             // Match the short ID label AND the repeater's synced contact name.
             if (this.displayId(col).toLowerCase().includes(filter)) return true;
-            const cName = this._contactNameForCol(col);
+            const cName = this.contacts.nameForCol(col);
             if (cName && cName.toLowerCase().includes(filter)) return true;
         }
         const m = data.meta;
@@ -5911,7 +5826,7 @@ class MeshCoreApp {
         // An advert's own node name, resolved from the contact list (this is what
         // the expanded packet detail shows).
         if (m?.pubKeyFull) {
-            const cn = this._contacts.get(m.pubKeyFull)?.name;
+            const cn = this.contacts.get(m.pubKeyFull)?.name;
             if (cn && cn.toLowerCase().includes(filter)) return true;
         }
         // Raw bytes too, so a hex substring from the packet can be searched.
@@ -6045,7 +5960,7 @@ class MeshCoreApp {
         const exportedCols = new Set(allRows.map(r => r.col));
         const contactsToExport = new Map();
         for (const col of exportedCols) {
-            for (const c of this._contactsByPrefix(col)) {
+            for (const c of this.contacts.byPrefix(col)) {
                 if (!c.name && c.lat === 0 && c.lon === 0) continue;
                 contactsToExport.set(c.pubKeyFullHex, c);
             }
@@ -6140,9 +6055,8 @@ class MeshCoreApp {
             if (parsed.error === 'empty') continue;
 
             for (const c of parsed.contacts) {
-                if (!this._contacts.has(c.pubKeyFullHex)) {
-                    this._contacts.set(c.pubKeyFullHex,
-                        { name: c.name, type: null, lat: c.lat, lon: c.lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex: c.pubKeyFullHex });
+                if (!this.contacts.has(c.pubKeyFullHex)) {
+                    this.contacts.put({ name: c.name, type: null, lat: c.lat, lon: c.lon, lastAdvert: 0, lastmod: 0, pubKeyFullHex: c.pubKeyFullHex });
                 }
             }
 
@@ -6151,7 +6065,7 @@ class MeshCoreApp {
         }
 
         this._updateContactsCount();
-        this._scheduleContactsPersist();   // persist any contacts embedded in the CSVs
+        this.contacts.schedulePersist();   // persist any contacts embedded in the CSVs
 
         if (badFormat.length)
             alert(`Unrecognised CSV format — expected columns: time, hash, repeater.\nSkipped: ${badFormat.join(', ')}`);
