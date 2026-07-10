@@ -7,6 +7,7 @@ import { ChartCache } from './chart-cache.js?v=1';
 import { MapCache } from './map-cache.js?v=1';
 import { TimeWindows } from './time-windows.js?v=1';
 import { ContactsDirectory } from './contacts-directory.js?v=1';
+import { SelectionModel } from './selection-model.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -120,13 +121,11 @@ class MeshCoreApp {
         this._batteryCharacteristic = null;
         this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
-        this._selectedCol = null;
         this._tooltipPinned = false;
         this._snrShowIncoming = true;
         this._snrShowOutgoing = true;
         this._rxTimestamps = [];
         this._msgFilter = '';
-        this._repFilterTerms = [];
         this._collecting = false;
         this._keepScreenOn = Store.bool('keepScreenOn', true);
         this._unsavedRxCount = 0; // packets received since last CSV export
@@ -156,11 +155,14 @@ class MeshCoreApp {
         // The Received Packets disk-page cache (page snapshot, pager counts, the
         // narrow index, and the snapshot∪recent union reads) lives in TableCache
         // — its state is private there; app-level concerns are injected.
+        // The repeater selection + filter (the two competing narrowings, their
+        // precedence and the filter-matching semantics) live in SelectionModel.
+        this.selection = new SelectionModel({ displayId: id => this.displayId(id) });
         this.table = new TableCache(this.model, {
             pageSize: 100,
             resolveCol:    id => this._resolveColReadonly(id),
-            narrowFn:      () => this._tableNarrowFn(),
-            narrowKey:     () => this._tableNarrowKey(),
+            narrowFn:      () => this.selection.narrowFn(),
+            narrowKey:     () => this.selection.narrowKey(),
             displayCutoff: () => this.windows.displayCutoff(),
         });
         this.charts = new ChartCache(this.model, {
@@ -438,7 +440,7 @@ class MeshCoreApp {
             const row = e.target.closest('tr[data-col]');
             if (!row) return;
             const col = row.dataset.col;
-            this._selectRepeater(col === this._selectedCol ? null : col);
+            this._selectRepeater(col === this.selection.col ? null : col);
         });
 
         // Click column header in Received Packets to select repeater
@@ -446,7 +448,7 @@ class MeshCoreApp {
             const th = e.target.closest('th.msg-col-rep[data-col]');
             if (!th) return;
             const col = th.dataset.col;
-            this._selectRepeater(col === this._selectedCol ? null : col);
+            this._selectRepeater(col === this.selection.col ? null : col);
         });
     }
 
@@ -696,9 +698,9 @@ class MeshCoreApp {
         const repFilterApplied = document.getElementById('repFilterApplied');
         if (repFilterInput) {
             repFilterInput.addEventListener('input', () => {
-                this._repFilterTerms = repFilterInput.value
-                    .split(',').map(s => s.trim().toUpperCase().replace(/^!/, '')).filter(Boolean);
-                const active = this._repFilterTerms.length > 0;
+                this.selection.setFilterTerms(repFilterInput.value
+                    .split(',').map(s => s.trim().toUpperCase().replace(/^!/, '')).filter(Boolean));
+                const active = this.selection.filterActive;
                 repFilterInput.classList.toggle('has-value', active);
                 repFilterClear?.classList.toggle('hidden', !active);
                 repFilterApplied?.classList.toggle('hidden', !active);
@@ -707,7 +709,7 @@ class MeshCoreApp {
         }
         if (repFilterClear) {
             repFilterClear.addEventListener('click', () => {
-                this._repFilterTerms = [];
+                this.selection.setFilterTerms([]);
                 if (repFilterInput) { repFilterInput.value = ''; repFilterInput.classList.remove('has-value'); }
                 repFilterClear.classList.add('hidden');
                 repFilterApplied?.classList.add('hidden');
@@ -740,7 +742,7 @@ class MeshCoreApp {
             if (el) document.documentElement.appendChild(el);
         }
         document.getElementById('filterNoticeClear')?.addEventListener('click', () => {
-            this._repFilterTerms = [];
+            this.selection.setFilterTerms([]);
             const inp = document.getElementById('repFilter');
             if (inp) { inp.value = ''; inp.classList.remove('has-value'); }
             document.getElementById('repFilterClear')?.classList.add('hidden');
@@ -748,14 +750,14 @@ class MeshCoreApp {
             this._applyRepFilter();
         });
         document.getElementById('selNoticeFilter')?.addEventListener('click', () => {
-            const col = this._selectedCol;
+            const col = this.selection.col;
             if (!col) return;
             const term = this.displayId(col).toUpperCase();
             const inp = document.getElementById('repFilter');
             if (inp) { inp.value = term; inp.classList.add('has-value'); }
             document.getElementById('repFilterClear')?.classList.remove('hidden');
             document.getElementById('repFilterApplied')?.classList.remove('hidden');
-            this._repFilterTerms = [term];
+            this.selection.setFilterTerms([term]);
             this._selectRepeater(null);   // clears selection; _applyRepFilter called via _updateCornerNotices inside
             this._applyRepFilter();
         });
@@ -912,7 +914,7 @@ class MeshCoreApp {
                     if (input) { input.value = term; input.classList.add('has-value'); }
                     clear?.classList.remove('hidden');
                     applied?.classList.remove('hidden');
-                    this._repFilterTerms = [term];
+                    this.selection.setFilterTerms([term]);
                     this._applyRepFilter();
                     document.getElementById('repeaterWrap')
                         ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2246,14 +2248,14 @@ class MeshCoreApp {
         const markers = [];
         const seen = new Set();
         // Auto-show currently selected repeater if it has GPS coords
-        if (this._selectedCol && (!this._repFilterTerms.length || this._colMatchesRepFilter(this._selectedCol))) {
-            for (const c of this.contacts.gpsFor(this._selectedCol)) {
+        if (this.selection.col && (!this.selection.filterActive || this.selection.matchesFilter(this.selection.col))) {
+            for (const c of this.contacts.gpsFor(this.selection.col)) {
                 if (seen.has(c.pubKeyFullHex)) continue;
                 seen.add(c.pubKeyFullHex);
                 const isPinned = this._mapPins.has(c.pubKeyFullHex);
                 markers.push({ lat: c.lat, lon: c.lon, name: c.name,
-                    id: this.displayId(this._selectedCol), color: this.getRepeaterColor(this._selectedCol),
-                    col: this._selectedCol, pubKeyFullHex: c.pubKeyFullHex, isPinned });
+                    id: this.displayId(this.selection.col), color: this.getRepeaterColor(this.selection.col),
+                    col: this.selection.col, pubKeyFullHex: c.pubKeyFullHex, isPinned });
             }
         }
         // Permanently pinned contacts not already shown via auto-select
@@ -2265,7 +2267,7 @@ class MeshCoreApp {
             // same key the dots/table/chart use; fall back to a 6-char prefix
             // only when the repeater isn't currently in the data.
             const col = this.contacts.colForPubKey(pubKeyFullHex, this.repeaterColumns) ?? pubKeyFullHex.slice(0, 6);
-            if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
+            if (this.selection.filterActive && !this.selection.matchesFilter(col)) continue;
             seen.add(pubKeyFullHex);
             markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name,
                 id: this.displayId(col), color: this.getRepeaterColor(col),
@@ -2277,7 +2279,7 @@ class MeshCoreApp {
 
     _colHasMapMarker(col) {
         if (!col) return false;
-        if (col === this._selectedCol && this.contacts.gpsFor(col).length) return true;
+        if (col === this.selection.col && this.contacts.gpsFor(col).length) return true;
         for (const pubKeyFullHex of this._mapPins) {
             if (this.contacts.colForPubKey(pubKeyFullHex, this.repeaterColumns) === col) return true;
         }
@@ -2978,7 +2980,7 @@ class MeshCoreApp {
         for (const p of this.chartPoints) {
             if (p.col === oldKey) p.col = newKey;
         }
-        if (this._selectedCol === oldKey) this._selectedCol = newKey;
+        if (this.selection.col === oldKey) this.selection.select(newKey);
 
         this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => {
             if (tr.dataset.col === oldKey) tr.dataset.col = newKey;
@@ -3111,7 +3113,7 @@ class MeshCoreApp {
         (this._flashPending ??= new Set()).add(hash + '|' + canonicalKey);
         this._scheduleLiveRender(wasAtBottom);
         this._scheduleChartRender();
-        const matchesRepFilter = !this._repFilterTerms.length || this._colMatchesRepFilter(canonicalKey);
+        const matchesRepFilter = !this.selection.filterActive || this.selection.matchesFilter(canonicalKey);
 
         // Keep the table pager's page count current without a disk count() —
         // replay/import end with an authoritative _loadTablePage instead.
@@ -3269,7 +3271,7 @@ class MeshCoreApp {
 
         const filter = this._msgFilter.toLowerCase().trim();
         const cutoff = this.windows.displayCutoff();
-        const narrowFn = this._tableNarrowFn();
+        const narrowFn = this.selection.narrowFn();
         // Rows = the disk page snapshot plus, on page 0, the live recent-window
         // tail — merged, windowed, sorted and capped by TableCache (the one
         // place that owns the snapshot∪recent union).
@@ -3286,7 +3288,7 @@ class MeshCoreApp {
         const colList = [...new Set([...this.repeaterColumns, ...activeColsInRows])];
         const inWindow = c => !cutoff || (this.allRepeaters.get(c)?.lastSeen ?? -Infinity) >= cutoff;
         const visibleCols = colList
-            .filter(c => this._colMatchesRepFilter(c) && (inWindow(c) || activeColsInRows.has(c)));
+            .filter(c => this.selection.matchesFilter(c) && (inWindow(c) || activeColsInRows.has(c)));
         this._visibleCols = visibleCols;   // columns actually rendered (used by the
                                            // detail colspan and the filter notice)
 
@@ -3301,7 +3303,7 @@ class MeshCoreApp {
                 // the empty table reads as "this selection is empty" (deselect via
                 // the top-right notice) rather than "no data captured at all".
                 msgTableEmpty.textContent = narrowFn
-                    ? (this._selectedCol
+                    ? (this.selection.col
                         ? 'No packets from this repeater in the current display window.'
                         : 'No packets match the filter in the current display window.')
                     : (cutoff ? 'No packets in the current display window.' : 'Waiting for data…');
@@ -3381,7 +3383,7 @@ class MeshCoreApp {
         for (const [hash, col] of openDetails) {
             if (!this.table.hasRow(hash)) continue;
             // Drop detail for a column that is now filtered out
-            if (col && !this._colMatchesRepFilter(col)) continue;
+            if (col && !this.selection.matchesFilter(col)) continue;
             const row = document.getElementById(`row-${hash}`);
             if (!row) continue;
             const detail = document.createElement('tr');
@@ -3712,9 +3714,9 @@ class MeshCoreApp {
     }
 
     _renderCharts() {
-        if (this._selectedCol
-            && !this._visibleChartPoints().some(p => p.col === this._selectedCol)
-            && !this._colHasMapMarker(this._selectedCol)) {
+        if (this.selection.col
+            && !this._visibleChartPoints().some(p => p.col === this.selection.col)
+            && !this._colHasMapMarker(this.selection.col)) {
             this._selectRepeater(null);
         }
         this._renderChart('snr');
@@ -3805,7 +3807,7 @@ class MeshCoreApp {
             if (d < minDist) { minDist = d; nearest = p; }
         }
         if (!nearest || minDist > 2500) {
-            if (this._selectedCol) this._selectRepeater(null);
+            if (this.selection.col) this._selectRepeater(null);
             this.hideChartTooltip(true);
             return;
         }
@@ -3815,7 +3817,7 @@ class MeshCoreApp {
         // points carry no single hash, so they only select/deselect + close.
         const detailOpen = nearest.hash && document.getElementById(`detail-${nearest.hash}`);
         const sameOpen = detailOpen && detailOpen.dataset.col === (nearest.col ?? '');
-        if (this._selectedCol === nearest.col && (sameOpen || !nearest.hash)) {
+        if (this.selection.col === nearest.col && (sameOpen || !nearest.hash)) {
             this._closeAllDetails();
             this._selectRepeater(null);
             this.hideChartTooltip(true);
@@ -3823,7 +3825,7 @@ class MeshCoreApp {
         }
         // Switching repeaters: skip _selectRepeater's own table reload when we are
         // about to open a specific packet, so the two don't race on the page.
-        if (this._selectedCol !== nearest.col)
+        if (this.selection.col !== nearest.col)
             this._selectRepeater(nearest.col, !!nearest.hash);
         this.showChartTooltip(e, type, true);
         if (nearest.hash) this._openPacketDetail(nearest.hash, nearest.col);
@@ -4335,7 +4337,7 @@ class MeshCoreApp {
             }
         }
 
-        const selected = this._selectedCol;
+        const selected = this.selection.col;
 
         const groups = new Map();
         for (const p of pts) {
@@ -4969,23 +4971,6 @@ class MeshCoreApp {
     // The page snapshot, pager counts, narrow index and the snapshot∪recent
     // union reads live in this.table (TableCache).
 
-    // The column predicate that narrows which packets the table shows, or null
-    // when it shows everything (injected into TableCache). A repeater SELECTION
-    // (single column) takes
-    // precedence over a filter, since selection always hides rows lacking that
-    // exact repeater — even within an active filter. Drives both the paged hash
-    // index and the page-0 live-tail skip so narrowed pages are never padded
-    // with hidden rows.
-    _tableNarrowFn() {
-        if (this._selectedCol) { const s = this._selectedCol; return c => c === s; }
-        if (this._repFilterTerms.length) return c => this._colMatchesRepFilter(c);
-        return null;
-    }
-    _tableNarrowKey() {
-        if (this._selectedCol) return 's:' + this._selectedCol;
-        if (this._repFilterTerms.length) return 'f:' + this._repFilterTerms.join('\x1f');
-        return '';
-    }
 
     // Repaginate the table from page 0 when the narrowing (filter or selection)
     // changed. Called from both the filter and the selection paths.
@@ -5030,7 +5015,7 @@ class MeshCoreApp {
             pager.querySelector('#msgPageNext').addEventListener('click', () => this._loadTablePage(this.table.page + 1));
         }
         const narrowTag = this.table.narrowed
-            ? (this._selectedCol ? ' (selected)' : ' (filtered)') : '';
+            ? (this.selection.col ? ' (selected)' : ' (filtered)') : '';
         pager.querySelector('#msgPageInfo').textContent =
             `Page ${this.table.page + 1} / ${this.table.pageCount}${narrowTag}`;
         pager.querySelector('#msgPagePrev').disabled = this.table.page <= 0;
@@ -5208,7 +5193,7 @@ class MeshCoreApp {
         this._dscSeq = 0;
         this.repeaterColumns = [];
         this.allRepeaters.clear();
-        this._selectedCol = null;
+        this.selection.select(null);
         this._mapPins.clear();
         // Contacts are data too — wipe them from RAM now and cancel any pending
         // persist so it can't re-write them after store.clearAll() empties the DB.
@@ -5296,7 +5281,7 @@ class MeshCoreApp {
         const dir = this.repeaterSortDir;
         const cutoff = this.windows.displayCutoff();
         const entries = Array.from(this.allRepeaters.entries())
-            .filter(([id, d]) => this._colMatchesRepFilter(id) && (!cutoff || d.lastSeen >= cutoff));
+            .filter(([id, d]) => this.selection.matchesFilter(id) && (!cutoff || d.lastSeen >= cutoff));
 
         const repTableScroll = this.repTableBody.closest('.rep-table-scroll');
         const repTableEmpty  = document.getElementById('repTableEmpty');
@@ -5318,7 +5303,7 @@ class MeshCoreApp {
             const vb = dB[key] ?? -Infinity;
             return dir * (va - vb);
         });
-        const sel = this._selectedCol;
+        const sel = this.selection.col;
         this.repTableBody.innerHTML = entries.map(([repeater, d]) => {
             const mrc = this._signalColor(d.maxRssi,  -70, -130);
             const lrc = this._signalColor(d.lastRssi, -70, -130);
@@ -5367,8 +5352,8 @@ class MeshCoreApp {
     // --- Repeater selection ---
 
     _selectRepeater(col, skipRepaginate = false) {
-        this._selectedCol = col ?? null;
-        this.signalMap?.selectColumn(this._selectedCol);
+        this.selection.select(col ?? null);
+        this.signalMap?.selectColumn(this.selection.col);
         this._updateMapPins();
         this._scheduleChartRender();
         this._renderRepTable();
@@ -5384,8 +5369,8 @@ class MeshCoreApp {
     }
 
     _updateCornerNotices() {
-        const hasFilter = this._repFilterTerms.length > 0;
-        const hasSel    = !!this._selectedCol;
+        const hasFilter = this.selection.filterActive > 0;
+        const hasSel    = !!this.selection.col;
 
         const fSnr = v => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${Number.isInteger(v) ? v : Number(v).toFixed(1)}` : '—';
 
@@ -5463,8 +5448,8 @@ class MeshCoreApp {
         if (filterNotice) {
             filterNotice.classList.toggle('hidden', !hasFilter);
             if (hasFilter) {
-                document.getElementById('filterNoticeRep').textContent = this._repFilterTerms.join(', ');
-                const matchingCols = (this._visibleCols ?? this.repeaterColumns).filter(c => this._colMatchesRepFilter(c));
+                document.getElementById('filterNoticeRep').textContent = this.selection.filterTerms.join(', ');
+                const matchingCols = (this._visibleCols ?? this.repeaterColumns).filter(c => this.selection.matchesFilter(c));
                 // Any single matched column counts (including a merged one) — its
                 // dot, name and "Show more" stats are meaningful; only a multi-
                 // match filter has no single repeater to detail.
@@ -5494,18 +5479,18 @@ class MeshCoreApp {
         if (selNotice) {
             selNotice.classList.toggle('hidden', !hasSel || hasFilter);
             if (hasSel && !hasFilter) {
-                document.getElementById('selNoticeRep').textContent = this.displayId(this._selectedCol);
+                document.getElementById('selNoticeRep').textContent = this.displayId(this.selection.col);
                 const dot = document.getElementById('selNoticeDot');
-                this._applyDotStyle(dot, this._selectedCol);
+                this._applyDotStyle(dot, this.selection.col);
                 const nameEl = document.getElementById('selNoticeName');
                 if (nameEl) {
-                    const cName = this.contacts.nameForCol(this._selectedCol);
+                    const cName = this.contacts.nameForCol(this.selection.col);
                     nameEl.textContent = cName ? ` ${cName}` : '';
                     nameEl.style.display = cName ? '' : 'none';
                 }
                 const extra = document.getElementById('selNoticeExtra');
                 if (extra) {
-                    extra.innerHTML = buildExtra(this._selectedCol, this._selShowMore, 'sel');
+                    extra.innerHTML = buildExtra(this.selection.col, this._selShowMore, 'sel');
                     wireExtra('sel', this._selShowMore);
                 }
             }
@@ -5513,7 +5498,7 @@ class MeshCoreApp {
     }
 
     _applyMsgTableSelection() {
-        const sel = this._selectedCol;
+        const sel = this.selection.col;
 
         // Repeater column headers: dim non-selected
         document.querySelectorAll('#msgTableHead th.msg-col-rep[data-col]').forEach(th => {
@@ -5797,9 +5782,9 @@ class MeshCoreApp {
         this.totalRxEl.textContent = this.totalRxCount;
         const visibleRepeaters = displayCutoff
             ? Array.from(this.allRepeaters.entries())
-                .filter(([id, d]) => d.lastSeen >= displayCutoff && this._colMatchesRepFilter(id)).length
-            : (this._repFilterTerms.length
-                ? this.repeaterColumns.filter(c => this._colMatchesRepFilter(c)).length
+                .filter(([id, d]) => d.lastSeen >= displayCutoff && this.selection.matchesFilter(id)).length
+            : (this.selection.filterActive
+                ? this.repeaterColumns.filter(c => this.selection.matchesFilter(c)).length
                 : this.repeaterColumns.length);
         this.totalRepeatersEl.textContent = visibleRepeaters;
         if (this.packetRateEl) {
@@ -5834,17 +5819,6 @@ class MeshCoreApp {
         return false;
     }
 
-    _colMatchesRepFilter(col) {
-        if (!this._repFilterTerms.length) return true;
-        // For collision keys like "1234/5678" check each component separately
-        const ids = col.includes('/') ? col.split('/') : [col];
-        return ids.some(id => {
-            const display = this.displayId(id).toUpperCase();
-            return this._repFilterTerms.some(term =>
-                display.startsWith(term) || term.startsWith(display)
-            );
-        });
-    }
 
     // Visible points come from the incrementally maintained bucket cache
     // (charts.renderPoints(), see ChartCache.derive) — live packets are already
@@ -5857,7 +5831,7 @@ class MeshCoreApp {
         // The bucket cache is pruned only opportunistically (at array rebuilds),
         // so enforce the Display cutoff at read time for both sources.
         if (cutoff) pts = pts.filter(p => p.time >= cutoff);
-        return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
+        return this.selection.filterActive ? pts.filter(p => this.selection.matchesFilter(p.col)) : pts;
     }
 
     _visibleSentSnrPts() {
@@ -5874,18 +5848,20 @@ class MeshCoreApp {
         let pts = tail.length ? layer.concat(tail) : layer;
         if (cutoff) pts = pts.filter(p => p.time >= cutoff);
         if (z) pts = pts.filter(p => p.time >= z.tMin && p.time <= z.tMax);
-        return this._repFilterTerms.length ? pts.filter(p => this._colMatchesRepFilter(p.col)) : pts;
+        return this.selection.filterActive ? pts.filter(p => this.selection.matchesFilter(p.col)) : pts;
     }
 
     _applyRepFilter() {
         // A repeater filter and a single-repeater selection are competing
-        // narrowings, and selection silently wins in _tableNarrowFn while its
+        // narrowings, and selection silently wins in the narrowing while its
         // own notice is hidden under a filter — so a stale selection under a new
         // filter paged the wrong repeater with no visible cue. Applying a filter
         // clears the selection so the filter is the sole narrowing.
-        if (this._repFilterTerms.length && this._selectedCol) {
-            this._selectedCol = null;
-            this.signalMap?.selectColumn(null);
+        // setFilterTerms already cleared the selection if a filter was applied
+        // over one (the precedence rule lives in SelectionModel) — here we just
+        // propagate that clearing to the map view.
+        if (this.selection.filterActive && this.signalMap && this.selection.col === null) {
+            this.signalMap.selectColumn(null);
         }
         // Repaginate the packet table when the filter changed: pages are then
         // drawn from the narrowed hash index, so no pages of entirely hidden
@@ -5901,7 +5877,7 @@ class MeshCoreApp {
         this._scheduleChartRender();
         this._updateStats();
         this.signalMap?.setFilterFn(
-            this._repFilterTerms.length ? col => this._colMatchesRepFilter(col) : null
+            this.selection.filterActive ? col => this.selection.matchesFilter(col) : null
         );
         this._updateMapPins();
         this._updateCornerNotices();
@@ -5938,7 +5914,7 @@ class MeshCoreApp {
                 const data = { type: hm.type, meta: hm.meta, firstSeen: hm.firstSeen,
                                rawHex: o.rawHex, repeaters: new Map([[col, rep]]) };
                 if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
-                if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
+                if (this.selection.filterActive && !this.selection.matchesFilter(col)) continue;
                 allRows.push({ hash: o.hash, data, col, rep });
             }
             const sent = [];
@@ -5949,7 +5925,7 @@ class MeshCoreApp {
             for (const [hash, data] of this.model.recentEntries()) {
                 if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
                 for (const [col, rep] of data.repeaters) {
-                    if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
+                    if (this.selection.filterActive && !this.selection.matchesFilter(col)) continue;
                     allRows.push({ hash, data, col, rep });
                 }
             }

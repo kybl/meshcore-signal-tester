@@ -19,6 +19,7 @@ on:
       - 'map-cache.js'
       - 'time-windows.js'
       - 'contacts-directory.js'
+      - 'selection-model.js'
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'

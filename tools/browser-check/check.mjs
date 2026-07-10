@@ -167,6 +167,23 @@ async function main() {
         beforeText === 'Show all repeaters' && afterText === 'Hide all repeaters',
         `before "${beforeText}", after "${afterText}"`);
 
+    // 3b2) Selecting a repeater: clicking a column header shows the "Selected"
+    // corner notice and narrows the table to that repeater's rows; clicking it
+    // again deselects. Exercises the selection fan-out end to end.
+    const firstCol = await page.$('#msgTableHead th.msg-col-rep[data-col]');
+    const selCol = await firstCol.getAttribute('data-col');
+    await firstCol.click();
+    await page.waitForTimeout(800);
+    const noticeShown = await page.$eval('#selNotice', el => !el.classList.contains('hidden'));
+    const selRows = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    await page.click(`#msgTableHead th.msg-col-rep[data-col="${selCol}"]`);
+    await page.waitForTimeout(800);
+    const noticeHidden = await page.$eval('#selNotice', el => el.classList.contains('hidden'));
+    const allRowsAgain = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    check('selecting a repeater shows the notice and narrows the table; reselect clears',
+        noticeShown && selRows > 0 && noticeHidden && allRowsAgain >= selRows,
+        `notice ${noticeShown}/${noticeHidden}, rows ${selRows} → ${allRowsAgain}`);
+
     // 3c) Changing the Display and Auto-remove windows exercises the
     // time-window handlers (select parsing, the Display ≤ Auto-remove option
     // gating, and the wide-view rebuild). The sample data is 10–130 min old, so
