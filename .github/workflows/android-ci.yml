@@ -20,6 +20,7 @@ on:
       - 'time-windows.js'
       - 'contacts-directory.js'
       - 'selection-model.js'
+      - 'column-model.js'
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'

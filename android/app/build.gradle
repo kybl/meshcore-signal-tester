@@ -114,6 +114,7 @@ tasks.register('copyWebApp', Copy) {
         include 'time-windows.js'
         include 'contacts-directory.js'
         include 'selection-model.js'
+        include 'column-model.js'
         include 'column-key.js'
         include 'frame.js'
         include 'geo.js'

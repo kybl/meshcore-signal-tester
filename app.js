@@ -8,6 +8,7 @@ import { MapCache } from './map-cache.js?v=1';
 import { TimeWindows } from './time-windows.js?v=1';
 import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
+import { ColumnModel } from './column-model.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -85,10 +86,8 @@ class MeshCoreApp {
         // recent RAM window (model.recent*), the full on-disk history (async
         // model methods) and the write-through buffers are all PRIVATE inside
         // it. All-time questions come from the maintained union model here —
-        // repeaterColumns / allRepeaters / model.countHashes() — never from the
+        // columns.list / columns.stats() / model.countHashes() — never from the
         // recent window (that was the "Show all repeaters" class of bug).
-        this.allRepeaters = new Map();
-        this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
         // The Display/Auto-remove windows, the RAM render budget and the frozen
         // chart clock live in TimeWindows (one owner for cutoff/RAM-window math).
@@ -104,7 +103,6 @@ class MeshCoreApp {
         this.chartPoints = [];
         this._recentCountCache = null;   // memoized per-column 5-min counts (sort key #1); refreshed ~1×/s
         this._recentCountAt = 0;
-        this.chartColors = new Map();
         this._sentSnrHistory = []; // { time, snr, col, label }
         this._dscSeq = 0;
         // The synced contact list (entries, prefix lookups, persistence and the
@@ -158,6 +156,14 @@ class MeshCoreApp {
         // The repeater selection + filter (the two competing narrowings, their
         // precedence and the filter-matching semantics) live in SelectionModel.
         this.selection = new SelectionModel({ displayId: id => this.displayId(id) });
+        // The stateful column system (ordered list, per-column session stats,
+        // colour seeds, and the add/rename/split lifecycle) lives in ColumnModel;
+        // view-side retagging happens in the two hooks below.
+        this.columns = new ColumnModel({
+            displayId: id => this.displayId(id),
+            onRename:  (oldKey, newKey) => this._onColumnRename(oldKey, newKey),
+            onSplit:   (existingCol, collisionKey, prec) => this._onColumnSplit(existingCol, collisionKey, prec),
+        });
         this.table = new TableCache(this.model, {
             pageSize: 100,
             resolveCol:    id => this._resolveColReadonly(id),
@@ -173,7 +179,7 @@ class MeshCoreApp {
             displayLifetime: () => this.windows.displayMs,
             frozenAt:        () => this.windows.frozenAt,
             zoomWindow:      () => this._chartZoom,
-            seedColumn:      rawId => this.findOrCreateColumn(rawId),
+            seedColumn:      rawId => this.columns.resolve(rawId),
             onDerived:       () => this._scheduleChartRender(),
             afterBaseBuild:  () => this._restoreRepStatsFromBase(),
         });
@@ -801,7 +807,7 @@ class MeshCoreApp {
             const snr     = Math.round((Math.random() * 25 - 10) * 10) / 10;
             this._ingestPacket(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null, { forceIngest: true, ...this._myLocation() });
             if (fbk) {
-                const col = this.findOrCreateColumn(repeater);
+                const col = this.columns.resolve(repeater);
                 fbk.textContent = `→ column ${this.displayId(col)}`;
                 setTimeout(() => fbk.textContent = '', 2500);
             }
@@ -1019,7 +1025,7 @@ class MeshCoreApp {
         // Every known repeater column — the same set shown in Seen Repeaters —
         // not just those in the live RAM window (the "Show all repeaters did
         // nothing for loaded data" bug).
-        return this.contacts.withGps(this.repeaterColumns);
+        return this.contacts.withGps(this.columns.list);
     }
 
     _allRepeatersShown() {
@@ -2223,7 +2229,7 @@ class MeshCoreApp {
         // disk-only repeater (selected via an older chart dot, or after the RAM
         // window aged out) it returned null and "Show more" showed nothing —
         // and its counts contradicted the table row next to it.
-        const a = this.allRepeaters.get(col);
+        const a = this.columns.stats(col);
         if (!a) return null;
         return { count: a.count, lastRssi: a.lastRssi ?? null, lastSnr: a.lastSnr ?? null,
                  maxRssi: a.maxRssi ?? null, maxSnr: a.maxSnr ?? null };
@@ -2266,7 +2272,7 @@ class MeshCoreApp {
             // Resolve the live data column so clicking the marker selects the
             // same key the dots/table/chart use; fall back to a 6-char prefix
             // only when the repeater isn't currently in the data.
-            const col = this.contacts.colForPubKey(pubKeyFullHex, this.repeaterColumns) ?? pubKeyFullHex.slice(0, 6);
+            const col = this.contacts.colForPubKey(pubKeyFullHex, this.columns.list) ?? pubKeyFullHex.slice(0, 6);
             if (this.selection.filterActive && !this.selection.matchesFilter(col)) continue;
             seen.add(pubKeyFullHex);
             markers.push({ lat: contact.lat, lon: contact.lon, name: contact.name,
@@ -2281,7 +2287,7 @@ class MeshCoreApp {
         if (!col) return false;
         if (col === this.selection.col && this.contacts.gpsFor(col).length) return true;
         for (const pubKeyFullHex of this._mapPins) {
-            if (this.contacts.colForPubKey(pubKeyFullHex, this.repeaterColumns) === col) return true;
+            if (this.contacts.colForPubKey(pubKeyFullHex, this.columns.list) === col) return true;
         }
         return false;
     }
@@ -2681,7 +2687,7 @@ class MeshCoreApp {
         // via _resolveColReadonly). Using the raw prefix could select a
         // non-existent column on click. The stored rawId stays raw (resolved on
         // read). The paired DSC ingest below resolves the same key.
-        const sentCol = this.findOrCreateColumn(pubKeyHex);
+        const sentCol = this.columns.resolve(pubKeyHex);
         this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: sentCol, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
         this.model.bufferSent({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
         this._scheduleChartRender();
@@ -2843,27 +2849,11 @@ class MeshCoreApp {
     // events after the decision is equivalent to the old interleaving: the
     // decision reads only the column list + stored minPrecision (before any
     // mutation), so the deferred migrations don't change it.
-    findOrCreateColumn(rawId) {
-        const { key, events } = ColumnKey.resolveColumn(
-            rawId, this.repeaterColumns, col => this.allRepeaters.get(col)?.minPrecision);
-        for (const ev of events) {
-            if (ev.type === 'rename') this.renameColumnKey(ev.from, ev.to);
-            else if (ev.type === 'split') this._splitColumn(ev.existing, ev.collisionKey);
-            else if (ev.type === 'add' && !this.repeaterColumns.includes(ev.key)) this.repeaterColumns.push(ev.key);
-        }
-        return key;
-    }
 
-    // Un-merge: move entries that came in at a shorter precision (= ambiguous
-    // at the column's current label) into the collision key, leaving the
-    // specifically-matched entries in place.
-    _splitColumn(existingCol, collisionKey) {
-        const existingPrec = this.idPrecision(existingCol);
-
-        if (!this.repeaterColumns.includes(collisionKey)) {
-            this.repeaterColumns.push(collisionKey);
-        }
-
+    // ColumnModel split hook: move entries that came in at a shorter precision
+    // (= ambiguous at the column's current label) into the collision key,
+    // leaving the specifically-matched entries in place.
+    _onColumnSplit(existingCol, collisionKey, existingPrec) {
         // recent window: per (hash, repeater) entry
         for (const [, data] of this.model.recentEntries()) {
             const entry = data.repeaters.get(existingCol);
@@ -2901,91 +2891,27 @@ class MeshCoreApp {
         // only sees the RAM-window chartPoints, so on a long session it collapses
         // the split columns' totals (and can delete a column whose history is
         // still on disk). Re-widen both from the disk chart base afterwards.
-        this._recomputeRepeaterStats(existingCol);
-        this._recomputeRepeaterStats(collisionKey);
+        this.columns.recomputeFromPoints(existingCol, this.chartPoints);
+        this.columns.recomputeFromPoints(collisionKey, this.chartPoints);
         this._restoreRepStatsFromBase();
     }
 
-    _recomputeRepeaterStats(col) {
-        let count = 0, lastSeen = -1, maxSnr = null, maxRssi = null;
-        let lastSnr = null, lastRssi = null, minPrec = Infinity;
-        for (const p of this.chartPoints) {
-            if (p.col !== col) continue;
-            count++;
-            if (p.time > lastSeen) {
-                lastSeen = p.time;
-                lastSnr  = p.snr;
-                lastRssi = p.rssi;
-            }
-            if (p.snr  != null && (maxSnr  == null || p.snr  > maxSnr))  maxSnr  = p.snr;
-            if (p.rssi != null && (maxRssi == null || p.rssi > maxRssi)) maxRssi = p.rssi;
-            if (p.rawId) {
-                const r = this.idPrecision(p.rawId);
-                if (r < minPrec) minPrec = r;
-            }
-        }
-        if (count === 0) {
-            this.allRepeaters.delete(col);
-            const idx = this.repeaterColumns.indexOf(col);
-            if (idx >= 0) this.repeaterColumns.splice(idx, 1);
-            return;
-        }
-        if (!Number.isFinite(minPrec)) minPrec = this.idPrecision(ColumnKey.colHead(col));
-        this.allRepeaters.set(col, {
-            lastSeen, count, maxSnr, maxRssi, lastSnr, lastRssi,
-            minPrecision: minPrec,
-        });
-    }
 
-    renameColumnKey(oldKey, newKey) {
-        if (oldKey === newKey) return;
-        const oldIdx = this.repeaterColumns.indexOf(oldKey);
-        if (oldIdx < 0) return;
-        const newIdx = this.repeaterColumns.indexOf(newKey);
-        if (newIdx >= 0) this.repeaterColumns.splice(oldIdx, 1);
-        else             this.repeaterColumns[oldIdx] = newKey;
-
-        const oldData = this.allRepeaters.get(oldKey);
-        if (oldData) {
-            const newData = this.allRepeaters.get(newKey);
-            if (newData) {
-                const newer = oldData.lastSeen >= newData.lastSeen ? oldData : newData;
-                const mergeMax = (a, b) => a == null ? b : b == null ? a : Math.max(a, b);
-                this.allRepeaters.set(newKey, {
-                    lastSeen:     Math.max(oldData.lastSeen, newData.lastSeen),
-                    count:        oldData.count + newData.count,
-                    maxSnr:       mergeMax(oldData.maxSnr,  newData.maxSnr),
-                    maxRssi:      mergeMax(oldData.maxRssi, newData.maxRssi),
-                    lastSnr:      newer.lastSnr,
-                    lastRssi:     newer.lastRssi,
-                    minPrecision: Math.min(
-                        oldData.minPrecision ?? this.idPrecision(ColumnKey.colHead(oldKey)),
-                        newData.minPrecision ?? this.idPrecision(ColumnKey.colHead(newKey)),
-                    ),
-                });
-            } else {
-                this.allRepeaters.set(newKey, oldData);
-            }
-            this.allRepeaters.delete(oldKey);
-        }
-
+    // ColumnModel rename hook: retag the views that key data by column.
+    _onColumnRename(oldKey, newKey) {
         for (const data of this.model.recentValues()) {
             if (data.repeaters.has(oldKey)) {
                 data.repeaters.set(newKey, data.repeaters.get(oldKey));
                 data.repeaters.delete(oldKey);
             }
         }
-
-        this.chartColors.delete(oldKey);
         for (const p of this.chartPoints) {
             if (p.col === oldKey) p.col = newKey;
         }
         if (this.selection.col === oldKey) this.selection.select(newKey);
-
         this.msgTableBody?.querySelectorAll('tr.detail-row').forEach(tr => {
             if (tr.dataset.col === oldKey) tr.dataset.col = newKey;
         });
-
         this.signalMap?.renameCol?.(oldKey, newKey);
     }
 
@@ -3019,19 +2945,6 @@ class MeshCoreApp {
 
     // Fold one observation into the per-repeater running stats (RX count, max/last
     // SNR & RSSI, last-seen, and the finest id precision seen for this column).
-    _recordRepeaterStat(canonicalKey, repeater, now, snr, rssi) {
-        const rawPrec  = this.idPrecision(repeater);
-        const existing = this.allRepeaters.get(canonicalKey);
-        this.allRepeaters.set(canonicalKey, {
-            lastSeen:     now,
-            count:        (existing?.count ?? 0) + 1,
-            maxSnr:  snr  != null ? Math.max(existing?.maxSnr  ?? -Infinity, snr)  : (existing?.maxSnr  ?? null),
-            maxRssi: rssi != null ? Math.max(existing?.maxRssi ?? -Infinity, rssi) : (existing?.maxRssi ?? null),
-            lastSnr:  snr  != null ? snr  : (existing?.lastSnr  ?? null),
-            lastRssi: rssi != null ? rssi : (existing?.lastRssi ?? null),
-            minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
-        });
-    }
 
     _ingestPacket(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null, opts = {}) {
         if (!this._collecting && !opts.importing && !opts.forceIngest) return;
@@ -3042,8 +2955,8 @@ class MeshCoreApp {
         if (now > this._lastDataTime) this._lastDataTime = now;
         if (!opts.importing) this._rxTimestamps.push(now);
         const isNewHash = !this.model.recentHas(hash);
-        const prevColCount = this.repeaterColumns.length;
-        const canonicalKey = this.findOrCreateColumn(repeater);
+        const prevColCount = this.columns.count;
+        const canonicalKey = this.columns.resolve(repeater);
 
         // Position is supplied by the caller, never fetched here: live handlers
         // stamp the current GPS fix (_myLocation), replay/import carry the stored
@@ -3080,7 +2993,7 @@ class MeshCoreApp {
             }
         }
 
-        this._recordRepeaterStat(canonicalKey, repeater, now, snr, rssi);
+        this.columns.noteObservation(canonicalKey, repeater, now, snr, rssi);
         if (snr != null || rssi != null) {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater, type, hash });
             // Fold it into the chart bucket cache so the charts show it without a
@@ -3189,27 +3102,7 @@ class MeshCoreApp {
         // 0) each column appears on. Precomputed once per page-0 load in
         // _loadTablePage (not here) — this runs ~7×/s during capture, so it must
         // stay a cheap map read, not a rescan.
-        const pageCount = this.table.firstPageColCounts;
-        this.repeaterColumns.sort((a, b) => {
-            const ra = recentCount.get(a) ?? 0;
-            const rb = recentCount.get(b) ?? 0;
-            if (rb !== ra) return rb - ra;
-            const pa = pageCount.get(a) ?? 0;
-            const pb = pageCount.get(b) ?? 0;
-            if (pb !== pa) return pb - pa;
-            const da = this.allRepeaters.get(a);
-            const db = this.allRepeaters.get(b);
-            const lrA = da?.lastRssi ?? -Infinity;
-            const lrB = db?.lastRssi ?? -Infinity;
-            if (lrB !== lrA) return lrB - lrA;
-            const lsA = da?.lastSnr ?? -Infinity;
-            const lsB = db?.lastSnr ?? -Infinity;
-            if (lsB !== lsA) return lsB - lsA;
-            const cA = da?.count ?? 0;
-            const cB = db?.count ?? 0;
-            if (cB !== cA) return cB - cA;
-            return a.localeCompare(b);
-        });
+        this.columns.sort({ recentCount, pageCounts: this.table.firstPageColCounts });
     }
 
     _abbreviateType(type) {
@@ -3283,10 +3176,10 @@ class MeshCoreApp {
         // disappear as you page through. The disk snapshot can also surface a
         // historical column not in the live model, so keep any column present in
         // this page's rows too. Empty columns sort to the end (column order
-        // follows repeaterColumns, by RX count).
+        // follows the column model, by RX count).
         const activeColsInRows = new Set(allRows.flatMap(([, data]) => [...data.repeaters.keys()]));
-        const colList = [...new Set([...this.repeaterColumns, ...activeColsInRows])];
-        const inWindow = c => !cutoff || (this.allRepeaters.get(c)?.lastSeen ?? -Infinity) >= cutoff;
+        const colList = [...new Set([...this.columns.list, ...activeColsInRows])];
+        const inWindow = c => !cutoff || (this.columns.stats(c)?.lastSeen ?? -Infinity) >= cutoff;
         const visibleCols = colList
             .filter(c => this.selection.matchesFilter(c) && (inWindow(c) || activeColsInRows.has(c)));
         this._visibleCols = visibleCols;   // columns actually rendered (used by the
@@ -3402,7 +3295,7 @@ class MeshCoreApp {
         }
     }
 
-    _buildMsgRow(hash, data, cols = this.repeaterColumns) {
+    _buildMsgRow(hash, data, cols = this.columns.list) {
         const cells = cols.map(r => {
             const sig = data.repeaters.get(r);
             return sig ? this._buildSigCells(sig.rssi, sig.snr, hash, r) : '<td></td><td></td>';
@@ -3540,8 +3433,8 @@ class MeshCoreApp {
         const data = this.table.rowData(hash);
         if (!data) return '';
         // Span every rendered column (the table shows the union of live + disk
-        // columns, which can exceed repeaterColumns).
-        const colCount = this._visibleCols?.length ?? this.repeaterColumns.length;
+        // columns, which can exceed the column model).
+        const colCount = this._visibleCols?.length ?? this.columns.count;
         const colspan = 1 + colCount * 2;
 
         // Use per-repeater packet/rawHex when available (each repeater receives a different path)
@@ -3622,24 +3515,11 @@ class MeshCoreApp {
 
     // --- Chart ---
 
-    // Stable 32-bit FNV-1a hash of the display id (cached).
-    _repeaterHash(col) {
-        if (!this.chartColors.has(col)) {
-            const id = this.displayId(col);
-            let h = 0x811c9dc5;
-            for (let i = 0; i < id.length; i++) {
-                h ^= id.charCodeAt(i);
-                h = Math.imul(h, 0x01000193);
-            }
-            this.chartColors.set(col, h >>> 0);
-        }
-        return this.chartColors.get(col);
-    }
 
     // Hue, saturation and lightness — each from a different slice of the hash, so
     // repeaters vary in all three. Returns the light-theme lightness.
     _repeaterHSL(col) {
-        const h = this._repeaterHash(col);
+        const h = this.columns.colorSeed(col);
         const hue = h % 360;
         const sat = Math.round(REP_S_MIN + ((h >>> 10) & 0xFF) / 255 * (REP_S_MAX - REP_S_MIN));
         const lit = Math.round(REP_L_MIN + ((h >>> 18) & 0xFF) / 255 * (REP_L_MAX - REP_L_MIN));
@@ -4886,7 +4766,7 @@ class MeshCoreApp {
     // (used to colour downsampled overlay points; live ingest uses
     // findOrCreateColumn, which may promote/merge).
     _resolveColReadonly(rawId) {
-        return ColumnKey.resolveColumnReadonly(rawId, this.repeaterColumns);
+        return ColumnKey.resolveColumnReadonly(rawId, this.columns.list);
     }
 
     // (Re)build the disk render caches (chart overlay, map grid, paginated table)
@@ -4924,7 +4804,7 @@ class MeshCoreApp {
     // all private there; app-level concerns are injected in the constructor.
 
     // Restore Seen Repeaters entries from the disk chart layer. The live model
-    // (allRepeaters) exists only in RAM, bounded by the RAM window (~60 min):
+    // (column stats) exists only in RAM, bounded by the RAM window (~60 min):
     // when a repeater's points age out of it, cleanup's _rebuildAfterPrune
     // dissolves the entry. But the Display window can be wider ("All"), where
     // those repeaters are still in range and live on disk — so re-seed them from
@@ -4940,21 +4820,7 @@ class MeshCoreApp {
         // silently staying empty after the RAM tail ages out.
         const agg = this.charts.aggregateRepeaterStats();
         if (!agg) { if (this.model.ready) this.charts.ensureBase(); return; }
-        let changed = false;
-        for (const [col, a] of agg) {
-            const live = this.allRepeaters.get(col);
-            if (live) {
-                // Keep the exact live lastSeen/last values; widen the totals.
-                if (a.count > live.count) { live.count = a.count; changed = true; }
-                if (a.maxSnr  != null && (live.maxSnr  == null || a.maxSnr  > live.maxSnr))  { live.maxSnr  = a.maxSnr;  changed = true; }
-                if (a.maxRssi != null && (live.maxRssi == null || a.maxRssi > live.maxRssi)) { live.maxRssi = a.maxRssi; changed = true; }
-                continue;
-            }
-            if (!Number.isFinite(a.minPrecision)) a.minPrecision = this.idPrecision(ColumnKey.colHead(col));
-            this.allRepeaters.set(col, a);
-            if (!this.repeaterColumns.includes(col)) this.repeaterColumns.push(col);
-            changed = true;
-        }
+        const changed = this.columns.mergeDiskAggregates(agg);
         if (changed) {
             this._sortColumns();
             this._renderRepTable();
@@ -5051,9 +4917,9 @@ class MeshCoreApp {
                 this.signalMap?.purgeOlderThan(cutoff);
                 if (this.chartPoints.length !== before) this._rebuildAfterPrune();
             }
-            const prev = this.repeaterColumns.join('|');
+            const prev = this.columns.list.join('|');
             this._sortColumns();
-            if (this.repeaterColumns.join('|') !== prev) this._renderMsgTable();
+            if (this.columns.list.join('|') !== prev) this._renderMsgTable();
             return;
         }
 
@@ -5088,7 +4954,7 @@ class MeshCoreApp {
         // Step 1: Demote specific columns whose precise label has no remaining evidence.
         // Example: column "1234" promoted from "12"; if the "1234" packet expired but
         // "12" packets remain, the column label must revert to "12".
-        for (const col of [...this.repeaterColumns]) {
+        for (const col of [...this.columns.list]) {
             if (col.includes('/') || col === 'direct' || col === 'unknown') continue;
             const colPrec = this.idPrecision(col);
             let maxPrec = 0, bestRawId = null;
@@ -5099,14 +4965,14 @@ class MeshCoreApp {
             }
             if (bestRawId && maxPrec < colPrec) {
                 const oldCol = col;
-                this.renameColumnKey(oldCol, bestRawId);
+                this.columns.rename(oldCol, bestRawId);
                 // Mirror the demotion into every collision key that had oldCol as a component
-                for (const ck of [...this.repeaterColumns]) {
+                for (const ck of [...this.columns.list]) {
                     if (!ck.includes('/')) continue;
                     const comps = ck.split('/');
                     if (!comps.includes(oldCol)) continue;
                     const newCk = comps.map(c => c === oldCol ? bestRawId : c).sort().join('/');
-                    if (newCk !== ck) this.renameColumnKey(ck, newCk);
+                    if (newCk !== ck) this.columns.rename(ck, newCk);
                 }
             }
         }
@@ -5117,7 +4983,7 @@ class MeshCoreApp {
             if (!p.col.includes('/')) activeSpecific.add(p.col);
         }
 
-        for (const col of [...this.repeaterColumns]) {
+        for (const col of [...this.columns.list]) {
             if (!col.includes('/')) continue;
             const comps = col.split('/');
             const survivors = comps.filter(c => activeSpecific.has(c));
@@ -5125,17 +4991,17 @@ class MeshCoreApp {
 
             if (survivors.length > 1) {
                 // Shrink: e.g. "A/B/C" → "A/C"
-                this.renameColumnKey(col, survivors.sort().join('/'));
+                this.columns.rename(col, survivors.sort().join('/'));
             } else if (survivors.length === 1) {
                 // Dissolve: "A/B" → "B"
-                this.renameColumnKey(col, survivors[0]);
+                this.columns.rename(col, survivors[0]);
             } else {
                 // All specific siblings expired — release orphaned ambiguous points
                 // back to their original raw prefix so they form their own column
                 for (const p of this.chartPoints) {
                     if (p.col !== col) continue;
                     const rId = p.rawId ?? col;
-                    if (!this.repeaterColumns.includes(rId)) this.repeaterColumns.push(rId);
+                    if (!this.columns.has(rId)) this.columns.add(rId);
                     p.col = rId;
                 }
                 for (const data of this.model.recentValues()) {
@@ -5146,17 +5012,14 @@ class MeshCoreApp {
                     data.repeaters.delete(col);
                 }
                 this.signalMap?.splitPoints?.(col, p => p ?? col);
-                const idx = this.repeaterColumns.indexOf(col);
-                if (idx >= 0) this.repeaterColumns.splice(idx, 1);
-                this.allRepeaters.delete(col);
-                this.chartColors.delete(col);
+                this.columns.remove(col);
             }
         }
 
         // Step 3: Recompute stats for all remaining columns from the pruned chartPoints;
         // _recomputeRepeaterStats also removes columns that now have count=0
-        for (const col of [...this.repeaterColumns]) {
-            this._recomputeRepeaterStats(col);
+        for (const col of [...this.columns.list]) {
+            this.columns.recomputeFromPoints(col, this.chartPoints);
         }
 
         // Column keys changed (demotions/dissolves) — re-derive the chart render
@@ -5191,8 +5054,7 @@ class MeshCoreApp {
         this._lastDataTime = 0;
         this.model.clearAll();
         this._dscSeq = 0;
-        this.repeaterColumns = [];
-        this.allRepeaters.clear();
+        this.columns.clear();
         this.selection.select(null);
         this._mapPins.clear();
         // Contacts are data too — wipe them from RAM now and cancel any pending
@@ -5280,7 +5142,7 @@ class MeshCoreApp {
         const key = this.repeaterSortKey;
         const dir = this.repeaterSortDir;
         const cutoff = this.windows.displayCutoff();
-        const entries = Array.from(this.allRepeaters.entries())
+        const entries = Array.from(this.columns.statsEntries())
             .filter(([id, d]) => this.selection.matchesFilter(id) && (!cutoff || d.lastSeen >= cutoff));
 
         const repTableScroll = this.repTableBody.closest('.rep-table-scroll');
@@ -5449,7 +5311,7 @@ class MeshCoreApp {
             filterNotice.classList.toggle('hidden', !hasFilter);
             if (hasFilter) {
                 document.getElementById('filterNoticeRep').textContent = this.selection.filterTerms.join(', ');
-                const matchingCols = (this._visibleCols ?? this.repeaterColumns).filter(c => this.selection.matchesFilter(c));
+                const matchingCols = (this._visibleCols ?? this.columns.list).filter(c => this.selection.matchesFilter(c));
                 // Any single matched column counts (including a merged one) — its
                 // dot, name and "Show more" stats are meaningful; only a multi-
                 // match filter has no single repeater to detail.
@@ -5781,11 +5643,11 @@ class MeshCoreApp {
         this.activeHashesEl.textContent = visibleHashes;
         this.totalRxEl.textContent = this.totalRxCount;
         const visibleRepeaters = displayCutoff
-            ? Array.from(this.allRepeaters.entries())
+            ? Array.from(this.columns.statsEntries())
                 .filter(([id, d]) => d.lastSeen >= displayCutoff && this.selection.matchesFilter(id)).length
             : (this.selection.filterActive
-                ? this.repeaterColumns.filter(c => this.selection.matchesFilter(c)).length
-                : this.repeaterColumns.length);
+                ? this.columns.list.filter(c => this.selection.matchesFilter(c)).length
+                : this.columns.count);
         this.totalRepeatersEl.textContent = visibleRepeaters;
         if (this.packetRateEl) {
             const now = Date.now();
