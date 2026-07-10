@@ -13,6 +13,7 @@ on:
       - 'app.js'
       - 'signal3d.js'
       - 'packet-store.js'
+      - 'capture-model.js'
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'

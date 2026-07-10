@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=153';
-import { PacketStore } from './packet-store.js?v=21';
+import { CaptureModel } from './capture-model.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -76,16 +76,12 @@ class MeshCoreApp {
         this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
-        // RECENT RAM WINDOW ONLY (hash → per-packet aggregate), bounded by
-        // _ramWindowMs(). NOT the full capture — older packets live only on disk
-        // (this.store). So never derive "what exists over all time" from this:
-        //   • repeater set        → this.repeaterColumns
-        //   • per-repeater stats   → this.allRepeaters (kept in sync with disk)
-        //   • total / active count → this.store.countHashes() (RAM only as fallback)
-        //   • windowed points/rows → a disk query merged with the live tail
-        // Reading it for an all-time question silently misses history (that was the
-        // "Show all repeaters" / resume-prompt class of bug).
-        this._recentPackets = new Map();
+        // Packet storage lives in this.model (CaptureModel, created below): the
+        // recent RAM window (model.recent*), the full on-disk history (async
+        // model methods) and the write-through buffers are all PRIVATE inside
+        // it. All-time questions come from the maintained union model here —
+        // repeaterColumns / allRepeaters / model.countHashes() — never from the
+        // recent window (that was the "Show all repeaters" class of bug).
         this.allRepeaters = new Map();
         this.repeaterColumns = []; // sorted by max RSSI descending (strongest first)
         this.totalRxCount = 0;
@@ -140,17 +136,14 @@ class MeshCoreApp {
         // recent window for rendering. This keeps "Auto-remove: Never" from
         // growing the heap until the WebView renderer is OOM-killed, and lets
         // captured data survive a renderer crash / app restart (it is replayed
-        // back from disk on startup).
-        this.store = new PacketStore();
-        this._storeReady = false;
+        // back from disk on startup). The model OWNS all packet storage — the
+        // recent RAM window, the on-disk history, and the write-through buffers
+        // are private inside it; everything here goes through its named methods.
+        this.model = new CaptureModel();
+        this.model.totalsProvider = () => ({ totalRxCount: this.totalRxCount });
         this.RENDER_BUDGET_MS = 60 * 60 * 1000;  // raw points kept in RAM (≥ this much recent history)
         this.MAX_RAW_VIEW    = 40000;            // above this a window renders downsampled
         this.DOWNSAMPLE_BUCKETS = 1500;          // time-bucket count for wide-window charts
-        this._obsWriteBuf  = [];                 // pending obs records to flush to disk
-        this._sentWriteBuf = [];                 // pending outgoing-SNR records
-        this._hashWriteBuf = [];                 // pending per-hash payload records
-        this.WRITE_FLUSH_MS = 4000;              // debounce for batching disk writes
-        this._writeFlushTimer = null;
         this._wideChartPoints = [];              // chart render array, derived from the bucket cache
         this._wideSentPoints  = [];              // outgoing-SNR layer (disk) — live tail via _sentChartAt
         this._chartBase       = null;            // incremental time-bucket cache {cells: Map, width, lo}
@@ -170,7 +163,6 @@ class MeshCoreApp {
         this._wideMapSentVer  = -1;              // dataVer the outgoing-SNR map layer was loaded for
         this._pendingMapUpserts = null;          // packets ingested before the base layer exists
         this._mapPushTimer    = null;            // coalesces cell upserts into one geometry push
-        this._dataVer         = 0;               // bumped whenever new records land on disk
         this._tableHashCount   = 0;              // distinct hashes on disk (RAM-maintained for the pager)
         this._mapRebuildBusy   = false;          // guards the map's dot-budget escape-valve rebuild
         this._tablePageData   = new Map();       // disk-paged packet table snapshot (empty ⇒ tail alone)
@@ -238,7 +230,7 @@ class MeshCoreApp {
     // The <p> text itself is set elsewhere (connect handlers) to reflect status.
     _updateEmptyState() {
         if (!this.emptyState) return;
-        const hasData = this._recentPackets.size > 0 || (this._tableHashCount || 0) > 0;
+        const hasData = this.model.recentSize > 0 || (this._tableHashCount || 0) > 0;
         this.emptyState.classList.toggle('hidden', hasData);
     }
 
@@ -881,7 +873,7 @@ class MeshCoreApp {
                     // Zoom/pan → re-query a finer disk grid for the now-visible
                     // region, and remember it so the live refresh keeps that zoom
                     // instead of snapping to full extent.
-                    if (!this._storeReady) return;
+                    if (!this.model.ready) return;
                     // Small moves don't need a re-query: the previous detail grid
                     // over-covers the view, so only react once the camera has
                     // moved a quarter of the span or zoomed by ≥25%. (Skipped
@@ -1016,7 +1008,7 @@ class MeshCoreApp {
         const seen = new Set();
         // Iterate every known repeater column — the same set shown in Seen
         // Repeaters and clickable individually — not just those in the live RAM
-        // window (this._recentPackets). Otherwise "Show all repeaters" found nothing
+        // window (model.recent*). Otherwise "Show all repeaters" found nothing
         // for loaded/older data whose recent window holds no packets, even though
         // each repeater still shows on the map when clicked one by one.
         for (const col of this.repeaterColumns) {
@@ -2364,10 +2356,10 @@ class MeshCoreApp {
     // marker is saved too, so a reconnect resumes from it instead of re-pulling
     // the whole contact list.
     _scheduleContactsPersist() {
-        if (!this._storeReady) return;
+        if (!this.model.ready) return;
         clearTimeout(this._contactsPersistTimer);
         this._contactsPersistTimer = setTimeout(() => {
-            this.store.setKV('contacts', { entries: [...this._contacts.values()], lastmod: this._contactsLastmod });
+            this.model.setKV('contacts', { entries: [...this._contacts.values()], lastmod: this._contactsLastmod });
         }, 1000);
     }
 
@@ -2737,7 +2729,7 @@ class MeshCoreApp {
             ? Array.from(pubKey).map(b => b.toString(16).padStart(2, '0')).join('')
             : null;
         const adHash = 'AD:' + pubKeyHex;
-        const existing = this._recentPackets.get(adHash);
+        const existing = this.model.recentGet(adHash);
         const tagKnown = this._discoverTags?.has(tag);
         const nodeName = existing?.meta?.name ?? null;
         const meta = {
@@ -2762,7 +2754,7 @@ class MeshCoreApp {
         // read). The paired DSC ingest below resolves the same key.
         const sentCol = this.findOrCreateColumn(pubKeyHex);
         this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: sentCol, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
-        if (!this._storeDead) { this._sentWriteBuf.push({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null }); this._scheduleWriteFlush(); }
+        this.model.bufferSent({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
         this._scheduleChartRender();
         if (sentLoc && remoteSnr != null) {
             this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: sentCol, time: now, rawId: pubKeyHex });
@@ -2920,7 +2912,7 @@ class MeshCoreApp {
     // Resolve `rawId` to a column, creating/promoting/splitting/merging columns
     // as needed. The DECISION lives in the pure ColumnKey.resolveColumn (unit-
     // tested); this shell applies the side-effect events it returns to migrate
-    // the real data (columns, stats, _recentPackets, chart/map/table). Applying the
+    // the real data (columns, stats, the recent window, chart/map/table). Applying the
     // events after the decision is equivalent to the old interleaving: the
     // decision reads only the column list + stored minPrecision (before any
     // mutation), so the deferred migrations don't change it.
@@ -2945,8 +2937,8 @@ class MeshCoreApp {
             this.repeaterColumns.push(collisionKey);
         }
 
-        // _recentPackets: per (hash, repeater) entry
-        for (const [, data] of this._recentPackets) {
+        // recent window: per (hash, repeater) entry
+        for (const [, data] of this.model.recentEntries()) {
             const entry = data.repeaters.get(existingCol);
             if (!entry) continue;
             const ePrec = entry.rawId ? this.idPrecision(entry.rawId) : existingPrec;
@@ -3050,7 +3042,7 @@ class MeshCoreApp {
             this.allRepeaters.delete(oldKey);
         }
 
-        for (const data of this._recentPackets.values()) {
+        for (const data of this.model.recentValues()) {
             if (data.repeaters.has(oldKey)) {
                 data.repeaters.set(newKey, data.repeaters.get(oldKey));
                 data.repeaters.delete(oldKey);
@@ -3122,7 +3114,7 @@ class MeshCoreApp {
         const now = opts.timestamp ?? Date.now();
         if (now > this._lastDataTime) this._lastDataTime = now;
         if (!opts.importing) this._rxTimestamps.push(now);
-        const isNewHash = !this._recentPackets.has(hash);
+        const isNewHash = !this.model.recentHas(hash);
         const prevColCount = this.repeaterColumns.length;
         const canonicalKey = this.findOrCreateColumn(repeater);
 
@@ -3137,7 +3129,7 @@ class MeshCoreApp {
         if (opts.remoteSnr != null) repEntry.remoteSnr = opts.remoteSnr;
 
         if (isNewHash) {
-            this._recentPackets.set(hash, {
+            this.model.recentSet(hash, {
                 repeaters: new Map([[canonicalKey, repEntry]]),
                 firstSeen: now,
                 lastSeen: now,
@@ -3148,7 +3140,7 @@ class MeshCoreApp {
                 packet,
             });
         } else {
-            const data = this._recentPackets.get(hash);
+            const data = this.model.recentGet(hash);
             // When importing, skip (hash, repeater) pairs that already exist — existing data wins
             if (opts.importing && data.repeaters.has(canonicalKey)) return;
             data.lastSeen = now;
@@ -3167,7 +3159,7 @@ class MeshCoreApp {
             // Fold it into the chart bucket cache so the charts show it without a
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
-            if (!opts.replaying && !opts.importing && this._storeReady) {
+            if (!opts.replaying && !opts.importing && this.model.ready) {
                 this._upsertChartCell(now, snr, rssi, repeater, type, hash);
             }
         }
@@ -3176,7 +3168,7 @@ class MeshCoreApp {
             // Fold it into the RAM map-cell cache so the wide view shows it
             // immediately, no disk rescan. Replay/import skip this — they end
             // with a full disk rebuild of the layers anyway.
-            if (!opts.replaying && !opts.importing && this._storeReady) {
+            if (!opts.replaying && !opts.importing && this.model.ready) {
                 this._upsertMapCell({ lat: loc.lat, lon: loc.lon, snr, rssi, time: now, rawId: repeater });
             }
         }
@@ -3198,7 +3190,7 @@ class MeshCoreApp {
 
         // Keep the table pager's page count current without a disk count() —
         // replay/import end with an authoritative _loadTablePage instead.
-        if (!opts.replaying && this._storeReady) {
+        if (!opts.replaying && this.model.ready) {
             if (isNewHash) this._tableHashCount++;
             // Fold the packet into the narrow index too — note an OLD hash can
             // newly join it when the narrowed repeater hears it for the first
@@ -3215,7 +3207,7 @@ class MeshCoreApp {
         }
 
         // Sound stays immediate (cheap, and its timing matters).
-        const data = this._recentPackets.get(hash);
+        const data = this.model.recentGet(hash);
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
         if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr);
@@ -3371,7 +3363,7 @@ class MeshCoreApp {
         const narrowFn = this._tableNarrowFn();
         const m = new Map(this._tablePageData);
         if (this._tablePage === 0) {
-            for (const [h, d] of this._recentPackets) {
+            for (const [h, d] of this.model.recentEntries()) {
                 if (d.lastSeen <= this._renderCacheAt) continue;
                 // When narrowed the snapshot holds only matching hashes — keep the
                 // tail consistent so hidden rows don't eat the page cap.
@@ -3388,7 +3380,7 @@ class MeshCoreApp {
         // periodically reloaded), so the live tail can outgrow the page — cap the
         // rendered rows at the page size; older rows are reachable via the pager.
         // Pre-ready (store still opening) there is no pager yet, so don't cap.
-        if (this._tablePage === 0 && this._storeReady && allRows.length > this._tablePageSize) {
+        if (this._tablePage === 0 && this.model.ready && allRows.length > this._tablePageSize) {
             allRows = allRows.slice(0, this._tablePageSize);
         }
 
@@ -3496,7 +3488,7 @@ class MeshCoreApp {
     // maps hash → column (or null), captured before msgTableBody was replaced.
     _reinsertOpenDetailRows(openDetails) {
         for (const [hash, col] of openDetails) {
-            if (!this._tableSource().has(hash) && !this._recentPackets.has(hash)) continue;
+            if (!this._tableSource().has(hash) && !this.model.recentHas(hash)) continue;
             // Drop detail for a column that is now filtered out
             if (col && !this._colMatchesRepFilter(col)) continue;
             const row = document.getElementById(`row-${hash}`);
@@ -3579,11 +3571,11 @@ class MeshCoreApp {
     // hash when it isn't on the current one. Called from the 2D-chart click.
     async _openPacketDetail(hash, col) {
         this._closeAllDetails();
-        if (this._storeReady) {
+        if (this.model.ready) {
             // A just-received packet may still sit in the 4 s write buffer —
             // flush first, or the narrow index scan (disk-only) would miss it
             // and the detail would silently fail to open.
-            await this._flushWrites();
+            await this.model.flush();
             // Ensure a fresh narrow index for the current selection, then find
             // which page the hash sits on (one row per hash, so it is unique).
             if (!this._tableNarrowHashes || this._tableNarrowIndexKey !== this._tableNarrowKey())
@@ -3659,7 +3651,7 @@ class MeshCoreApp {
     }
 
     _buildDetailRow(hash, col = null) {
-        const data = this._tableSource().get(hash) || this._recentPackets.get(hash);
+        const data = this._tableSource().get(hash) || this.model.recentGet(hash);
         if (!data) return '';
         // Span every rendered column (the table shows the union of live + disk
         // columns, which can exceed repeaterColumns).
@@ -4659,7 +4651,7 @@ class MeshCoreApp {
         // carry the type directly; single-reception buckets carry the packet hash —
         // resolve the type from the RAM hash table here, and from disk async below.
         const pType = (!isSent && single)
-            ? (nearest.type ?? (nearest.hash ? this._recentPackets.get(nearest.hash)?.type : null))
+            ? (nearest.type ?? (nearest.hash ? this.model.recentGet(nearest.hash)?.type : null))
             : null;
         const typeBadge = pType
             ? `<span class="ct-type" title="${this._escHtml(pType)}">${this._escHtml(this._abbreviateType(pType))}</span>`
@@ -4683,8 +4675,8 @@ class MeshCoreApp {
             `<div class="ct-sig">${valLine}<span class="ct-time">${time}${msHtml}</span></div>`;
         // Single stored packet whose hash has aged out of the RAM window: fetch its
         // type from disk and inject the badge if still hovering the same point.
-        if (!isSent && single && !pType && nearest.hash && this._storeReady) {
-            this.store.getHash(nearest.hash).then(h => {
+        if (!isSent && single && !pType && nearest.hash && this.model.ready) {
+            this.model.getHash(nearest.hash).then(h => {
                 if (tipTok !== this._tipTypeReq || !h?.type) return;
                 if (this.tooltip.style.display === 'none') return;
                 const nameEl = this.tooltip.querySelector('.ct-name');
@@ -4753,7 +4745,7 @@ class MeshCoreApp {
         // so keep everything that should be visible in RAM (bounded by
         // retention, else the display window, else unbounded). Once ready,
         // RAM is bounded by the render budget.
-        if (!this._storeReady) {
+        if (!this.model.ready) {
             if (isFinite(this.HASH_LIFETIME)) return this.HASH_LIFETIME;
             if (isFinite(this.DISPLAY_LIFETIME)) return this.DISPLAY_LIFETIME;
             return Infinity;
@@ -4905,27 +4897,21 @@ class MeshCoreApp {
     }
 
     async _initStore() {
-        const ok = await this.store.open(await this._chooseSession());
+        // IndexedDB is a hard requirement (available everywhere, including
+        // private modes) — a failed open means a broken browser profile or
+        // disabled site storage. Say so loudly rather than degrade silently; the
+        // model goes dead (write-through becomes a no-op so buffers can't grow
+        // unbounded) and the app keeps its pre-storage RAM-only behaviour.
+        const ok = await this.model.open(await this._chooseSession());
         if (!ok) {
-            // IndexedDB is a hard requirement (available everywhere, including
-            // private modes) — a failed open means a broken browser profile or
-            // disabled site storage. Say so loudly rather than degrade silently;
-            // _storeReady stays false (the app keeps its pre-storage startup
-            // behaviour) and _storeDead stops the write buffers from growing
-            // unbounded (nothing would ever drain them).
-            this._storeDead = true;
-            this._obsWriteBuf = [];
-            this._sentWriteBuf = [];
-            this._hashWriteBuf = [];
             alert('Storage error: the browser refused to open IndexedDB, so captured data cannot be saved or paged.\n\n'
-                + (this.store.lastError?.message ?? 'Unknown cause')
+                + (this.model.lastError?.message ?? 'Unknown cause')
                 + '\n\nCheck that site data/storage is not blocked for this site.');
             return;
         }
-        this._storeReady = true;
-        this.store.onQuotaExceeded = () => this._onStorageQuota();
+        this.model.onQuotaExceeded = () => this._onStorageQuota();
         try {
-            const totals = await this.store.getKV('totals');
+            const totals = await this.model.getKV('totals');
             if (totals && Number.isFinite(totals.totalRxCount)) this.totalRxCount = totals.totalRxCount;
         } catch (_) {}
         // Fallback when the persisted counter is missing or 0 but the DB holds
@@ -4938,7 +4924,7 @@ class MeshCoreApp {
         // count from disk so the prompt reflects the data that's actually there.
         if (!this.totalRxCount) {
             try {
-                const n = await this.store.countHashes();
+                const n = await this.model.countHashes();
                 if (n > 0) this.totalRxCount = n;
             } catch (_) {}
         }
@@ -4949,7 +4935,7 @@ class MeshCoreApp {
         // Restore persisted contacts (names, GPS, types) so the repeater map
         // markers and column names survive a reload / renderer-crash rebuild.
         try {
-            const saved = await this.store.getKV('contacts');
+            const saved = await this.model.getKV('contacts');
             if (saved && Array.isArray(saved.entries)) {
                 for (const c of saved.entries) if (c?.pubKeyFullHex) this._contacts.set(c.pubKeyFullHex, c);
                 if (Number.isFinite(saved.lastmod)) this._contactsLastmod = saved.lastmod;
@@ -4965,7 +4951,7 @@ class MeshCoreApp {
         // first render and the wide-view rebuild so both use this window.
         if (!this._collecting) {
             try {
-                const span = await this.store._obsSpan(-Infinity, Infinity);
+                const span = await this.model.obsSpan(-Infinity, Infinity);
                 if (span) this._chartFrozenAt = span.max + 1000;
             } catch (_) {}
         }
@@ -4978,7 +4964,7 @@ class MeshCoreApp {
         this._updateEmptyState();
         // No periodic wide-view tick: charts, map and table page 0 are all kept
         // current in RAM (bucket/cell upserts + the live row tail); writes flush
-        // themselves via _scheduleWriteFlush. Disk is only read on view changes.
+        // themselves via the model's debounced flush. Disk is only read on view changes.
     }
 
     // Rebuild the in-RAM render window from disk by replaying the most recent
@@ -4988,11 +4974,11 @@ class MeshCoreApp {
         const w = this._ramWindowMs();
         const from = isFinite(w) ? Date.now() - w : -Infinity;
         const obsList = [];
-        await this.store.eachObs(from, Infinity, r => { obsList.push(r); });
+        await this.model.eachObs(from, Infinity, r => { obsList.push(r); });
         if (obsList.length) {
             const hashMeta = new Map();
             for (const h of new Set(obsList.map(o => o.hash))) {
-                const rec = await this.store.getHash(h);
+                const rec = await this.model.getHash(h);
                 if (rec) hashMeta.set(h, rec);
             }
             const savedTotal = this.totalRxCount, savedUnsaved = this._unsavedRxCount;
@@ -5006,56 +4992,28 @@ class MeshCoreApp {
             // Counters are authoritative from kv, not from the (windowed) replay.
             this.totalRxCount = savedTotal; this._unsavedRxCount = savedUnsaved;
         }
-        await this.store.eachSent(from, Infinity, r => {
+        await this.model.eachSent(from, Infinity, r => {
             this._sentSnrHistory.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label, lat: r.lat ?? null, lon: r.lon ?? null });
         });
     }
 
-    // Write-through: buffer an observation (and, for a new hash, its
-    // path-invariant payload) and schedule a debounced flush to disk.
+    // Write-through: hand an observation (and, for a new hash, its
+    // path-invariant payload) to the model, which buffers and batch-flushes it.
     _ingestToStore(o, isNewHash) {
-        if (this._storeDead) return;
-        this._obsWriteBuf.push({
+        this.model.bufferObservation({
             time: o.now, hash: o.hash, rawId: o.repeater, rawHex: o.rawHex ?? null,
             snr: o.snr ?? null, rssi: o.rssi ?? null,
             lat: o.loc?.lat ?? null, lon: o.loc?.lon ?? null,
             ...(o.remoteSnr != null ? { remoteSnr: o.remoteSnr } : {}),
-        });
-        if (isNewHash) {
-            // Buffered like obs (flushed in one batched transaction) — an
-            // immediate per-hash write would cost one transaction per new hash.
-            this._hashWriteBuf.push({ hash: o.hash, firstSeen: o.now, type: o.type ?? null, meta: o.meta ?? null });
-        }
-        this._scheduleWriteFlush();
-    }
-
-    _scheduleWriteFlush() {
-        if (this._writeFlushTimer || this._storeDead) return;
-        this._writeFlushTimer = setTimeout(() => {
-            this._writeFlushTimer = null;
-            if (!this._storeReady) {
-                // DB not open yet (startup): keep buffering and retry. If the
-                // open failed, _initStore sets _storeDead and clears buffers.
-                if (!this._storeDead && (this._obsWriteBuf.length || this._sentWriteBuf.length || this._hashWriteBuf.length)) this._scheduleWriteFlush();
-                return;
-            }
-            const obs  = this._obsWriteBuf;  this._obsWriteBuf  = [];
-            const sent = this._sentWriteBuf; this._sentWriteBuf = [];
-            const hs   = this._hashWriteBuf; this._hashWriteBuf = [];
-            if (hs.length)   this.store.putHashesMerge(hs);   // before obs: readers join obs → hashes; merge keeps disk firstSeen/type/meta
-            if (obs.length)  this.store.putObs(obs);
-            if (sent.length) this.store.putSent(sent);
-            if (obs.length || sent.length || hs.length) this._dataVer++;
-            this.store.setKV('totals', { totalRxCount: this.totalRxCount });
-        }, this.WRITE_FLUSH_MS);
+        }, isNewHash ? { hash: o.hash, firstSeen: o.now, type: o.type ?? null, meta: o.meta ?? null } : null);
     }
 
     _onStorageQuota() {
         // Disk full: keep the newest history by trimming the oldest on disk down
         // to the render budget. The session keeps running on its RAM window.
-        if (this._quotaPruning || !this._storeReady) return;
+        if (this._quotaPruning || !this.model.ready) return;
         this._quotaPruning = true;
-        this.store.pruneOlderThan(Date.now() - this.RENDER_BUDGET_MS)
+        this.model.pruneOlderThan(Date.now() - this.RENDER_BUDGET_MS)
             .then(n => this._afterDiskPrune(n))
             .finally(() => { this._quotaPruning = false; });
     }
@@ -5072,14 +5030,14 @@ class MeshCoreApp {
     // the caches stay empty and the views render from the RAM tail alone (same
     // code path, no separate branch).
     async _refreshWideView() {
-        if (!this._storeReady) return;
+        if (!this.model.ready) return;
         this._lastMapView = null;       // new window → start from full extent
         this._wideMapBase = null;       // window changed → recompute the base layer
         this._wideMapDetail = null;
         this._wideMapKey = null;
         this._chartBase = null;         // window changed → rebuild the bucket cache
         this._chartZoomLayer = null;
-        await this._flushWrites();
+        await this.model.flush();
         const boundary = Date.now();    // set _renderCacheAt only after caches land
         try {
             await Promise.all([
@@ -5115,7 +5073,7 @@ class MeshCoreApp {
     // at their last state while disk and the 3D map keep filling. Self-heal,
     // debounced and non-overlapping, so capture recovers on its own.
     _ensureChartBase() {
-        if (!this._storeReady || this._chartBaseBuilding) return;
+        if (!this.model.ready || this._chartBaseBuilding) return;
         if (Date.now() - this._chartBaseHealAt < 1000) return;
         this._chartBaseHealAt = Date.now();
         this._chartBaseBuilding = true;
@@ -5123,10 +5081,10 @@ class MeshCoreApp {
     }
 
     async _rebuildChartBase() {
-        if (!this._storeReady) return;
+        if (!this.model.ready) return;
         // Standalone callers (escape valve, self-heal) may have unflushed writes;
         // flush so the rebuilt base includes the packets that triggered it.
-        await this._flushWrites();
+        await this.model.flush();
         // Pin the window this build is for; if Display changes while we await disk
         // a newer build owns the base, so discard this (possibly different-window)
         // result rather than clobbering it.
@@ -5143,7 +5101,7 @@ class MeshCoreApp {
         const nowRef = this._chartFrozenAt ?? Date.now();
         const from = isFinite(lifetime) ? nowRef - lifetime : -Infinity;
         try {
-            const { buckets, width, lo } = await this.store.bucketObs(from, nowRef, this.DOWNSAMPLE_BUCKETS);
+            const { buckets, width, lo } = await this.model.bucketObs(from, nowRef, this.DOWNSAMPLE_BUCKETS);
             if (this.DISPLAY_LIFETIME !== lifetime) return;
             const cells = new Map();
             for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
@@ -5166,7 +5124,7 @@ class MeshCoreApp {
                 this.findOrCreateColumn(r);
             }
             const sent = [];
-            await this.store.eachSent(from, nowRef, r =>
+            await this.model.eachSent(from, nowRef, r =>
                 sent.push({ time: r.time, snr: r.snr, col: this._resolveColReadonly(r.rawId), label: r.label }));
             this._wideSentPoints = sent;
             this._sentChartAt = Date.now();   // live sent points after this are the tail
@@ -5193,7 +5151,7 @@ class MeshCoreApp {
         // No base yet (e.g. it was dropped and not rebuilt): kick a rebuild so the
         // Seen Repeaters table can be re-seeded from disk once it lands, instead of
         // silently staying empty after the RAM tail ages out.
-        if (!base) { if (this._storeReady) this._ensureChartBase(); return; }
+        if (!base) { if (this.model.ready) this._ensureChartBase(); return; }
         const agg = new Map();
         for (const b of base.cells.values()) {
             const col = this._resolveColReadonly(b.rawId);
@@ -5245,10 +5203,10 @@ class MeshCoreApp {
     // edge-crossing connecting lines (the clip trims the overshoot).
     async _rebuildChartZoomLayer() {
         const z = this._chartZoom;
-        if (!z || !this._storeReady) return;
+        if (!z || !this.model.ready) return;
         const zspan = z.tMax - z.tMin;
         try {
-            const { buckets, width, lo } = await this.store.bucketObs(z.tMin - zspan, z.tMax + zspan, this.DOWNSAMPLE_BUCKETS);
+            const { buckets, width, lo } = await this.model.bucketObs(z.tMin - zspan, z.tMax + zspan, this.DOWNSAMPLE_BUCKETS);
             const cells = new Map();
             for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
             this._chartZoomLayer = { cells, width, lo, from: z.tMin - zspan, to: z.tMax + zspan };
@@ -5361,17 +5319,6 @@ class MeshCoreApp {
         this._scheduleChartRender();
     }
 
-    // Flush buffered writes to disk immediately (so a following query sees the
-    // newest packets). Used before export and before each live wide-view refresh.
-    async _flushWrites() {
-        if (!this._storeReady) return;
-        if (this._writeFlushTimer) { clearTimeout(this._writeFlushTimer); this._writeFlushTimer = null; }
-        const dirty = this._hashWriteBuf.length || this._obsWriteBuf.length || this._sentWriteBuf.length;
-        if (this._hashWriteBuf.length) { const h = this._hashWriteBuf; this._hashWriteBuf = []; await this.store.putHashesMerge(h); }
-        if (this._obsWriteBuf.length)  { const o = this._obsWriteBuf;  this._obsWriteBuf  = []; await this.store.putObs(o); }
-        if (this._sentWriteBuf.length) { const s = this._sentWriteBuf; this._sentWriteBuf = []; await this.store.putSent(s); }
-        if (dirty) this._dataVer++;
-    }
 
     // The 3D map renders from an in-RAM cell cache (per-repeater spatial grid).
     // Disk is read only to BUILD a layer — never periodically:
@@ -5466,7 +5413,7 @@ class MeshCoreApp {
     }
 
     async _refreshWideMap(bbox = null, mpp = null) {
-        if (!this._storeReady) return;
+        if (!this.model.ready) return;
         // This runs concurrently (import/fit refresh + user zoom/pan), and each
         // call is a slow chain of disk queries. Without a guard the SLOWER call
         // (a bigger region) finishes last and overwrites the newer call's finer
@@ -5487,27 +5434,27 @@ class MeshCoreApp {
             // Outgoing (sent) SNR is low-volume and has no spatial index, so load
             // the whole window when (re)building; live ones arrive via the sent
             // tail in signal3d.
-            if (this._wideMapSentVer !== this._dataVer) {
+            if (this._wideMapSentVer !== this.model.dataVer) {
                 const sentPts = [];
-                await this.store.eachSent(from, Infinity, r => {
+                await this.model.eachSent(from, Infinity, r => {
                     if (r.lat == null || r.lon == null) return;
                     sentPts.push({ lat: r.lat, lon: r.lon, snr: r.snr, time: r.time,
                                    rawId: r.rawId, col: this._resolveColReadonly(r.rawId) });
                 });
                 this.signalMap?.setHistoricalSentPoints?.(sentPts);
-                this._wideMapSentVer = this._dataVer;
+                this._wideMapSentVer = this.model.dataVer;
             }
             // Build the base layer only when absent (Display change nulls it).
             // Freshness and expiry are handled in RAM — no periodic rescan.
             if (!this._wideMapBase) {
-                await this._flushWrites();   // the disk build must include everything buffered
-                const s = await this.store.regionStats(from, Infinity, null);
+                await this.model.flush();   // the disk build must include everything buffered
+                const s = await this.model.regionStats(from, Infinity, null);
                 if (s.count) {
                     // Snap the coarse full-extent cell onto the LOD ladder so the
                     // base nests with the detail levels and stays stable.
                     const cell = MapLod.cellMetersForLevel(
                         MapLod.levelForCellMeters(cellFor(s.minLat, s.maxLat, s.minLon, s.maxLon)));
-                    const pts = await this.store.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(cell, lat, lon), null);
+                    const pts = await this.model.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(cell, lat, lon), null);
                     this._wideMapBase = { cells: this._mapCellsFrom(pts, cell), cell, at: Date.now() };
                 } else {
                     this._wideMapBase = { cells: new Map(), cell: 0, at: Date.now() };
@@ -5549,12 +5496,12 @@ class MeshCoreApp {
             if (key === this._wideMapKey) return;
             let detail = null;
             if (detailBbox) {
-                await this._flushWrites();   // fine grid must include the freshest packets
+                await this.model.flush();   // fine grid must include the freshest packets
                 // One fine (raw) query over the viewport; step up levels only while
                 // the count exceeds the budget. Coarsening the raw cells is exact
                 // (see MapLod.coarsenCells), so this equals querying that level.
                 let lvl = 0, cell = MapLod.cellMetersForLevel(0);
-                let arr = await this.store.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(cell, lat, lon), detailBbox);
+                let arr = await this.model.gridObs(from, Infinity, (lat, lon) => MapLod.cellIndices(cell, lat, lon), detailBbox);
                 while (arr.length > this.MAP_TARGET_DOTS && lvl + 1 < baseLevel) {
                     lvl++; cell = MapLod.cellMetersForLevel(lvl);
                     arr = MapLod.coarsenCells(arr, cell);
@@ -5574,14 +5521,14 @@ class MeshCoreApp {
 
     // --- Packet table pagination over disk history (wide / "All" view) ---
 
-    // The current disk page snapshot. Callers fall back to live _recentPackets for
-    // tail rows (packets newer than the snapshot) via `?? this._recentPackets.get(h)`.
+    // The current disk page snapshot. Callers fall back to the live recent window for
+    // tail rows (packets newer than the snapshot) via `?? this.model.recentGet(h)`.
     _tableSource() {
         return this._tablePageData;
     }
 
     // Build one page of the table from disk: the newest `_tablePageSize` hashes
-    // (by firstSeen) and all their observations, assembled into _recentPackets-shaped
+    // (by firstSeen) and all their observations, assembled into recent-window-shaped
     // entries so _renderMsgTable can render them unchanged.
     // The column predicate that narrows which packets the table shows, or null
     // when it shows everything. A repeater SELECTION (single column) takes
@@ -5606,15 +5553,15 @@ class MeshCoreApp {
         const key = this._tableNarrowKey();
         if (key === this._tableNarrowKeyApplied) return;
         this._tableNarrowKeyApplied = key;
-        if (this._storeReady) this._loadTablePage(0, true);
+        if (this.model.ready) this._loadTablePage(0, true);
         // Pre-ready there is no pager yet, but the live tail still skips
         // narrowed-out rows — re-render so widening brings them back into the DOM.
         else this._renderMsgTable();
     }
 
     async _loadTablePage(page, reset = false) {
-        if (!this._storeReady) return;
-        await this._flushWrites();   // the page must include still-buffered packets
+        if (!this.model.ready) return;
+        await this.model.flush();   // the page must include still-buffered packets
         const boundary = Date.now(); // snapshot covers disk up to here (tail base)
         if (reset) {
             this._tablePage = 0;
@@ -5628,7 +5575,7 @@ class MeshCoreApp {
         const winFrom = this._displayCutoffNow() || undefined;
         // Authoritative count from disk; between loads it is maintained in RAM
         // (incremented per new hash at ingest) so the pager needs no disk reads.
-        this._tableHashCount = await this.store.countHashes(winFrom);
+        this._tableHashCount = await this.model.countHashes(winFrom);
         this._tableNarrowKeyApplied = this._tableNarrowKey();
         const narrowed = this._tableNarrowFn() != null;
         if (narrowed && !this._tableNarrowHashes) await this._buildTableNarrowIndex();
@@ -5640,11 +5587,11 @@ class MeshCoreApp {
         this._tablePageCount = Math.max(1, Math.ceil(total / size));
         this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
         const hashes = narrowed
-            ? await this.store.getHashes(narrowHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
-            : await this.store.pageHashes(this._tablePage * size, size, winFrom);
+            ? await this.model.getHashes(narrowHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
+            : await this.model.pageHashes(this._tablePage * size, size, winFrom);
         const map = new Map();
         for (const h of hashes) {
-            const obs = await this.store.obsForHash(h.hash);
+            const obs = await this.model.obsForHash(h.hash);
             if (!obs.length) continue;
             const repeaters = new Map();
             let firstSeen = h.firstSeen ?? Infinity, lastSeen = 0;
@@ -5692,7 +5639,7 @@ class MeshCoreApp {
         const matchByRawId = new Map();
         const firstHeard = new Map();   // hash -> earliest matching obs time
         // Scan only the Display window — the pager shows nothing older anyway.
-        await this.store.eachObs(this._displayCutoffNow() || -Infinity, Infinity, o => {
+        await this.model.eachObs(this._displayCutoffNow() || -Infinity, Infinity, o => {
             let ok = matchByRawId.get(o.rawId);
             if (ok === undefined) {
                 ok = narrowFn(this._resolveColReadonly(o.rawId));
@@ -5744,22 +5691,22 @@ class MeshCoreApp {
         // RAM is bounded by the render budget (and never exceeds retention).
         // Disk keeps full history when Auto-remove is "Never"; when it is finite,
         // history is truly deleted from disk too.
-        if (isFinite(this.HASH_LIFETIME) && this._storeReady) {
-            this.store.pruneOlderThan(now - this.HASH_LIFETIME)
+        if (isFinite(this.HASH_LIFETIME) && this.model.ready) {
+            this.model.pruneOlderThan(now - this.HASH_LIFETIME)
                 .then(n => this._afterDiskPrune(n));
         }
         // Safety net: if the wide/All chart cache went missing (a failed rebuild)
         // it would otherwise stay null until the next Display change, freezing the
         // charts. Re-establish it here too, in case no packet arrives to do so.
-        if (this._storeReady && !this._chartBase) this._ensureChartBase();
+        if (this.model.ready && !this._chartBase) this._ensureChartBase();
         const lifetime = this._ramWindowMs();
         const toRemove = [];
-        for (const [hash, data] of this._recentPackets.entries()) {
+        for (const [hash, data] of this.model.recentEntries()) {
             if (now - data.lastSeen > lifetime) toRemove.push(hash);
         }
 
         if (!toRemove.length) {
-            // No _recentPackets expired, but chartPoints / map points may still need pruning
+            // No recent-window packets expired, but chartPoints / map points may still need pruning
             if (isFinite(lifetime)) {
                 const cutoff = now - lifetime;
                 const before = this.chartPoints.length;
@@ -5782,8 +5729,8 @@ class MeshCoreApp {
         setTimeout(() => {
             const cutoff = Date.now() - lifetime;
             for (const hash of toRemove) {
-                const data = this._recentPackets.get(hash);
-                if (data && data.lastSeen <= cutoff) this._recentPackets.delete(hash);
+                const data = this.model.recentGet(hash);
+                if (data && data.lastSeen <= cutoff) this.model.recentDelete(hash);
             }
             if (isFinite(lifetime)) {
                 this.chartPoints = this.chartPoints.filter(p => p.time >= cutoff);
@@ -5855,7 +5802,7 @@ class MeshCoreApp {
                     if (!this.repeaterColumns.includes(rId)) this.repeaterColumns.push(rId);
                     p.col = rId;
                 }
-                for (const data of this._recentPackets.values()) {
+                for (const data of this.model.recentValues()) {
                     const entry = data.repeaters.get(col);
                     if (!entry) continue;
                     const rId = entry.rawId ?? col;
@@ -5893,11 +5840,11 @@ class MeshCoreApp {
         // live RAM tail ages out (long session with Auto-remove "Never" / a wide
         // Display window) the table would go empty even though the history is
         // still on disk — unlike the charts/map, which read disk-backed caches.
-        if (this._storeReady) this._loadTablePage(this._tablePage);
+        if (this.model.ready) this._loadTablePage(this._tablePage);
     }
 
     _clearAllData() {
-        this._recentPackets.clear();
+        // model.clearAll() below wipes the recent window, write buffers and disk.
         this.chartPoints = [];
         this._sentSnrHistory = [];
         this._wideChartPoints = [];
@@ -5919,12 +5866,9 @@ class MeshCoreApp {
         this._pendingMapUpserts = null;
         clearTimeout(this._mapPushTimer); this._mapPushTimer = null;
         this._lastMapView = null;
-        this._obsWriteBuf = [];
-        this._sentWriteBuf = [];
-        this._hashWriteBuf = [];
         this.totalRxCount = 0;
         this._lastDataTime = 0;
-        this.store?.clearAll();
+        this.model.clearAll();
         this._dscSeq = 0;
         this.repeaterColumns = [];
         this.allRepeaters.clear();
@@ -6259,7 +6203,7 @@ class MeshCoreApp {
         document.querySelectorAll('#msgTableBody tr[id^="row-"]').forEach(tr => {
             if (!sel) { tr.style.display = ''; return; }
             const hash = tr.id.slice(4);
-            const data = this._tableSource().get(hash) || this._recentPackets.get(hash);
+            const data = this._tableSource().get(hash) || this.model.recentGet(hash);
             tr.style.display = data?.repeaters.has(sel) ? '' : 'none';
         });
         // Keep detail rows in sync with their parent row
@@ -6511,7 +6455,7 @@ class MeshCoreApp {
     // --- Stats & status ---
 
     _updateStats() {
-        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this._recentPackets.size === 0 && !this._storeReady;
+        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.model.recentSize === 0 && !this.model.ready;
         const displayCutoff = this._displayCutoffNow();
         // "Active" = unique packets in the Display window. A finite window is
         // never wider than the RAM window (max Display = 1 h = the RAM budget),
@@ -6520,8 +6464,8 @@ class MeshCoreApp {
         // countHashes() on load, then incremented per new hash) so it doesn't
         // collapse to just the recent RAM tail after a long capture.
         const visibleHashes = displayCutoff
-            ? Array.from(this._recentPackets.values()).filter(d => d.lastSeen >= displayCutoff).length
-            : (this._storeReady ? this._tableHashCount : this._recentPackets.size);
+            ? Array.from(this.model.recentValues()).filter(d => d.lastSeen >= displayCutoff).length
+            : (this.model.ready ? this._tableHashCount : this.model.recentSize);
         this.activeHashesEl.textContent = visibleHashes;
         this.totalRxEl.textContent = this.totalRxCount;
         const visibleRepeaters = displayCutoff
@@ -6635,11 +6579,11 @@ class MeshCoreApp {
     }
 
     async _exportCsv() {
-        const useDisk = this._storeReady;
-        if (this._recentPackets.size === 0 && !useDisk) return;
+        const useDisk = this.model.ready;
+        if (this.model.recentSize === 0 && !useDisk) return;
 
         // Flush any buffered writes so the export reflects everything captured.
-        if (useDisk) await this._flushWrites();
+        if (useDisk) await this.model.flush();
 
         const msgFilter = this._msgFilter.toLowerCase().trim();
 
@@ -6651,10 +6595,10 @@ class MeshCoreApp {
         let sentSource = this._sentSnrHistory;
         if (useDisk) {
             const obsAll = [];
-            await this.store.eachObs(-Infinity, Infinity, r => obsAll.push(r));
+            await this.model.eachObs(-Infinity, Infinity, r => obsAll.push(r));
             const hashCache = new Map();
             for (const h of new Set(obsAll.map(o => o.hash))) {
-                const rec = await this.store.getHash(h);
+                const rec = await this.model.getHash(h);
                 if (rec) hashCache.set(h, rec);
             }
             for (const o of obsAll) {
@@ -6669,11 +6613,11 @@ class MeshCoreApp {
                 allRows.push({ hash: o.hash, data, col, rep });
             }
             const sent = [];
-            await this.store.eachSent(-Infinity, Infinity, r =>
+            await this.model.eachSent(-Infinity, Infinity, r =>
                 sent.push({ time: r.time, snr: r.snr, col: r.rawId, label: r.label, lat: r.lat, lon: r.lon }));
             sentSource = sent;
         } else {
-            for (const [hash, data] of this._recentPackets) {
+            for (const [hash, data] of this.model.recentEntries()) {
                 if (msgFilter && !this._rowMatchesFilter(data, msgFilter)) continue;
                 for (const [col, rep] of data.repeaters) {
                     if (this._repFilterTerms.length && !this._colMatchesRepFilter(col)) continue;
@@ -6814,15 +6758,15 @@ class MeshCoreApp {
 
         await new Promise(r => setTimeout(r, 0)); // yield to let the browser repaint
 
-        // Count what's actually stored, not just the small RAM window. _recentPackets
+        // Count what's actually stored, not just the small RAM window. The recent window
         // only holds the recent in-memory window (often a few dozen hashes), while
-        // the disk may hold many thousands — so reporting _recentPackets.size here showed
+        // the disk may hold many thousands — so reporting its size here showed
         // a confusingly tiny number. Use the on-disk distinct-hash total when the
         // store is ready (this also warns correctly after a reload, when the RAM
         // window can be empty even though the disk is full).
-        let existingCount = this._recentPackets.size;
-        if (this._storeReady) {
-            try { existingCount = await this.store.countHashes(); } catch (_) {}
+        let existingCount = this.model.recentSize;
+        if (this.model.ready) {
+            try { existingCount = await this.model.countHashes(); } catch (_) {}
         }
         if (existingCount > 0) {
             if (!confirm(`There are already ${existingCount} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) {
@@ -6859,12 +6803,12 @@ class MeshCoreApp {
         // raw repeater id and the timestamp — the same identity a row exports as).
         const existingKeys = new Set();
         const existingSent = new Set();
-        if (this._storeReady) {
-            await this._flushWrites();   // dedupe must also see still-buffered packets
+        if (this.model.ready) {
+            await this.model.flush();   // dedupe must also see still-buffered packets
             for (const h of new Set(rows.map(r => r.hash))) {
-                for (const o of await this.store.obsForHash(h)) existingKeys.add(h + '|' + o.rawId + '|' + o.time);
+                for (const o of await this.model.obsForHash(h)) existingKeys.add(h + '|' + o.rawId + '|' + o.time);
             }
-            if (sentSnrRows.length) await this.store.eachSent(-Infinity, Infinity, r => existingSent.add(r.time + '|' + r.rawId));
+            if (sentSnrRows.length) await this.model.eachSent(-Infinity, Infinity, r => existingSent.add(r.time + '|' + r.rawId));
         }
 
         for (const row of rows) {
@@ -6921,7 +6865,7 @@ class MeshCoreApp {
             const snr = r.uplinkSnr ?? r.snr;
             const lat = r.lat, lon = r.lon;
             this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater });
-            if (!this._storeDead) this._sentWriteBuf.push({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
+            this.model.bufferSent({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
         }
         if (sentSnrRows.length) {
             this._sentSnrHistory.sort((a, b) => a.time - b.time);
@@ -6941,8 +6885,8 @@ class MeshCoreApp {
 
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.
-        if (this._storeReady) {
-            await this._flushWrites();
+        if (this.model.ready) {
+            await this.model.flush();
             await this._refreshWideView();
         }
 
