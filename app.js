@@ -1461,15 +1461,18 @@ class MeshCoreApp {
         if (!this.device) return;
         await new Promise(r => setTimeout(r, 300));
         if (!this.device) return;
+        // Ask for the battery level before the contact dump starts — the device
+        // only ever reports it on request (see sendBatteryQuery), and injecting
+        // commands mid-dump can stall the contact stream.
+        await this.sendBatteryQuery();
+        if (!this.device) return;
         await this.sendGetContacts();
         // A drop (or user cancel) during any of the awaits above already ran
         // onDisconnected() and reset the UI — bail before we clobber it with a
         // stale "Connected" state that no live link backs.
         if (!this.device) return;
 
-        // Battery is read from MeshCore opcode 0x0c (voltage in mV) — more
-        // accurate than the BLE Battery Service which some devices report as 100%.
-
+        this._startBatteryPoll();
         this._setConnectedDeviceName(this.saveDevice(device));
         // Upgrade the (possibly stale) cached name to the live GAP name if the
         // device was renamed since it was saved — fire-and-forget.
@@ -1718,10 +1721,15 @@ class MeshCoreApp {
     // Finalise a companion (binary frame protocol) serial connection.
     async _finishCompanionConnect(port) {
         this.connectionMode = 'companion';
+        // Battery first (a one-frame request/reply), then the contact dump —
+        // injecting commands mid-dump can stall the contact stream.
+        await this.sendBatteryQuery();
+        if (this.serialPort !== port) return;
         await this.sendGetContacts();
         // A drop during the await above swaps serialPort out (onDisconnected) —
         // don't finalise a "Connected" state the live port no longer backs.
         if (this.serialPort !== port) return;
+        this._startBatteryPoll();
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
         this._setActiveTransportBtn(this._serialBtnKind || 'serial', 'Disconnect', () => this.disconnect());
@@ -2101,6 +2109,29 @@ class MeshCoreApp {
         payload.set(header, 0);
         payload.set(name, header.length);
         await this._sendFrame(payload);
+    }
+
+    // Ask the companion for its battery level. The device NEVER pushes this on
+    // its own — RESP_CODE_BATT_AND_STORAGE (0x0c) only ever answers an explicit
+    // CMD_GET_BATT_AND_STORAGE (0x14). (That's why the battery used to appear
+    // only while the official MeshCore client was also connected: ITS periodic
+    // queries produced the replies we passively displayed.) Sent once on
+    // connect and then refreshed by _startBatteryPoll.
+    async sendBatteryQuery() {
+        if (!this._canSend()) return;
+        try { await this._sendFrame(new Uint8Array([0x14])); } catch (e) {}
+    }
+
+    // Refresh the battery reading once a minute while a companion is connected.
+    // Cheap (one tiny frame each way) and skipped while a contact fetch is in
+    // flight — injecting commands mid-dump can stall the contact stream.
+    _startBatteryPoll() {
+        clearInterval(this._batteryPollTimer);
+        this._batteryPollTimer = setInterval(() => {
+            if (this.connectionMode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+                this.sendBatteryQuery();
+            }
+        }, 60000);
     }
 
     async sendGetContacts() {
@@ -2497,7 +2528,9 @@ class MeshCoreApp {
 
     handlePayload(payload) {
         const pushCode = payload[0];
-        // PACKET_BATTERY (0x0C): bytes [1-2] = uint16 LE voltage in mV
+        // RESP_CODE_BATT_AND_STORAGE (0x0C), reply to CMD_GET_BATT_AND_STORAGE:
+        // bytes [1-2] = uint16 LE voltage in mV; [3-6]/[7-10] = storage used/total
+        // in kB (ignored here). Sent only on request — see sendBatteryQuery.
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
                 const milliVolts = payload[1] | (payload[2] << 8);
@@ -6238,6 +6271,8 @@ class MeshCoreApp {
         clearTimeout(this._posQueryTimer);
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
+        clearInterval(this._batteryPollTimer);
+        this._batteryPollTimer = null;
         this._setDeviceLocation(null, null);
         // Clear any in-flight contact fetch so a fresh connection starts clean
         // (a stuck _contactsReceiving from an interrupted stream would otherwise
