@@ -2,6 +2,7 @@
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
 import { Signal3DMap } from './signal3d.js?v=153';
 import { CaptureModel } from './capture-model.js?v=1';
+import { TableCache } from './table-cache.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=2';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -152,7 +153,6 @@ class MeshCoreApp {
         this._chartArrTimer   = null;            // coalesces bucket upserts into one array rebuild
         this._chartBaseBuilding = false;         // a _rebuildChartBase() is in flight (self-heal guard)
         this._chartBaseHealAt = 0;               // last self-heal attempt, to debounce retries
-        this._renderCacheAt   = 0;               // time the table's disk page reflects; newer rows are the tail
         this._lastMapView     = null;            // {bbox, mpp} of the current map zoom, for live refresh
         this.MAP_TARGET_DOTS  = 2500;            // dot budget for the map grid layers
         this._wideMapBase     = null;            // RAM cell cache: full-extent map layer {cells: Map, cell, at}
@@ -163,22 +163,17 @@ class MeshCoreApp {
         this._wideMapSentVer  = -1;              // dataVer the outgoing-SNR map layer was loaded for
         this._pendingMapUpserts = null;          // packets ingested before the base layer exists
         this._mapPushTimer    = null;            // coalesces cell upserts into one geometry push
-        this._tableHashCount   = 0;              // distinct hashes on disk (RAM-maintained for the pager)
         this._mapRebuildBusy   = false;          // guards the map's dot-budget escape-valve rebuild
-        this._tablePageData   = new Map();       // disk-paged packet table snapshot (empty ⇒ tail alone)
-        this._firstPageColCounts = new Map();    // per-column occurrences on table page 0 (sort key #2); computed once per page-0 load
-        this._tablePage       = 0;
-        this._tablePageSize   = 100;
-        this._tablePageCount  = 1;
-        // Narrowed pager: when the table is narrowed to one repeater — by a
-        // repeater filter, or just a selection (which hides non-matching rows) —
-        // it pages over only the hashes that repeater appears in, otherwise pages
-        // full of hidden rows would render empty. Built by one obs scan in
-        // _buildTableNarrowIndex, kept live at ingest, rebuilt on narrow change.
-        this._tableNarrowHashes = null;          // newest-first matching hashes (null = not narrowed / stale)
-        this._tableNarrowSet    = null;          // same content as a Set, for O(1) ingest checks
-        this._tableNarrowKeyApplied = '';        // narrow key the current page was loaded for
-        this._tableNarrowIndexKey   = '';        // narrow key the index hashes were built for
+        // The Received Packets disk-page cache (page snapshot, pager counts, the
+        // narrow index, and the snapshot∪recent union reads) lives in TableCache
+        // — its state is private there; app-level concerns are injected.
+        this.table = new TableCache(this.model, {
+            pageSize: 100,
+            resolveCol:    id => this._resolveColReadonly(id),
+            narrowFn:      () => this._tableNarrowFn(),
+            narrowKey:     () => this._tableNarrowKey(),
+            displayCutoff: () => this._displayCutoffNow(),
+        });
 
         this.initUI();
         this.startCleanupTimer();
@@ -230,7 +225,7 @@ class MeshCoreApp {
     // The <p> text itself is set elsewhere (connect handlers) to reflect status.
     _updateEmptyState() {
         if (!this.emptyState) return;
-        const hasData = this.model.recentSize > 0 || (this._tableHashCount || 0) > 0;
+        const hasData = this.model.recentSize > 0 || this.table.hashCount > 0;
         this.emptyState.classList.toggle('hidden', hasData);
     }
 
@@ -3191,19 +3186,7 @@ class MeshCoreApp {
         // Keep the table pager's page count current without a disk count() —
         // replay/import end with an authoritative _loadTablePage instead.
         if (!opts.replaying && this.model.ready) {
-            if (isNewHash) this._tableHashCount++;
-            // Fold the packet into the narrow index too — note an OLD hash can
-            // newly join it when the narrowed repeater hears it for the first
-            // time. Guard on the index being current for the active narrowing.
-            const narrowFn = this._tableNarrowFn();
-            if (this._tableNarrowHashes && narrowFn
-                && this._tableNarrowIndexKey === this._tableNarrowKey()
-                && narrowFn(canonicalKey) && !this._tableNarrowSet.has(hash)) {
-                this._tableNarrowHashes.unshift(hash);
-                this._tableNarrowSet.add(hash);
-            }
-            const total = this._tableNarrowHashes ? this._tableNarrowHashes.length : this._tableHashCount;
-            this._tablePageCount = Math.max(1, Math.ceil(total / this._tablePageSize));
+            this.table.noteIngest(hash, canonicalKey, isNewHash);
         }
 
         // Sound stays immediate (cheap, and its timing matters).
@@ -3270,11 +3253,11 @@ class MeshCoreApp {
             this._recentCountAt = now;
         }
         const recentCount = this._recentCountCache;
-        // #2 tiebreaker: how many of the newest _tablePageSize packets (table page
+        // #2 tiebreaker: how many of the newest pageSize packets (table page
         // 0) each column appears on. Precomputed once per page-0 load in
         // _loadTablePage (not here) — this runs ~7×/s during capture, so it must
         // stay a cheap map read, not a rescan.
-        const pageCount = this._firstPageColCounts;
+        const pageCount = this.table.firstPageColCounts;
         this.repeaterColumns.sort((a, b) => {
             const ra = recentCount.get(a) ?? 0;
             const rb = recentCount.get(b) ?? 0;
@@ -3355,34 +3338,12 @@ class MeshCoreApp {
         const msgFilterBar = document.getElementById('msgFilterBar');
 
         const filter = this._msgFilter.toLowerCase().trim();
-        // Rows = the current disk page snapshot (see _loadTablePage) plus, on
-        // page 0, a live tail of packets newer than the cache so new rows show
-        // instantly. Pre-ready (store still opening) the page is empty and the
-        // cutoff-filtered tail alone is the full live RAM window — one path.
         const cutoff = this._displayCutoffNow();
         const narrowFn = this._tableNarrowFn();
-        const m = new Map(this._tablePageData);
-        if (this._tablePage === 0) {
-            for (const [h, d] of this.model.recentEntries()) {
-                if (d.lastSeen <= this._renderCacheAt) continue;
-                // When narrowed the snapshot holds only matching hashes — keep the
-                // tail consistent so hidden rows don't eat the page cap.
-                if (narrowFn && ![...d.repeaters.keys()].some(narrowFn)) continue;
-                m.set(h, d);
-            }
-        }
-        // The Display-window cutoff applies to the snapshot too, not just the
-        // tail — the snapshot is loaded once and ages while it is on screen.
-        let allRows = [...m.entries()]
-            .filter(([, data]) => !data._stub && (!cutoff || data.firstSeen >= cutoff))
-            .sort(([, a], [, b]) => b.firstSeen - a.firstSeen);
-        // Page 0 is maintained in RAM during capture (the disk snapshot is never
-        // periodically reloaded), so the live tail can outgrow the page — cap the
-        // rendered rows at the page size; older rows are reachable via the pager.
-        // Pre-ready (store still opening) there is no pager yet, so don't cap.
-        if (this._tablePage === 0 && this.model.ready && allRows.length > this._tablePageSize) {
-            allRows = allRows.slice(0, this._tablePageSize);
-        }
+        // Rows = the disk page snapshot plus, on page 0, the live recent-window
+        // tail — merged, windowed, sorted and capped by TableCache (the one
+        // place that owns the snapshot∪recent union).
+        const allRows = this.table.visibleRows();
 
         // Show every repeater that has data within the display window (the same
         // predicate the Seen Repeaters table uses) as a column — not only those
@@ -3488,7 +3449,7 @@ class MeshCoreApp {
     // maps hash → column (or null), captured before msgTableBody was replaced.
     _reinsertOpenDetailRows(openDetails) {
         for (const [hash, col] of openDetails) {
-            if (!this._tableSource().has(hash) && !this.model.recentHas(hash)) continue;
+            if (!this.table.hasRow(hash)) continue;
             // Drop detail for a column that is now filtered out
             if (col && !this._colMatchesRepFilter(col)) continue;
             const row = document.getElementById(`row-${hash}`);
@@ -3572,18 +3533,11 @@ class MeshCoreApp {
     async _openPacketDetail(hash, col) {
         this._closeAllDetails();
         if (this.model.ready) {
-            // A just-received packet may still sit in the 4 s write buffer —
-            // flush first, or the narrow index scan (disk-only) would miss it
-            // and the detail would silently fail to open.
-            await this.model.flush();
-            // Ensure a fresh narrow index for the current selection, then find
-            // which page the hash sits on (one row per hash, so it is unique).
-            if (!this._tableNarrowHashes || this._tableNarrowIndexKey !== this._tableNarrowKey())
-                await this._buildTableNarrowIndex();
-            const idx = this._tableNarrowHashes ? this._tableNarrowHashes.indexOf(hash) : -1;
-            const page = idx >= 0 ? Math.floor(idx / this._tablePageSize) : 0;
-            // reset=false keeps the index we just built (avoids a second scan)
-            // and honours the explicit page.
+            // pageOfHash flushes first (a just-received packet may still sit in
+            // the write buffer) and ensures a fresh narrow index for the current
+            // selection. reset=false keeps that index (avoids a second scan) and
+            // honours the explicit page.
+            const page = await this.table.pageOfHash(hash);
             await this._loadTablePage(page, false);
         } else {
             this._renderMsgTable();
@@ -3651,7 +3605,7 @@ class MeshCoreApp {
     }
 
     _buildDetailRow(hash, col = null) {
-        const data = this._tableSource().get(hash) || this.model.recentGet(hash);
+        const data = this.table.rowData(hash);
         if (!data) return '';
         // Span every rendered column (the table shows the union of live + disk
         // columns, which can exceed repeaterColumns).
@@ -5038,15 +4992,17 @@ class MeshCoreApp {
         this._chartBase = null;         // window changed → rebuild the bucket cache
         this._chartZoomLayer = null;
         await this.model.flush();
-        const boundary = Date.now();    // set _renderCacheAt only after caches land
+        const boundary = Date.now();    // rewind the tail base only after caches land
         try {
             await Promise.all([
                 this._refreshWideMap(),       // spatial downsample for the 3D map
                 this._loadTablePage(0, true), // paginate the packet table over disk
                 this._rebuildChartBase(),     // time-bucket cache for the 2D charts
             ]);
-            this._renderCacheAt = boundary;
-            // _tableHashCount is now authoritative for on-disk data, so the empty
+            // Rewind the table's tail boundary to the pre-rebuild instant so the
+            // live tail and the rebuilt caches can't leave a gap between them.
+            this.table.rewindCacheAt(boundary);
+            // The hash count is now authoritative for on-disk data, so the empty
             // state can resolve correctly even when nothing is in the RAM window
             // (e.g. imported/restored history older than it).
             this._updateEmptyState();
@@ -5520,18 +5476,12 @@ class MeshCoreApp {
     }
 
     // --- Packet table pagination over disk history (wide / "All" view) ---
+    // The page snapshot, pager counts, narrow index and the snapshot∪recent
+    // union reads live in this.table (TableCache).
 
-    // The current disk page snapshot. Callers fall back to the live recent window for
-    // tail rows (packets newer than the snapshot) via `?? this.model.recentGet(h)`.
-    _tableSource() {
-        return this._tablePageData;
-    }
-
-    // Build one page of the table from disk: the newest `_tablePageSize` hashes
-    // (by firstSeen) and all their observations, assembled into recent-window-shaped
-    // entries so _renderMsgTable can render them unchanged.
     // The column predicate that narrows which packets the table shows, or null
-    // when it shows everything. A repeater SELECTION (single column) takes
+    // when it shows everything (injected into TableCache). A repeater SELECTION
+    // (single column) takes
     // precedence over a filter, since selection always hides rows lacking that
     // exact repeater — even within an active filter. Drives both the paged hash
     // index and the page-0 live-tail skip so narrowed pages are never padded
@@ -5550,112 +5500,23 @@ class MeshCoreApp {
     // Repaginate the table from page 0 when the narrowing (filter or selection)
     // changed. Called from both the filter and the selection paths.
     _repaginateIfNarrowChanged() {
-        const key = this._tableNarrowKey();
-        if (key === this._tableNarrowKeyApplied) return;
-        this._tableNarrowKeyApplied = key;
+        if (!this.table.narrowKeyChanged()) return;
         if (this.model.ready) this._loadTablePage(0, true);
         // Pre-ready there is no pager yet, but the live tail still skips
         // narrowed-out rows — re-render so widening brings them back into the DOM.
         else this._renderMsgTable();
     }
 
+    // Load one table page (TableCache does the disk work), then re-apply the
+    // app-side consequences: page-0 column re-sort and the DOM refresh.
     async _loadTablePage(page, reset = false) {
         if (!this.model.ready) return;
-        await this.model.flush();   // the page must include still-buffered packets
-        const boundary = Date.now(); // snapshot covers disk up to here (tail base)
-        if (reset) {
-            this._tablePage = 0;
-            // The underlying data may have changed (replay/import/prune/narrow
-            // change) — any narrow index is stale.
-            this._tableNarrowHashes = this._tableNarrowSet = null;
-        }
-        const size = this._tablePageSize;
-        // The table respects the Display window: pages cover only packets first
-        // seen inside it (the firstSeen index makes that a range scan).
-        const winFrom = this._displayCutoffNow() || undefined;
-        // Authoritative count from disk; between loads it is maintained in RAM
-        // (incremented per new hash at ingest) so the pager needs no disk reads.
-        this._tableHashCount = await this.model.countHashes(winFrom);
-        this._tableNarrowKeyApplied = this._tableNarrowKey();
-        const narrowed = this._tableNarrowFn() != null;
-        if (narrowed && !this._tableNarrowHashes) await this._buildTableNarrowIndex();
-        if (!narrowed) this._tableNarrowHashes = this._tableNarrowSet = null;
-        // A concurrent narrowing change can make _buildTableNarrowIndex bail
-        // (leaving null); treat as empty — the follow-up repaginate re-renders.
-        const narrowHashes = narrowed ? (this._tableNarrowHashes ?? []) : null;
-        const total = narrowed ? narrowHashes.length : this._tableHashCount;
-        this._tablePageCount = Math.max(1, Math.ceil(total / size));
-        this._tablePage = Math.min(Math.max(0, page), this._tablePageCount - 1);
-        const hashes = narrowed
-            ? await this.model.getHashes(narrowHashes.slice(this._tablePage * size, (this._tablePage + 1) * size))
-            : await this.model.pageHashes(this._tablePage * size, size, winFrom);
-        const map = new Map();
-        for (const h of hashes) {
-            const obs = await this.model.obsForHash(h.hash);
-            if (!obs.length) continue;
-            const repeaters = new Map();
-            let firstSeen = h.firstSeen ?? Infinity, lastSeen = 0;
-            for (const o of obs) {
-                const col = this._resolveColReadonly(o.rawId);
-                const rep = { snr: o.snr, rssi: o.rssi, rawHex: o.rawHex, rawId: o.rawId,
-                              time: o.time, lat: o.lat, lon: o.lon, remoteSnr: o.remoteSnr, packet: null };
-                // Keep the strongest-RSSI observation per column (matches live merge intent).
-                const prev = repeaters.get(col);
-                if (!prev || (rep.rssi != null && (prev.rssi == null || rep.rssi > prev.rssi))) repeaters.set(col, rep);
-                if (o.time < firstSeen) firstSeen = o.time;
-                if (o.time > lastSeen)  lastSeen  = o.time;
-            }
-            map.set(h.hash, { repeaters, firstSeen, lastSeen, type: h.type, meta: h.meta,
-                              rawHex: obs[0].rawHex, packet: null, _stub: false });
-        }
-        this._tablePageData = map;
-        this._renderCacheAt = boundary;   // rows newer than this are the live tail
-        // Recompute the page-0 column counts (sort key #2) and re-order columns
-        // now that the first page is known — cheap here (≤ pageSize rows, already
-        // in hand) and done ONCE per page-0 load, so _sortColumns stays a map
-        // read. Only for page 0: the counts must always reflect the first page,
-        // so paging away leaves the last page-0 values (stable column order).
-        if (this._tablePage === 0) {
-            const counts = new Map();
-            for (const d of map.values()) for (const col of d.repeaters.keys()) counts.set(col, (counts.get(col) ?? 0) + 1);
-            this._firstPageColCounts = counts;
-            this._sortColumns();
-        }
+        await this.table.loadPage(page, reset);
+        // Page 0 recomputed the first-page column counts (sort key #2) — re-order
+        // the columns now so freshly loaded data ranks immediately.
+        if (this.table.page === 0) this._sortColumns();
         this._renderMsgTable();
         this._refreshTablePager();
-    }
-
-    // Build the narrowed hash index: every hash with at least one observation
-    // from a matching repeater, newest-first by the time that repeater first
-    // heard it. One chunked scan over the obs store; the rawId → matches
-    // projection is memoised since rawIds repeat heavily.
-    async _buildTableNarrowIndex() {
-        // Capture the narrowing this scan is FOR. Two quick chart-point clicks on
-        // different repeaters start overlapping scans; if a slower earlier scan
-        // finished last it used to stamp the current (newer) key over its own
-        // stale hashes, so the newer selection then paged the wrong repeater.
-        const builtForKey = this._tableNarrowKey();
-        const narrowFn = this._tableNarrowFn();
-        const matchByRawId = new Map();
-        const firstHeard = new Map();   // hash -> earliest matching obs time
-        // Scan only the Display window — the pager shows nothing older anyway.
-        await this.model.eachObs(this._displayCutoffNow() || -Infinity, Infinity, o => {
-            let ok = matchByRawId.get(o.rawId);
-            if (ok === undefined) {
-                ok = narrowFn(this._resolveColReadonly(o.rawId));
-                matchByRawId.set(o.rawId, ok);
-            }
-            // eachObs iterates ascending time, so the first sighting is the earliest.
-            if (ok && !firstHeard.has(o.hash)) firstHeard.set(o.hash, o.time);
-        });
-        // The narrowing changed while we scanned — our result is stale; don't
-        // overwrite (or mislabel) the index the current selection is using.
-        if (builtForKey !== this._tableNarrowKey()) return;
-        this._tableNarrowHashes = [...firstHeard.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .map(([h]) => h);
-        this._tableNarrowSet = new Set(this._tableNarrowHashes);
-        this._tableNarrowIndexKey = builtForKey;
     }
 
     // Insert / update / remove the prev-next pager beneath the packet table.
@@ -5665,7 +5526,7 @@ class MeshCoreApp {
         let pager = document.getElementById('msgTablePager');
         // Only show the pager when there is more than one page — a single page
         // (the common live case) reads like the old scrollable table.
-        const showPager = this._tablePageCount > 1;
+        const showPager = this.table.pageCount > 1;
         if (!showPager) { pager?.remove(); return; }
         if (!pager) {
             pager = document.createElement('div');
@@ -5675,15 +5536,15 @@ class MeshCoreApp {
                 + '<span id="msgPageInfo" class="pager-info"></span>'
                 + '<button id="msgPageNext" class="pager-btn">Older ›</button>';
             scroll.parentNode.insertBefore(pager, scroll.nextSibling);
-            pager.querySelector('#msgPagePrev').addEventListener('click', () => this._loadTablePage(this._tablePage - 1));
-            pager.querySelector('#msgPageNext').addEventListener('click', () => this._loadTablePage(this._tablePage + 1));
+            pager.querySelector('#msgPagePrev').addEventListener('click', () => this._loadTablePage(this.table.page - 1));
+            pager.querySelector('#msgPageNext').addEventListener('click', () => this._loadTablePage(this.table.page + 1));
         }
-        const narrowTag = this._tableNarrowHashes
+        const narrowTag = this.table.narrowed
             ? (this._selectedCol ? ' (selected)' : ' (filtered)') : '';
         pager.querySelector('#msgPageInfo').textContent =
-            `Page ${this._tablePage + 1} / ${this._tablePageCount}${narrowTag}`;
-        pager.querySelector('#msgPagePrev').disabled = this._tablePage <= 0;
-        pager.querySelector('#msgPageNext').disabled = this._tablePage >= this._tablePageCount - 1;
+            `Page ${this.table.page + 1} / ${this.table.pageCount}${narrowTag}`;
+        pager.querySelector('#msgPagePrev').disabled = this.table.page <= 0;
+        pager.querySelector('#msgPageNext').disabled = this.table.page >= this.table.pageCount - 1;
     }
 
     cleanup() {
@@ -5840,7 +5701,7 @@ class MeshCoreApp {
         // live RAM tail ages out (long session with Auto-remove "Never" / a wide
         // Display window) the table would go empty even though the history is
         // still on disk — unlike the charts/map, which read disk-backed caches.
-        if (this.model.ready) this._loadTablePage(this._tablePage);
+        if (this.model.ready) this._loadTablePage(this.table.page);
     }
 
     _clearAllData() {
@@ -5853,12 +5714,7 @@ class MeshCoreApp {
         this._chartZoomLayer = null;
         this._sentChartAt = 0;
         clearTimeout(this._chartArrTimer); this._chartArrTimer = null;
-        this._tablePageData = new Map();
-        this._tablePage = 0;
-        this._tablePageCount = 1;
-        this._tableNarrowHashes = this._tableNarrowSet = null;
-        this._tableNarrowKeyApplied = this._tableNarrowIndexKey = '';
-        this._renderCacheAt = 0;
+        this.table.clear();
         this._wideMapBase = null;
         this._wideMapDetail = null;
         this._wideMapKey = null;
@@ -5902,18 +5758,16 @@ class MeshCoreApp {
     // the new last page so the snapshot matches the pager.
     _afterDiskPrune(deletedHashes) {
         if (!deletedHashes) return;
-        if (this._tableNarrowHashes) {
+        if (this.table.narrowed) {
             // No way to tell how many of the deleted hashes were in the narrow
             // index — rebuild it (bounded: finite retention keeps the store
             // small). Keep the user on their CURRENT page (clamped) instead of
             // yanking them back to page 1 on every ~10 s prune tick.
-            this._loadTablePage(this._tablePage, true);
+            this._loadTablePage(this.table.page, true);
             return;
         }
-        this._tableHashCount = Math.max(0, this._tableHashCount - deletedHashes);
-        this._tablePageCount = Math.max(1, Math.ceil(Math.max(1, this._tableHashCount) / this._tablePageSize));
-        if (this._tablePage > this._tablePageCount - 1) {
-            this._loadTablePage(this._tablePageCount - 1);
+        if (this.table.dropHashes(deletedHashes)) {
+            this._loadTablePage(this.table.pageCount - 1);   // page fell off the end
         } else {
             this._refreshTablePager();
         }
@@ -6203,7 +6057,7 @@ class MeshCoreApp {
         document.querySelectorAll('#msgTableBody tr[id^="row-"]').forEach(tr => {
             if (!sel) { tr.style.display = ''; return; }
             const hash = tr.id.slice(4);
-            const data = this._tableSource().get(hash) || this.model.recentGet(hash);
+            const data = this.table.rowData(hash);
             tr.style.display = data?.repeaters.has(sel) ? '' : 'none';
         });
         // Keep detail rows in sync with their parent row
@@ -6465,7 +6319,7 @@ class MeshCoreApp {
         // collapse to just the recent RAM tail after a long capture.
         const visibleHashes = displayCutoff
             ? Array.from(this.model.recentValues()).filter(d => d.lastSeen >= displayCutoff).length
-            : (this.model.ready ? this._tableHashCount : this.model.recentSize);
+            : (this.model.ready ? this.table.hashCount : this.model.recentSize);
         this.activeHashesEl.textContent = visibleHashes;
         this.totalRxEl.textContent = this.totalRxCount;
         const visibleRepeaters = displayCutoff
