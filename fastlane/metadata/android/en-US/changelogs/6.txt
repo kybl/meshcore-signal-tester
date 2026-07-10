@@ -6,4 +6,4 @@ Version 1.2.3
 - Received Packets columns are ordered by recent activity, so the most active repeaters lead.
 - CSV export now shows the saved file's size.
 
-Fixed: CSV export/import now preserves messages with line breaks; the 3D-map show/hide button works for collision repeaters; no more duplicate repeater rows on long runs; the "load previously captured data?" prompt reliably appears on reopen.
+Fixed: the 3D-map show/hide button works for collision repeaters; no more duplicate repeater rows on long runs; the "load previously captured data?" prompt reliably appears on reopen.

@@ -32,7 +32,6 @@
 
 ### Fixed
 
-- **CSV export/import now preserves messages that contain line breaks.**
 - **The 3D-map show/hide (eye) button now works for repeaters that share an ID
   prefix** (collision columns).
 - **No more duplicate rows for the same repeater** when it is seen at different
