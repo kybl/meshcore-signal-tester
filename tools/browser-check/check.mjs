@@ -103,6 +103,17 @@ function sampleCsv() {
 
 // ---- assertions ------------------------------------------------------------
 let failures = 0;
+// Poll until `fn` returns true (async UI flows — narrow-index builds, page
+// reloads — finish at unpredictable times under a loaded headless CPU; fixed
+// sleeps made these checks flaky).
+async function waitUntil(fn, { timeout = 8000, step = 150 } = {}) {
+    const t0 = Date.now();
+    for (;;) {
+        if (await fn()) return true;
+        if (Date.now() - t0 > timeout) return false;
+        await new Promise(r => setTimeout(r, step));
+    }
+}
 function check(name, cond, detail = '') {
     if (cond) { console.log(`  ✓ ${name}`); }
     else { console.log(`  ✗ ${name}${detail ? '  — ' + detail : ''}`); failures++; }
@@ -170,32 +181,31 @@ async function main() {
     // 3b2) Selecting a repeater: clicking a column header shows the "Selected"
     // corner notice and narrows the table to that repeater's rows; clicking it
     // again deselects. Exercises the selection fan-out end to end.
+    const rowCount = () => page.$$('#msgTableWrap tbody tr:not(.detail-row)').then(r => r.length);
+    const noticeVisible = () => page.$eval('#selNotice', el => !el.classList.contains('hidden'));
+    const fullRows = await rowCount();
     const firstCol = await page.$('#msgTableHead th.msg-col-rep[data-col]');
     const selCol = await firstCol.getAttribute('data-col');
     await firstCol.click();
-    await page.waitForTimeout(800);
-    const noticeShown = await page.$eval('#selNotice', el => !el.classList.contains('hidden'));
-    const selRows = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    const narrowed = await waitUntil(async () => (await noticeVisible()) && (await rowCount()) < fullRows);
+    const selRows = await rowCount();
     await page.click(`#msgTableHead th.msg-col-rep[data-col="${selCol}"]`);
-    await page.waitForTimeout(800);
-    const noticeHidden = await page.$eval('#selNotice', el => el.classList.contains('hidden'));
-    const allRowsAgain = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    const restored = await waitUntil(async () => !(await noticeVisible()) && (await rowCount()) === fullRows);
     check('selecting a repeater shows the notice and narrows the table; reselect clears',
-        noticeShown && selRows > 0 && noticeHidden && allRowsAgain >= selRows,
-        `notice ${noticeShown}/${noticeHidden}, rows ${selRows} → ${allRowsAgain}`);
+        narrowed && selRows > 0 && restored,
+        `narrowed ${narrowed} (${selRows}/${fullRows} rows), restored ${restored}`);
 
     // 3c) Changing the Display and Auto-remove windows exercises the
     // time-window handlers (select parsing, the Display ≤ Auto-remove option
     // gating, and the wide-view rebuild). The sample data is 10–130 min old, so
     // Display=1h shows a strict subset and Display=All restores everything.
     await page.selectOption('#hideSelect', '3600');    // Display = 1 h
-    await page.waitForTimeout(1200);
-    const rows1h = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    const narrowed1h = await waitUntil(async () => { const n = await rowCount(); return n > 0 && n < fullRows; });
+    const rows1h = await rowCount();
     await page.selectOption('#hideSelect', 'all');     // Display = All
-    await page.waitForTimeout(1200);
-    const rowsAll = (await page.$$('#msgTableWrap tbody tr:not(.detail-row)')).length;
+    const restoredAll = await waitUntil(() => rowCount().then(n => n === fullRows));
     check('Display=1h narrows the table, Display=All restores it',
-        rows1h > 0 && rowsAll > rows1h, `1h → ${rows1h} rows, All → ${rowsAll} rows`);
+        narrowed1h && restoredAll, `1h → ${rows1h}/${fullRows} rows, All restored: ${restoredAll}`);
     await page.selectOption('#ttlSelect', '3600');     // Auto-remove = 1 h (fires its handler)
     await page.waitForTimeout(600);
     const disabledOpts = await page.$$eval('#hideSelect option', os => os.filter(o => o.disabled).map(o => o.value));
@@ -207,9 +217,11 @@ async function main() {
 
     // 4) Clear data empties the table and resets the counter.
     await page.getByText('Clear data', { exact: false }).first().click();
-    await page.waitForTimeout(1500);
-    check('Clear data resets Total RX to 0', (await page.textContent('#totalRx'))?.trim() === '0');
-    check('Clear data removes repeater columns', (await page.$$('#msgTableHead th.msg-col-rep')).length === 0);
+    const rxZero = await waitUntil(async () => (await page.textContent('#totalRx'))?.trim() === '0');
+    check('Clear data resets Total RX to 0', rxZero);
+    const colsGone = await waitUntil(async () =>
+        (await page.$$('#msgTableHead th.msg-col-rep')).length === 0);
+    check('Clear data removes repeater columns', colsGone);
 
     check('no uncaught page errors during the run', pageErrors.length === 0, pageErrors.join(' | '));
 

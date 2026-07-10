@@ -95,20 +95,21 @@ export class ContactsDirectory {
         return matches.map(c => c.name ?? '?').join(' / ');
     }
 
-    // The column's contacts that can be shown on the map (named, with a
-    // position) — drives the eye/pushpin buttons and "Show all repeaters".
+    // The column's contacts that can be shown on the map (a position is
+    // required; a name is NOT — a nameless node still has a place) — drives
+    // the eye/pushpin buttons and "Show all repeaters".
     gpsFor(colKey) {
-        return this.byPrefix(colKey).filter(c => c.name && (c.lat !== 0 || c.lon !== 0));
+        return this.byPrefix(colKey).filter(c => c.lat !== 0 || c.lon !== 0);
     }
 
-    // Every named+positioned contact matching ANY of the given columns,
-    // deduplicated by pubkey.
+    // Every positioned contact matching ANY of the given columns,
+    // deduplicated by pubkey (a name is not required — see gpsFor).
     withGps(colKeys) {
         const out = [];
         const seen = new Set();
         for (const col of colKeys) {
             for (const c of this.byPrefix(col)) {
-                if (!seen.has(c.pubKeyFullHex) && c.name && (c.lat !== 0 || c.lon !== 0)) {
+                if (!seen.has(c.pubKeyFullHex) && (c.lat !== 0 || c.lon !== 0)) {
                     seen.add(c.pubKeyFullHex);
                     out.push(c);
                 }

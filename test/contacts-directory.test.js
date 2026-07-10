@@ -43,14 +43,14 @@ test('nameForCol: single name, or "a / b" for a collision column', () => {
     assert.equal(dir.nameForCol('99'), null);
 });
 
-test('gpsFor/withGps: only named contacts with a position; withGps dedupes', () => {
+test('gpsFor/withGps: a position is required, a name is NOT; withGps dedupes', () => {
     const { dir } = makeDir();
     dir.put(C('12ab0000', 'HasGps', 50.1, 14.4));
-    dir.put(C('12cd0000', 'NoGps', 0, 0));          // position not configured
-    dir.put(C('34ef0000', null, 49.0, 15.0));       // no name
-    assert.deepEqual(dir.gpsFor('12').map(c => c.name), ['HasGps']);
-    // the same contact matched via two overlapping columns appears once
-    assert.equal(dir.withGps(['12', '12AB']).length, 1);
+    dir.put(C('12cd0000', 'NoGps', 0, 0));          // position not configured → excluded
+    dir.put(C('12ef0000', null, 49.0, 15.0));       // nameless but positioned → INCLUDED
+    assert.deepEqual(dir.gpsFor('12').map(c => c.name).sort(), [null, 'HasGps'].sort());
+    // the same contacts matched via two overlapping columns appear once each
+    assert.equal(dir.withGps(['12', '12AB']).length, 2);
 });
 
 test('colForPubKey: longest matching component wins; case-insensitive; original key returned', () => {

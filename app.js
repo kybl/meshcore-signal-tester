@@ -2268,7 +2268,9 @@ class MeshCoreApp {
         for (const pubKeyFullHex of this._mapPins) {
             if (seen.has(pubKeyFullHex)) continue;
             const contact = this.contacts.get(pubKeyFullHex);
-            if (!contact?.name || (contact.lat === 0 && contact.lon === 0)) continue;
+            // A position is required (0,0 = not configured); a NAME is not — a
+            // nameless contact still gets a marker labelled with its column id.
+            if (!contact || (contact.lat === 0 && contact.lon === 0)) continue;
             // Resolve the live data column so clicking the marker selects the
             // same key the dots/table/chart use; fall back to a 6-char prefix
             // only when the repeater isn't currently in the data.
@@ -5123,7 +5125,6 @@ class MeshCoreApp {
         if (!hideSelect) return;
         let currentValid = false;
         for (const opt of hideSelect.options) {
-            if (opt.value === 'same') { opt.disabled = false; currentValid ||= (hideSelect.value === 'same'); continue; }
             // The Display ≤ Auto-remove invariant lives in TimeWindows.
             opt.disabled = !this.windows.allowsDisplay(TimeWindows.msFromSelect(opt.value));
             if (!opt.disabled && hideSelect.value === opt.value) currentValid = true;
