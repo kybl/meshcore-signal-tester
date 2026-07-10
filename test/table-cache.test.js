@@ -199,7 +199,7 @@ test('pageOfHash builds the narrow index (newest-first) and locates the page', a
     assert.ok(t.hasRow('h2'), 'page 1 holds the middle hashes');
 });
 
-test('clear() resets paging state (hash count is recounted by the next load)', async () => {
+test('clear() resets paging state including the hash count', async () => {
     const hashes = [{ hash: 'h1', firstSeen: 50 }];
     const obs = new Map([['h1', [{ rawId: 'A', time: 50 }]]]);
     const model = stubModel({ hashes, obs });
@@ -209,6 +209,7 @@ test('clear() resets paging state (hash count is recounted by the next load)', a
     assert.ok(t.hasRow('h1'));
     t.clear();
     assert.ok(!t.hasRow('h1'));
+    assert.equal(t.hashCount, 0, 'stale count must not linger after Clear data');
     assert.equal(t.page, 0);
     assert.equal(t.pageCount, 1);
     assert.equal(t.cacheAt, 0);

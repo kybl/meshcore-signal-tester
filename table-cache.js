@@ -231,13 +231,15 @@ export class TableCache {
         this.#narrowIndexKey = builtForKey;
     }
 
-    // Reset to the empty state (Clear data). The hash count is deliberately NOT
-    // reset here — the caller's follow-up wide-view rebuild recounts it from
-    // disk (which was just cleared), matching the previous behaviour.
+    // Reset to the empty state (Clear data), hash count included — so the
+    // empty state and the Active stat read 0 immediately instead of showing
+    // stale numbers until the follow-up wide-view rebuild recounts from the
+    // (just-cleared) disk.
     clear() {
         this.#pageData = new Map();
         this.#page = 0;
         this.#pageCount = 1;
+        this.#hashCount = 0;
         this.#narrowHashes = this.#narrowSet = null;
         this.#narrowIndexKey = this.#narrowKeyApplied = '';
         this.#cacheAt = 0;
