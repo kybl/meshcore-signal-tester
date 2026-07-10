@@ -65,8 +65,6 @@
 - **Headless-browser regression harness** (`tools/browser-check`) that drives
   the real page in Chromium — imports a CSV and asserts the stats, column order,
   and "Show all repeaters" behave; used before every build.
-- Every place the release version number lives is now **cross-referenced in
-  comments**, so bumps can't miss one.
 
 ## [1.2.2] - 2026-06-27
 
