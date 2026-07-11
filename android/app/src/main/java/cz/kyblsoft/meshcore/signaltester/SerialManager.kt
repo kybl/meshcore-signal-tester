@@ -41,9 +41,12 @@ class SerialManager(private val context: Context, private val js: JsApi) {
     private val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
     private val ioExecutor = Executors.newSingleThreadExecutor()
 
+    // port/ioManager are touched only on ioExecutor (open/write/closeInternal);
+    // openPortId is additionally READ from other threads (the detach receiver,
+    // handleDisconnect's pre-check), hence @Volatile.
     private var port: UsbSerialPort? = null
     private var ioManager: SerialInputOutputManager? = null
-    private var openPortId: String? = null
+    @Volatile private var openPortId: String? = null
 
     // Drivers discovered during requestPort / getPorts, keyed by portId, so
     // open() (on the I/O thread) can find the device the page asked for.
@@ -242,7 +245,8 @@ class SerialManager(private val context: Context, private val js: JsApi) {
     // USB permission/detach broadcasts, so a destroyed activity leaks neither the
     // port FD nor the receiver.
     fun cleanup() {
-        try { closeInternal() } catch (_: Exception) {}
+        // Same invariant as everywhere else: the port is only touched on ioExecutor.
+        try { ioExecutor.execute { closeInternal() } } catch (_: Exception) {}
         if (receiverRegistered) {
             try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
             receiverRegistered = false
@@ -259,10 +263,16 @@ class SerialManager(private val context: Context, private val js: JsApi) {
         openPortId = null
     }
 
+    // Unexpected drop (read error / USB detach). The port teardown must run on
+    // ioExecutor like every other port access — running closeInternal() on the
+    // caller's thread raced an in-flight write()/open() on the port object.
     private fun handleDisconnect(portId: String) {
-        if (portId != openPortId) return
-        closeInternal()
-        js.serialDisconnected(portId)
+        if (portId != openPortId) return   // cheap pre-check (volatile read)
+        ioExecutor.execute {
+            if (portId != openPortId) return@execute   // authoritative re-check
+            closeInternal()
+            main.post { js.serialDisconnected(portId) }
+        }
     }
 
     companion object {

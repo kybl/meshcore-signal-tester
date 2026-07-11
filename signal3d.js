@@ -716,13 +716,15 @@ export class Signal3DMap {
     // keep the stale col and lose their selection / color sync.
     renameCol(oldCol, newCol) {
         if (oldCol === newCol) return;
-        for (const p of this._rxPoints) {
-            if (p.col === oldCol) p.col = newCol;
-        }
-        // Live sent stars share the col namespace, so migrate them too (but not
-        // _histOutgoingPts — those are rebuilt from disk).
-        for (const p of this._outgoingPts) {
-            if (p.col === oldCol) p.col = newCol;
+        // Migrate the wide-view disk layers too, not just the live arrays: in
+        // hist mode _rebuildDots() renders _histPoints/_histOutgoingPts, so a
+        // stale col there means the wrong colour and a dead highlight until an
+        // unrelated disk refresh happens to rebuild them.
+        for (const arr of [this._rxPoints, this._outgoingPts,
+                           this._histPoints ?? [], this._histOutgoingPts ?? []]) {
+            for (const p of arr) {
+                if (p.col === oldCol) p.col = newCol;
+            }
         }
         if (this._selectedCol === oldCol) {
             this._selectedCol = newCol;
@@ -735,21 +737,17 @@ export class Signal3DMap {
     // a new col to migrate the point to, or null/undefined to leave it.
     splitPoints(oldCol, classifier) {
         let touched = false;
-        for (const p of this._rxPoints) {
-            if (p.col !== oldCol) continue;
-            const target = classifier(p.rawId);
-            if (target && target !== oldCol) {
-                p.col = target;
-                touched = true;
-            }
-        }
-        // Same reassignment for live sent stars (leave _histOutgoingPts alone).
-        for (const p of this._outgoingPts) {
-            if (p.col !== oldCol) continue;
-            const target = classifier(p.rawId);
-            if (target && target !== oldCol) {
-                p.col = target;
-                touched = true;
+        // Same reasoning as renameCol: the wide-view disk layers are the render
+        // source in hist mode, so they must migrate along with the live arrays.
+        for (const arr of [this._rxPoints, this._outgoingPts,
+                           this._histPoints ?? [], this._histOutgoingPts ?? []]) {
+            for (const p of arr) {
+                if (p.col !== oldCol) continue;
+                const target = classifier(p.rawId);
+                if (target && target !== oldCol) {
+                    p.col = target;
+                    touched = true;
+                }
             }
         }
         if (touched) {
@@ -906,8 +904,11 @@ export class Signal3DMap {
         if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
         // Consider both received (sphere) and sent (star) points so a repeater
         // we've only ever transmitted to still shows a panel when clicked.
-        const pts = this._rxPoints.filter(p => p.col === col)
-            .concat((this._histOutgoingPts ?? this._outgoingPts).filter(p => p.col === col));
+        // Collision-aware match (colsOverlap), consistent with _isColShown and
+        // _rebuildDots — strict === hid the panel once packets migrated under a
+        // collision key while the selection itself stayed alive.
+        const pts = this._rxPoints.filter(p => colsOverlap(p.col, col))
+            .concat((this._histOutgoingPts ?? this._outgoingPts).filter(p => colsOverlap(p.col, col)));
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const isPseudo = col === 'direct' || col === 'unknown';
         const dotStyle = isPseudo
@@ -1987,8 +1988,13 @@ export class Signal3DMap {
         );
         if (!visible.length) return;
 
-        const litPts = sel ? visible.filter(p => p.col === sel) : visible;
-        const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
+        // Lenient collision-aware match, the SAME one _isColShown uses to keep
+        // the selection alive: a selection of "a" must also light points that
+        // migrated under a collision key "a/b", or the selection survives a
+        // cleanup tick (overlap) while every dot renders dim (strict ===).
+        const selMatch = p => colsOverlap(p.col, sel);
+        const litPts = sel ? visible.filter(selMatch) : visible;
+        const dimPts = sel ? visible.filter(p => !selMatch(p)) : [];
 
         const _col = new THREE.Color();
 
@@ -2032,8 +2038,8 @@ export class Signal3DMap {
             (!this._filterFn || this._filterFn(p.col)) &&
             (!sentCutoff || p.time >= sentCutoff)
         );
-        const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
-        const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
+        const sentLit = sel ? sentAll.filter(selMatch) : sentAll;
+        const sentDim = sel ? sentAll.filter(p => !selMatch(p)) : [];
         this._addDotPoints(sentLit, 1.0,  3.2, this._starTex);
         this._addDotPoints(sentDim, 0.07, 3.2, this._starTex);
 

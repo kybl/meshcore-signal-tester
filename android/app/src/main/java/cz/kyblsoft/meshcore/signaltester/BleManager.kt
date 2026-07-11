@@ -34,13 +34,20 @@ class BleManager(private val context: Context, private val js: JsApi) {
 
     private val main = Handler(Looper.getMainLooper())
 
-    private var gatt: BluetoothGatt? = null
-    private var deviceAddress: String? = null
+    // Written on the main thread (connect/handleAdapterDown), read on the
+    // binder callback threads (onConnectionStateChange, onServicesDiscovered,
+    // handleNotify) — all must be @Volatile or a callback can read a stale
+    // null connectReqId and silently drop the connect resolution, leaving the
+    // JS connect() promise pending forever.
+    @Volatile private var gatt: BluetoothGatt? = null
+    @Volatile private var deviceAddress: String? = null
     @Volatile private var connected = false
 
-    private var connectReqId: String? = null
+    @Volatile private var connectReqId: String? = null
 
-    private val opQueue = ArrayDeque<() -> Unit>()
+    // Each entry keeps its reqId alongside the closure so clearQueue() can
+    // settle queued-but-unstarted ops (their JS awaits would hang otherwise).
+    private val opQueue = ArrayDeque<Pair<String, () -> Unit>>()
     private var opBusy = false
     private var pendingReqId: String? = null
 
@@ -162,17 +169,17 @@ class BleManager(private val context: Context, private val js: JsApi) {
     // is synchronized on this manager.
     @Synchronized
     private fun enqueue(reqId: String, op: () -> Unit) {
-        opQueue.add {
+        opQueue.add(reqId to {
             pendingReqId = reqId
             op()
-        }
+        })
         drain()
     }
 
     @Synchronized
     private fun drain() {
         if (opBusy) return
-        val op = opQueue.poll() ?: return
+        val (_, op) = opQueue.poll() ?: return
         opBusy = true
         try {
             op()
@@ -201,13 +208,16 @@ class BleManager(private val context: Context, private val js: JsApi) {
 
     @Synchronized
     private fun clearQueue() {
-        // Settle any in-flight op so its JS await (writeValue/readValue) doesn't
-        // hang forever after a mid-command disconnect. Queued-but-unstarted ops
-        // carry no reqId at this layer, so only pendingReqId can be settled.
+        // Settle the in-flight op AND every queued-but-unstarted one, so their
+        // JS awaits (writeValue/readValue) don't hang forever after a
+        // mid-command disconnect.
         pendingReqId?.let { js.resolve(it, false, errJson(BridgeError.NETWORK, "disconnected")) }
-        opQueue.clear()
-        opBusy = false
         pendingReqId = null
+        while (true) {
+            val (reqId, _) = opQueue.poll() ?: break
+            js.resolve(reqId, false, errJson(BridgeError.NETWORK, "disconnected"))
+        }
+        opBusy = false
     }
 
     private fun findChar(serviceUuid: String, charUuid: String): BluetoothGattCharacteristic? {

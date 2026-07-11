@@ -1,8 +1,8 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=153';
-import { CaptureModel } from './capture-model.js?v=1';
-import { TableCache } from './table-cache.js?v=1';
+import { Signal3DMap } from './signal3d.js?v=154';
+import { CaptureModel } from './capture-model.js?v=2';
+import { TableCache } from './table-cache.js?v=2';
 import { ChartCache } from './chart-cache.js?v=1';
 import { MapCache } from './map-cache.js?v=1';
 import { TimeWindows } from './time-windows.js?v=1';
@@ -1791,21 +1791,29 @@ class MeshCoreApp {
         }
     }
 
-    // Write plain text to the serial port (repeater CLI commands).
-    async _serialWriteText(text) {
-        if (!this.serialPort) return;
-        // Serialise writes through a chain: getWriter() throws while a previous
-        // write still holds the lock, and callers swallow that error — so two
-        // coincident commands (e.g. the neighbours + log polls that fire on the
-        // same 5 s tick) used to silently drop one. Queue them instead.
-        this._serialWriteChain = (this._serialWriteChain ?? Promise.resolve()).then(async () => {
+    // Serialise ALL serial-port writes — text CLI commands and binary frames —
+    // through one chain: getWriter() throws while a previous write still holds
+    // the lock, so two coincident commands (the neighbours + log polls on the
+    // same 5 s tick, or the position/battery polls racing a contacts-watchdog
+    // retry) would otherwise silently drop one. The chain itself never breaks
+    // on error, but the returned promise still rejects to THIS write's caller.
+    _serialWriteBytes(bytes) {
+        const prev = this._serialWriteChain ?? Promise.resolve();
+        const p = prev.then(async () => {
             const port = this.serialPort;
             if (!port) return;
             const writer = port.writable.getWriter();
-            try { await writer.write(new TextEncoder().encode(text)); }
+            try { await writer.write(bytes); }
             finally { try { writer.releaseLock(); } catch (e) {} }
-        }).catch(() => {});
-        return this._serialWriteChain;
+        });
+        this._serialWriteChain = p.catch(() => {});
+        return p;
+    }
+
+    // Write plain text to the serial port (repeater CLI commands).
+    async _serialWriteText(text) {
+        if (!this.serialPort) return;
+        return this._serialWriteBytes(new TextEncoder().encode(text));
     }
 
     async _startSerialReadLoop(port) {
@@ -2071,6 +2079,10 @@ class MeshCoreApp {
     }
 
     // Wrap a MeshCore command in a serial frame and write it to the port.
+    // Goes through the same write chain as the text CLI writes — a binary
+    // frame racing another write (e.g. the 1 s position/battery polls vs. a
+    // contacts-watchdog retry) used to throw on getWriter() and the command
+    // was silently lost (callers swallow the error).
     async _serialSendFrame(data) {
         if (!this.serialPort) return;
         const frame = new Uint8Array(3 + data.length);
@@ -2078,9 +2090,7 @@ class MeshCoreApp {
         frame[1] = data.length & 0xff;
         frame[2] = (data.length >> 8) & 0xff;
         frame.set(data, 3);
-        const writer = this.serialPort.writable.getWriter();
-        try { await writer.write(frame); }
-        finally { try { writer.releaseLock(); } catch (e) {} }
+        return this._serialWriteBytes(frame);
     }
 
     // Transport-agnostic frame send: raw notification write over BLE, or
@@ -2530,11 +2540,17 @@ class MeshCoreApp {
         const pushCode = payload[0];
         // RESP_CODE_BATT_AND_STORAGE (0x0C), reply to CMD_GET_BATT_AND_STORAGE:
         // bytes [1-2] = uint16 LE voltage in mV; [3-6]/[7-10] = storage used/total
-        // in kB (ignored here). Sent only on request — see sendBatteryQuery.
+        // in kB (older firmware sends the 3-byte battery-only form). Sent only
+        // on request — see sendBatteryQuery.
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
                 const milliVolts = payload[1] | (payload[2] << 8);
-                this._updateBleBatteryVoltage(milliVolts);
+                let storage = null;
+                if (payload.length >= 11) {
+                    const dv = new DataView(payload.buffer, payload.byteOffset);
+                    storage = { usedKb: dv.getUint32(3, true), totalKb: dv.getUint32(7, true) };
+                }
+                this._updateBleBatteryVoltage(milliVolts, storage);
             }
             return;
         }
@@ -5086,6 +5102,7 @@ class MeshCoreApp {
         this.mapCache.clear();
         this._lastMapView = null;
         this.totalRxCount = 0;
+        this._unsavedRxCount = 0;   // nothing left to lose — disarm the beforeunload warning
         this._lastDataTime = 0;
         this.model.clearAll();
         this._dscSeq = 0;
@@ -5642,11 +5659,16 @@ class MeshCoreApp {
 
     // --- BLE Device Battery ---
 
-    _updateBleBatteryVoltage(milliVolts) {
+    _updateBleBatteryVoltage(milliVolts, storage = null) {
         if (!this.batteryEl || !this.device) return;
         // LiPo: 3000 mV = 0%, 4200 mV = 100%
         const pct = Math.round(Math.min(100, Math.max(0, (milliVolts - 3000) / 1200 * 100)));
-        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span><span class="batt-icon">🔋</span>${pct}%`;
+        // Device flash storage (used/total), reported in the same reply. Shown
+        // raw in kB for now, to see what devices actually report.
+        const storageHtml = storage
+            ? ` <span class="storage-status" title="Device storage used / total">💾${storage.usedKb}/${storage.totalKb} kB</span>`
+            : '';
+        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span><span class="batt-icon">🔋</span>${pct}%${storageHtml}`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (pct <= 20) this.batteryEl.classList.add('battery-low');
     }
@@ -6042,7 +6064,9 @@ class MeshCoreApp {
                         const path = decoded.path || [];
                         const fi = path[0];
                         meta.pathLen       = path.length;
-                        meta.pathItemBytes = decoded.pathHashSize ?? fi?.length / 2 ?? 0;
+                        // NB: not `fi?.length / 2 ?? 0` — undefined/2 is NaN,
+                        // and NaN is not nullish, so `?? 0` would let it through.
+                        meta.pathItemBytes = decoded.pathHashSize ?? (fi != null ? fi.length / 2 : 0);
                         meta.totalBytes    = decoded.totalBytes;
                     }
                 } catch (e) { console.warn('Hex decode failed for row:', row.rawHex?.slice(0, 20), e.message); }

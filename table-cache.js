@@ -30,6 +30,7 @@ export class TableCache {
     #narrowIndexKey = '';        // narrow key the index hashes were built for
     #narrowKeyApplied = '';      // narrow key the current page was loaded for
     #firstPageColCounts = new Map(); // per-column occurrences on page 0 (column sort key #2)
+    #loadSeq = 0;                // guards concurrent loadPage calls (newest wins wholly)
 
     constructor(model, { pageSize = 100, resolveCol, narrowFn, narrowKey, displayCutoff }) {
         this.#model = model;
@@ -129,10 +130,16 @@ export class TableCache {
     // recent-window-shaped entries so the renderer treats both sides the same.
     async loadPage(page, reset = false) {
         if (!this.#model.ready) return;
+        // Callers fire loadPage without awaiting (pager clicks, the prune tick,
+        // narrowing changes), so two loads can be in flight at once. Everything
+        // is computed into locals and committed at the end only when this is
+        // still the NEWEST call — otherwise an older, slower load finishing
+        // last would overwrite the newer page (pager saying one page, snapshot
+        // holding another).
+        const seq = ++this.#loadSeq;
         await this.#model.flush();   // the page must include still-buffered packets
         const boundary = Date.now(); // snapshot covers disk up to here (tail base)
         if (reset) {
-            this.#page = 0;
             // The underlying data may have changed (replay/import/prune/narrow
             // change) — any narrow index is stale.
             this.#narrowHashes = this.#narrowSet = null;
@@ -141,20 +148,19 @@ export class TableCache {
         const winFrom = this.#deps.displayCutoff() || undefined;
         // Authoritative count from disk; between loads it is maintained in RAM
         // (noteIngest) so the pager needs no disk reads.
-        this.#hashCount = await this.#model.countHashes(winFrom);
-        this.#narrowKeyApplied = this.#deps.narrowKey();
+        const hashCount = await this.#model.countHashes(winFrom);
+        const narrowKeyApplied = this.#deps.narrowKey();
         const narrowed = this.#deps.narrowFn() != null;
         if (narrowed && !this.#narrowHashes) await this.#buildNarrowIndex();
-        if (!narrowed) this.#narrowHashes = this.#narrowSet = null;
         // A concurrent narrowing change can make #buildNarrowIndex bail (leaving
         // null); treat as empty — the follow-up repaginate re-renders.
         const narrowHashes = narrowed ? (this.#narrowHashes ?? []) : null;
-        const total = narrowed ? narrowHashes.length : this.#hashCount;
-        this.#pageCount = Math.max(1, Math.ceil(total / size));
-        this.#page = Math.min(Math.max(0, page), this.#pageCount - 1);
+        const total = narrowed ? narrowHashes.length : hashCount;
+        const pageCount = Math.max(1, Math.ceil(total / size));
+        const pageNum = Math.min(Math.max(0, page), pageCount - 1);
         const hashes = narrowed
-            ? await this.#model.getHashes(narrowHashes.slice(this.#page * size, (this.#page + 1) * size))
-            : await this.#model.pageHashes(this.#page * size, size, winFrom);
+            ? await this.#model.getHashes(narrowHashes.slice(pageNum * size, (pageNum + 1) * size))
+            : await this.#model.pageHashes(pageNum * size, size, winFrom);
         const map = new Map();
         for (const h of hashes) {
             const obs = await this.#model.obsForHash(h.hash);
@@ -174,13 +180,21 @@ export class TableCache {
             map.set(h.hash, { repeaters, firstSeen, lastSeen, type: h.type, meta: h.meta,
                               rawHex: obs[0].rawHex, packet: null, _stub: false });
         }
+        // A newer loadPage started while this one was reading disk — drop this
+        // result whole rather than committing a stale snapshot over the new one.
+        if (seq !== this.#loadSeq) return;
+        this.#hashCount = hashCount;
+        this.#narrowKeyApplied = narrowKeyApplied;
+        if (!narrowed) this.#narrowHashes = this.#narrowSet = null;
+        this.#pageCount = pageCount;
+        this.#page = pageNum;
         this.#pageData = map;
         this.#cacheAt = boundary;   // rows newer than this are the live tail
         // Recompute the page-0 column counts (sort key #2) once per page-0 load,
         // so the column sort stays a cheap map read. Only for page 0: the counts
         // must always reflect the first page, so paging away keeps the last
         // page-0 values (stable column order).
-        if (this.#page === 0) {
+        if (pageNum === 0) {
             const counts = new Map();
             for (const d of map.values()) for (const col of d.repeaters.keys()) counts.set(col, (counts.get(col) ?? 0) + 1);
             this.#firstPageColCounts = counts;

@@ -199,6 +199,33 @@ test('pageOfHash builds the narrow index (newest-first) and locates the page', a
     assert.ok(t.hasRow('h2'), 'page 1 holds the middle hashes');
 });
 
+test('concurrent loadPage calls: the newest call wins wholly', async () => {
+    // 6 hashes, pageSize 2 → 3 pages. The first load (page 2) is stalled at its
+    // disk read while a second load (page 0) starts and completes; when the
+    // stale load finally finishes it must NOT overwrite the newer state.
+    const hashes = Array.from({ length: 6 }, (_, i) => ({ hash: 'h' + i, firstSeen: 100 - i }));
+    const obs = new Map(hashes.map(h => [h.hash, [{ rawId: 'A', time: h.firstSeen }]]));
+    const model = stubModel({ hashes, obs });
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const origPage = model.pageHashes;
+    model.pageHashes = async (offset, limit) => {
+        if (offset === 4) await gate;          // stall only the page-2 read
+        return origPage(offset, limit);
+    };
+    const { deps } = makeDeps();
+    const t = new TableCache(model, { pageSize: 2, ...deps });
+    const slow = t.loadPage(2, false);         // stalls at the gated disk read
+    await t.loadPage(0, false);                // newer call, completes fully
+    assert.equal(t.page, 0);
+    assert.ok(t.hasRow('h0'), 'newest rows on page 0');
+    release();
+    await slow;
+    assert.equal(t.page, 0, 'stale slower load must not overwrite the newer page');
+    assert.ok(t.hasRow('h0'), 'page-0 snapshot still in place');
+    assert.ok(!t.hasRow('h4'), 'page-2 rows were dropped, not committed');
+});
+
 test('clear() resets paging state including the hash count', async () => {
     const hashes = [{ hash: 'h1', firstSeen: 50 }];
     const obs = new Map([['h1', [{ rawId: 'A', time: 50 }]]]);

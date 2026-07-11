@@ -54,6 +54,19 @@ export const PS_QUANT_MAX = PS_QMAX;
 export function ps_qx(lon) { return Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX))); }
 export function ps_qy(lat) { return Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX))); }
 
+// Merge two per-hash records for the same hash without regressing either:
+// keep the earliest firstSeen, and the first non-null type/meta (ex wins —
+// it is the older/already-stored side). Exported for tests; used both for
+// intra-batch duplicates and for the disk merge in putHashesMerge.
+export function ps_mergeHashRec(ex, r) {
+    return {
+        hash: r.hash,
+        firstSeen: Math.min(ex.firstSeen ?? Infinity, r.firstSeen ?? Infinity),
+        type: ex.type ?? r.type ?? null,
+        meta: ex.meta ?? r.meta ?? null,
+    };
+}
+
 export function ps_morton(lat, lon) {
     return (ps_part1by1(ps_qx(lon)) | (ps_part1by1(ps_qy(lat)) << 1)) >>> 0;
 }
@@ -273,18 +286,22 @@ export class PacketStore {
      *  packet to the top of the time-sorted table) and null out its type/meta. */
     async putHashesMerge(records) {
         if (!records || !records.length) return;
+        // Merge intra-batch duplicates in memory FIRST. The per-record get()
+        // below is queued before any put() runs, so it always reads the
+        // pre-transaction state — two records with the same hash in one batch
+        // would each merge against disk only, and the later put would clobber
+        // the earlier record's contribution.
+        const byHash = new Map();
+        for (const r of records) {
+            const ex = byHash.get(r.hash);
+            byHash.set(r.hash, ex ? ps_mergeHashRec(ex, r) : r);
+        }
         await this._write('hashes', os => {
-            for (const r of records) {
+            for (const r of byHash.values()) {
                 const g = os.get(r.hash);
                 g.onsuccess = () => {
                     const ex = g.result;
-                    if (!ex) { os.put(r); return; }
-                    os.put({
-                        hash: r.hash,
-                        firstSeen: Math.min(ex.firstSeen ?? Infinity, r.firstSeen ?? Infinity),
-                        type: ex.type ?? r.type ?? null,
-                        meta: ex.meta ?? r.meta ?? null,
-                    });
+                    os.put(ex ? ps_mergeHashRec(ex, r) : r);
                 };
             }
         });
