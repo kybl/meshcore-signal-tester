@@ -248,7 +248,9 @@ export class PacketStore {
      *  rawHex is per-observation: the SAME packet (same hash) received via a
      *  different repeater/path carries different raw bytes (the routing path
      *  field changes), so it must live here, not in the per-hash record.
-     *  `seq` is assigned by the store. Returns the records or [] on failure. */
+     *  Returns the records or [] on failure. (The store assigns each an
+     *  autoIncrement `seq` key internally — it is NOT copied back onto the
+     *  returned objects.) */
     async putObs(records) {
         if (!records || !records.length) return [];
         const ok = await this._write('obs', os => {

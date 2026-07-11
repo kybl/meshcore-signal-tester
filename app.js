@@ -1,15 +1,15 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=154';
-import { CaptureModel } from './capture-model.js?v=2';
+import { Signal3DMap } from './signal3d.js?v=155';
+import { CaptureModel } from './capture-model.js?v=3';
 import { TableCache } from './table-cache.js?v=2';
 import { ChartCache } from './chart-cache.js?v=1';
-import { MapCache } from './map-cache.js?v=1';
+import { MapCache } from './map-cache.js?v=2';
 import { TimeWindows } from './time-windows.js?v=1';
 import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=1';
-import { buildCsv, parseCsv } from './csv.js?v=2';
+import { buildCsv, parseCsv } from './csv.js?v=3';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
@@ -116,8 +116,6 @@ class MeshCoreApp {
         this._selShowMore = false;
         this._filterShowMore = false;
         this._mapPins = new Set(); // pubKeyFullHex of contacts pinned to 3D map
-        this._batteryCharacteristic = null;
-        this._onBatteryChanged = null;
         this._useAbbreviatedTypes = false;
         this._tooltipPinned = false;
         this._snrShowIncoming = true;
@@ -805,7 +803,7 @@ class MeshCoreApp {
             const hash    = this._hashPayload(fakeHex);
             const rssi    = -60 - Math.floor(Math.random() * 50);
             const snr     = Math.round((Math.random() * 25 - 10) * 10) / 10;
-            this._ingestPacket(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null, { forceIngest: true, ...this._myLocation() });
+            this._ingestPacket(hash, repeater, 'Flood Debug', fakeHex, snr, rssi, { debug: true }, null, { source: 'debug', ...this._myLocation() });
             if (fbk) {
                 const col = this.columns.resolve(repeater);
                 fbk.textContent = `→ column ${this.displayId(col)}`;
@@ -2021,7 +2019,7 @@ class MeshCoreApp {
 
         // Summary lines with no accompanying RAW dump ⇒ stock firmware ⇒ limited
         // data. Surface the caveat once.
-        if (!this._sawRepeaterRaw && !this._repeaterStockNoticed) {
+        if (!this._repeaterStockNoticed) {
             this._repeaterStockNoticed = true;
             this._showRepeaterNotice();
         }
@@ -2997,14 +2995,27 @@ class MeshCoreApp {
     // Fold one observation into the per-repeater running stats (RX count, max/last
     // SNR & RSSI, last-seen, and the finest id precision seen for this column).
 
+    // Every packet observation enters the app here. `opts.source` names where
+    // it came from — the flags each source implies are derived in ONE place
+    // below, instead of callers picking from a matrix of booleans:
+    //   'live'   — a connected device heard it now (default);
+    //   'debug'  — the debug injector: like live, but bypasses the Stop gate;
+    //   'import' — a CSV row: counted and persisted, no live-UI/sound path;
+    //   'replay' — startup replay from disk: like import, but nothing is
+    //              written back (it all CAME from disk).
+    // Other opts: timestamp (import/replay carry the stored time), lat/lon
+    // (capture position), remoteSnr (uplink SNR from a DSC response).
     _ingestPacket(hash, repeater, type, rawHex, snr, rssi, meta = {}, packet = null, opts = {}) {
-        if (!this._collecting && !opts.importing && !opts.forceIngest) return;
-        const wasAtBottom = !opts.importing && this._isAtPageBottom();
+        const source = opts.source ?? 'live';
+        const live = source === 'live' || source === 'debug';  // drives UI/sound/live counters
+        const replaying = source === 'replay';
+        if (!this._collecting && source === 'live') return;
+        const wasAtBottom = live && this._isAtPageBottom();
         this.totalRxCount++;
-        if (!opts.importing) this._unsavedRxCount++;
+        if (live) this._unsavedRxCount++;
         const now = opts.timestamp ?? Date.now();
         if (now > this._lastDataTime) this._lastDataTime = now;
-        if (!opts.importing) this._rxTimestamps.push(now);
+        if (live) this._rxTimestamps.push(now);
         const isNewHash = !this.model.recentHas(hash);
         const prevColCount = this.columns.count;
         const canonicalKey = this.columns.resolve(repeater);
@@ -3032,8 +3043,8 @@ class MeshCoreApp {
             });
         } else {
             const data = this.model.recentGet(hash);
-            // When importing, skip (hash, repeater) pairs that already exist — existing data wins
-            if (opts.importing && data.repeaters.has(canonicalKey)) return;
+            // When importing/replaying, skip (hash, repeater) pairs that already exist — existing data wins
+            if (!live && data.repeaters.has(canonicalKey)) return;
             data.lastSeen = now;
             // Keep the strongest-RSSI observation per (packet, repeater), matching
             // the disk grid/page representative so the table cell reads the same
@@ -3050,7 +3061,7 @@ class MeshCoreApp {
             // Fold it into the chart bucket cache so the charts show it without a
             // disk re-query. Replay/import skip this — they end with a full disk
             // rebuild of the layers anyway.
-            if (!opts.replaying && !opts.importing && this.model.ready) {
+            if (live && this.model.ready) {
                 this.charts.upsert(now, snr, rssi, repeater, type, hash);
             }
         }
@@ -3059,16 +3070,16 @@ class MeshCoreApp {
             // Fold it into the RAM map-cell cache so the wide view shows it
             // immediately, no disk rescan. Replay/import skip this — they end
             // with a full disk rebuild of the layers anyway.
-            if (!opts.replaying && !opts.importing && this.model.ready) {
+            if (live && this.model.ready) {
                 this.mapCache.upsert({ lat: loc.lat, lon: loc.lon, snr, rssi, time: now, rawId: repeater });
             }
         }
 
         // Persist this observation (rawHex is per-path, so it lives per-obs).
         // Skipped only while replaying from disk to avoid writing it back.
-        if (!opts.replaying) this._ingestToStore({ now, hash, repeater, rawHex, snr, rssi, meta, type, loc, remoteSnr: opts.remoteSnr }, isNewHash);
+        if (!replaying) this._ingestToStore({ now, hash, repeater, rawHex, snr, rssi, meta, type, loc, remoteSnr: opts.remoteSnr }, isNewHash);
 
-        if (opts.importing) return;
+        if (!live) return;
 
         // Heavy DOM work (both tables + stats) is coalesced so a busy mesh
         // doesn't rebuild them on every packet and starve the 3D-map frame loop.
@@ -3080,8 +3091,9 @@ class MeshCoreApp {
         const matchesRepFilter = !this.selection.filterActive || this.selection.matchesFilter(canonicalKey);
 
         // Keep the table pager's page count current without a disk count() —
-        // replay/import end with an authoritative _loadTablePage instead.
-        if (!opts.replaying && this.model.ready) {
+        // replay/import end with an authoritative _loadTablePage instead (and
+        // never reach this point).
+        if (this.model.ready) {
             this.table.noteIngest(hash, canonicalKey, isNewHash);
         }
 
@@ -3704,30 +3716,13 @@ class MeshCoreApp {
         if (!svg) return;
         const rect = svg.getBoundingClientRect();
         // The page may be CSS-scaled (desktop/text-size transforms <body>), so
-        // getBoundingClientRect() is in scaled px while _renderChart drew the dots
-        // from svg.clientWidth (layout px). Work in layout px so the hit-test
-        // matches what's on screen: divide the cursor by the scale and size the
-        // geometry from clientWidth/clientHeight, exactly as _renderChart does.
+        // getBoundingClientRect() is in scaled px while the chart drew itself
+        // in layout px (svg.clientWidth). Divide the cursor by the scale, then
+        // hit-test in the exact geometry the chart was last drawn with.
         const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
         const mx = (e.clientX - rect.left) / scale;
         const my = (e.clientY - rect.top) / scale;
-        const W = svg.clientWidth || 600;
-        const H = svg.clientHeight || 180;
-        const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
-        const cw = W - pl - pr;
-        const ch = H - pt - pb;
-        // Use the exact window the chart was last rendered with, so hit-testing
-        // stays aligned with the dots even when the X axis is zoomed.
-        const now = this.windows.frozenAt ?? Date.now();
-        const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
-        const tMin = win.tMin, tMax = win.tMax;
-        const { yMin, yMax } = this._chartYBounds(type, tMin, tMax);
-        const tRange = Math.max(1, tMax - tMin);
-        const yRange = Math.max(1e-9, yMax - yMin);
-        const padX = this._dotSize * 3.5 + 2;          // match _renderChart's data inset
-        const innerW = Math.max(1, cw - 2 * padX);
-        const xOf = t => pl + padX + (t - tMin) / tRange * innerW;
-        const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
+        const { xOf, yOf } = this._lastDrawGeometry(svg, type);
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
             const v = type === 'rssi' ? p.rssi : p.snr;
@@ -4075,6 +4070,38 @@ class MeshCoreApp {
         return steps[steps.length - 1];
     }
 
+    // ----- shared chart plot geometry -------------------------------------
+    // ONE source of truth for the plot rectangle, the horizontal data inset
+    // and the time→x / value→y transforms. _renderChart draws with it and the
+    // hit-testers (_onChartClick, showChartTooltip) measure with it. Each used
+    // to carry its own copy of this block, which had to match byte for byte —
+    // one drifting inset and clicks landed beside the dots.
+    _chartGeometry(svg, tMin, tMax, yMin, yMax) {
+        const W = svg.clientWidth || 600;
+        const H = svg.clientHeight || 180;
+        const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
+        const cw = W - pl - pr;
+        const ch = H - pt - pb;
+        const tRange = Math.max(1, tMax - tMin);
+        const yRange = Math.max(1e-9, yMax - yMin);
+        // Inset the data area horizontally so points at the very start/end of
+        // the window aren't drawn half-off the edge (and stay clickable).
+        const padX = this._dotSize * 3.5 + 2;          // ≈ dot radius + margin
+        const innerW = Math.max(1, cw - 2 * padX);
+        const xOf = t => pl + padX + (t - tMin) / tRange * innerW;
+        const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
+        return { W, H, pl, pr, pt, pb, cw, ch, tMin, tMax, tRange, yMin, yMax, yRange, padX, innerW, xOf, yOf };
+    }
+
+    // Geometry matching what the chart was LAST DRAWN with (window + Y
+    // bounds) — what clicks and hovers must be hit-tested against.
+    _lastDrawGeometry(svg, type) {
+        const now = this.windows.frozenAt ?? Date.now();
+        const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
+        const { yMin, yMax } = this._chartYBounds(type, win.tMin, win.tMax);
+        return this._chartGeometry(svg, win.tMin, win.tMax, yMin, yMax);
+    }
+
     _renderChart(type) {
         const wrap   = type === 'rssi' ? this.rssiChartWrap   : this.snrChartWrap;
         const svg    = type === 'rssi' ? this.rssiChartSvg    : this.snrChartSvg;
@@ -4088,12 +4115,6 @@ class MeshCoreApp {
         const hasData    = pts.length > 0 || sentPts.length > 0;
         const hasAnyData = allInPts.length > 0 || allOutPts.length > 0;
         const noneSelected = type === 'snr' && !this._snrShowIncoming && !this._snrShowOutgoing;
-
-        const W = svg.clientWidth || 600;
-        const H = svg.clientHeight || 180;
-        const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
-        const cw = W - pl - pr;
-        const ch = H - pt - pb;
 
         const now = this.windows.frozenAt ?? Date.now();
         const defaultWindow = 5 * 60000;
@@ -4145,21 +4166,19 @@ class MeshCoreApp {
         } else {
             ({ yMin, yMax, yStep } = this._chartYBounds(type, tMin, tMax));
         }
+        const g = this._chartGeometry(svg, tMin, tMax, yMin, yMax);
+        const { W, H, pl, pr, pt, pb, cw, ch, tRange, yRange } = g;
         // Adapt yStep so major gridlines are ~35 px apart (more when taller, fewer when short)
         const maxMajorLines = Math.max(2, Math.floor(ch / 35));
         const niceYSteps = [0.5, 1, 2, 5, 10, 20, 50, 100];
         const minYStep = (yMax - yMin) / maxMajorLines;
         const adaptedStep = niceYSteps.find(s => s >= minYStep);
         if (adaptedStep && adaptedStep > yStep) yStep = adaptedStep;
-        const tRange = Math.max(1, tMax - tMin);
-        const yRange = Math.max(1e-9, yMax - yMin);
 
-        // Inset the data area horizontally so points at the very start/end of the
-        // window aren't drawn half-off the edge (and stay comfortably clickable).
-        const padX = this._dotSize * 3.5 + 2;          // ≈ dot radius + margin
-        const innerW = Math.max(1, cw - 2 * padX);
-        const xOf = t => (pl + padX + (t - tMin) / tRange * innerW).toFixed(1);
-        const yOf = v => (pt + (1 - (v - yMin) / yRange) * ch).toFixed(1);
+        // The SVG builders want fixed-precision strings; hit-testing uses the
+        // same numeric transforms via _lastDrawGeometry — one math, two skins.
+        const xOf = t => g.xOf(t).toFixed(1);
+        const yOf = v => g.yOf(v).toFixed(1);
         const valOf = p => type === 'rssi' ? p.rssi : p.snr;
 
         const isDark = !document.documentElement.classList.contains('light-theme');
@@ -4405,32 +4424,14 @@ class MeshCoreApp {
         if (!svg) return;
 
         const rect = svg.getBoundingClientRect();
-        // Work in layout px (svg.clientWidth), the space _renderChart drew the
-        // dots in, so hit-testing matches the screen even when <body> is
-        // CSS-scaled (desktop/text-size zoom). rect.width/clientWidth IS that
-        // scale; the positioning block below multiplies back by it.
+        // Hit-test in layout px (svg.clientWidth), the space the chart drew
+        // itself in, even when <body> is CSS-scaled (desktop/text-size zoom).
+        // rect.width/clientWidth IS that scale; the positioning block below
+        // multiplies back by it.
         const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
         const mx = (e.clientX - rect.left) / scale;
         const my = (e.clientY - rect.top) / scale;
-        const W = svg.clientWidth || 600;
-        const H = svg.clientHeight || 180;
-        const { l: pl, r: pr, t: pt, b: pb } = CHART_PAD;
-        const cw = W - pl - pr;
-        const ch = H - pt - pb;
-
-        // Use the exact window the chart was last rendered with, so hit-testing
-        // stays aligned with the dots even when the X axis is zoomed.
-        const now = this.windows.frozenAt ?? Date.now();
-        const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
-        const tMin = win.tMin, tMax = win.tMax;
-        const { yMin, yMax } = this._chartYBounds(type, tMin, tMax);
-        const tRange = Math.max(1, tMax - tMin);
-        const yRange = Math.max(1e-9, yMax - yMin);
-
-        const padX = this._dotSize * 3.5 + 2;          // match _renderChart's data inset
-        const innerW = Math.max(1, cw - 2 * padX);
-        const xOf = t => pl + padX + (t - tMin) / tRange * innerW;
-        const yOf = v => pt + (1 - (v - yMin) / yRange) * ch;
+        const { xOf, yOf } = this._lastDrawGeometry(svg, type);
 
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
@@ -4781,7 +4782,7 @@ class MeshCoreApp {
                 const hm = hashMeta.get(o.hash) ?? {};
                 this._ingestPacket(o.hash, o.rawId, hm.type ?? null, o.rawHex ?? hm.rawHex ?? null,
                     o.snr ?? null, o.rssi ?? null, hm.meta ?? {}, null,
-                    { importing: true, replaying: true, timestamp: o.time,
+                    { source: 'replay', timestamp: o.time,
                       lat: o.lat ?? undefined, lon: o.lon ?? undefined, remoteSnr: o.remoteSnr });
             }
             // Counters are authoritative from kv, not from the (windowed) replay.
@@ -6080,11 +6081,11 @@ class MeshCoreApp {
                 : row.type;
 
             this._ingestPacket(row.hash, row.repeater, type, row.rawHex, row.snr, row.rssi, meta, packet, {
-                importing:  true,
+                source:     'import',
                 timestamp:  row.time,
                 lat:        row.lat,
                 lon:        row.lon,
-                remoteSnr:  row.uplinkSnr,
+                remoteSnr:  row.remoteSnr,
             });
         }
 
@@ -6094,7 +6095,7 @@ class MeshCoreApp {
         for (const r of sentSnrRows) {
             if (existingSent.has(r.time + '|' + r.repeater)) continue;
             existingSent.add(r.time + '|' + r.repeater);
-            const snr = r.uplinkSnr ?? r.snr;
+            const snr = r.remoteSnr ?? r.snr;
             const lat = r.lat, lon = r.lon;
             this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater });
             this.model.bufferSent({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
@@ -6217,10 +6218,6 @@ class MeshCoreApp {
             txChar?.removeEventListener('characteristicvaluechanged', this._onDataReceived);
             this._onDataReceived = null;
         }
-        if (this._onBatteryChanged && this._batteryCharacteristic) {
-            try { this._batteryCharacteristic.removeEventListener('characteristicvaluechanged', this._onBatteryChanged); } catch {}
-            this._onBatteryChanged = null;
-        }
         // Hide battery immediately — no BLE events can re-show it after this point
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
 
@@ -6260,11 +6257,6 @@ class MeshCoreApp {
             this.txCharacteristic?.removeEventListener('characteristicvaluechanged', this._onDataReceived);
             this._onDataReceived = null;
         }
-        if (this._onBatteryChanged && this._batteryCharacteristic) {
-            try { this._batteryCharacteristic.removeEventListener('characteristicvaluechanged', this._onBatteryChanged); } catch (e) {}
-            this._onBatteryChanged = null;
-        }
-        this._batteryCharacteristic = null;
         this.txCharacteristic = null;
         this.bleRxCharacteristic = null;
         // Serial teardown: release the reader lock (this unblocks the read loop)

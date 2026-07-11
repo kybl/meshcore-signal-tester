@@ -139,9 +139,9 @@ test('sentRows are separated from observation rows on parse', () => {
     assert.equal(rows.length, 1);
     assert.equal(sentRows.length, 1);
     assert.equal(sentRows[0].repeater, '5E9F');
-    // Sent SNR is written to the uplink_snr column (the importer reads
-    // uplinkSnr ?? snr), so the plain snr column is empty (0) here.
-    assert.equal(sentRows[0].uplinkSnr, 4.25);
+    // Sent SNR is written to the uplink_snr column (parsed back as remoteSnr;
+    // the importer reads remoteSnr ?? snr), so the plain snr column is empty (0) here.
+    assert.equal(sentRows[0].remoteSnr, 4.25);
     assert.equal(sentRows[0].csvText, 'Repeater 1');   // label lands in the text column
 });
 

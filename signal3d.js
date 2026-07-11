@@ -1785,7 +1785,7 @@ export class Signal3DMap {
         // (MIN_HEIGHT·scale.y) and marker. A fixed offset can't do both: at deep
         // zoom the dampened dots/markers are tiny, so a 0.02 overlay would hide
         // them; tying it to scale.y keeps it clear of z-fighting yet under them.
-        if (this._overlayMesh) this._overlayMesh.position.y = this._rxPointsGroup.scale.y * 0.1;
+        if (this._overlayMesh) this._overlayMesh.position.y = this._overlayY();
     }
 
     _updatePerspUniforms() {
@@ -1863,6 +1863,13 @@ export class Signal3DMap {
     // The detail-overlay target (tile rect + cache key) for the current camera
     // view, or null when no overlay is warranted. Recomputed after the fetch to
     // detect a stale view (camera moved during the await).
+    // Overlay height: just above the base plane, below the dots. One source of
+    // truth — set at mesh creation AND re-applied by _updateHeightScale, which
+    // previously each carried their own copy of the 0.1 factor.
+    _overlayY() {
+        return this._rxPointsGroup.scale.y * 0.1;
+    }
+
     _overlayTarget() {
         if (!this._tileBounds || this._mapSource === 'none') return null;
         const camBb = this._cameraViewBbox();
@@ -1918,7 +1925,9 @@ export class Signal3DMap {
             const seLL  = tileToLatLon(ox1 + 1, oy1 + 1, overlayZoom);
             const nwPos = this._latLonToWorld(nwLL.lat, nwLL.lon);
             const sePos = this._latLonToWorld(seLL.lat, seLL.lon);
-            if (!nwPos || !sePos) return;
+            // _tileBounds vanished mid-await — the texture would never be
+            // installed; dispose it like every other bail-out path does.
+            if (!nwPos || !sePos) { texture.dispose(); return; }
 
             const oW  = Math.abs(sePos.x - nwPos.x);
             const oH  = Math.abs(sePos.z - nwPos.z);
@@ -1929,7 +1938,7 @@ export class Signal3DMap {
             const mat  = new THREE.MeshBasicMaterial({ map: texture });
             const mesh = new THREE.Mesh(geo, mat);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.set(ocx, this._rxPointsGroup.scale.y * 0.1, ocz);   // just above base, below the dots (kept in sync by _updateHeightScale)
+            mesh.position.set(ocx, this._overlayY(), ocz);
 
             this._removeOverlay();
             this._overlayMesh = mesh;

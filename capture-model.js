@@ -18,7 +18,7 @@
 // The store is injectable (constructor option) so the model is unit-testable in
 // Node without IndexedDB — see test/capture-model.test.js.
 
-import { PacketStore } from './packet-store.js?v=22';
+import { PacketStore } from './packet-store.js?v=23';
 
 export class CaptureModel {
     #recent = new Map();     // hash → packet aggregate (the RAM window)

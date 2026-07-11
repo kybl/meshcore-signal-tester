@@ -180,7 +180,9 @@ export function parseCsv(text) {
             rawHex:    iHex >= 0 ? c[iHex] : '',
             lat:       lat != null && !isNaN(lat) ? lat : null,
             lon:       lon != null && !isNaN(lon) ? lon : null,
-            uplinkSnr: iUplinkSnr >= 0 && c[iUplinkSnr] !== '' ? parseFloat(c[iUplinkSnr]) : null,
+            // Code-side this value is remoteSnr everywhere; only the CSV
+            // column keeps the historical name uplink_snr (format stability).
+            remoteSnr: iUplinkSnr >= 0 && c[iUplinkSnr] !== '' ? parseFloat(c[iUplinkSnr]) : null,
             csvText:   iTxt >= 0 ? c[iTxt] : '',
             csvSender: iSnd >= 0 ? c[iSnd] : '',
         });

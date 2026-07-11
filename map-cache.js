@@ -63,7 +63,13 @@ export class MapCache {
             (this.#pending ??= []).length < 1000 && this.#pending.push(o);
             return;
         }
-        if (!base.cell) base.cell = 5;   // first-ever point: gridObs' minimum cell
+        // First-ever point: seed the cell at the same rung a disk rebuild of a
+        // tiny extent would pick — cellFor's 5 m floor snapped onto the 2·2ⁿ
+        // ladder (= 4 m, level 1). A raw off-ladder 5 here silently broke the
+        // "base nests with the detail levels" invariant (refresh() derives
+        // baseLevel by rounding, so the gate compared against a 4 m level while
+        // the real bin was 5 m) until a budget-overflow rebuild re-snapped it.
+        if (!base.cell) base.cell = MapLod.cellMetersForLevel(MapLod.levelForCellMeters(5));
         const bKey = this.#cellKey(base.cell, o.rawId, o.lat, o.lon);
         base.cells.set(bKey, { ...o, count: (base.cells.get(bKey)?.count ?? 0) + 1 });
         const d = this.#detail;
