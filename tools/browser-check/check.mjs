@@ -97,7 +97,11 @@ function sampleCsv() {
             rows.push([t, 'RX_LOG_DATA', (h++).toString(16), s.id, snr, '', s.rssi, '', lat, lon, '', ''].join(','));
         }
     }
-    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0), order: specs.map(s => s.id),
+    // One zero-stuffed frame (20 zero bytes, then a tail): decodes as a
+    // structurally "valid" packet, so only the app-side ⚠ flag marks it.
+    rows.push([new Date(now - 12 * 60 * 1000).toISOString(), 'RX_LOG_DATA', 'feed', 'AAAA01',
+               '3.00', '', -100, '00'.repeat(20) + 'deadbeef', '', '', '', ''].join(','));
+    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0) + 1, order: specs.map(s => s.id),
              contactCount: contacts.length };
 }
 
@@ -160,6 +164,11 @@ async function main() {
 
     // 3) Bug-2 guard: columns ranked by first-page presence, NOT by last RSSI.
     const cols = await page.$$eval('#msgTableHead th.msg-col-rep', ths => ths.map(t => t.getAttribute('data-col')));
+    // Zero-stuffed frame flag: the fixture holds one frame starting with 20
+    // zero bytes; it must carry the ⚠ badge in the Received Packets table.
+    check('zero-stuffed frame carries the ⚠ badge',
+        await page.$('#msgTableBody .zs-badge') != null);
+
     check('Received Packets column order = by first-page count',
         JSON.stringify(cols) === JSON.stringify(order),
         `expected ${JSON.stringify(order)}, got ${JSON.stringify(cols)}`);

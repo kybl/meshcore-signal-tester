@@ -2848,6 +2848,24 @@ class MeshCoreApp {
         return [h1, h2].map(h => (h >>> 0).toString(16).padStart(8, '0')).join('').toUpperCase();
     }
 
+    // "Zero-stuffed" (vycpaný nulami): the raw frame BEGINS with a long run of
+    // zero bytes. Real MeshCore traffic can't look like that — encrypted
+    // payloads make >=8 leading zero bytes statistically impossible, and the
+    // legitimate structural zeros (zero transport codes, an advert's 0,0
+    // position) all stay shorter. Yet such frames decode as structurally
+    // "valid" (header 0x00 parses as TransportFlood Request), so nothing else
+    // flags them. Real captures show them as a distinct population with
+    // word-aligned zero prefixes — an RX artefact or a foreign transmitter on
+    // the same radio settings. Threshold 8 keeps every legitimate pattern out.
+    _zeroStuffedBytes(hex) {
+        if (!hex) return 0;
+        let n = 0;
+        while (n * 2 + 1 < hex.length && hex[n * 2] === '0' && hex[n * 2 + 1] === '0') n++;
+        return n;
+    }
+
+    _isZeroStuffed(hex) { return this._zeroStuffedBytes(hex) >= 8; }
+
     _extractRepeater(packet) {
         // Trace packets (payloadType 9) are the one case where the header `path`
         // field does NOT hold node IDs: it holds one per-hop SNR byte
@@ -3366,9 +3384,12 @@ class MeshCoreApp {
         const typeDisplay = this._useAbbreviatedTypes
             ? this._escHtml(this._abbreviateType(data.type))
             : this._escHtml(data.type || '?');
+        const zsBadge = this._isZeroStuffed(data.rawHex)
+            ? `<span class="zs-badge" title="Zero-stuffed frame: starts with ${this._zeroStuffedBytes(data.rawHex)} zero bytes — likely a receive artefact or a foreign transmitter, not real MeshCore traffic">⚠</span>`
+            : '';
         return `<tr id="row-${hash}">
             <td class="msg-col-rx">
-                <span class="rx-time">${this._formatTime(data.firstSeen)}</span><span class="rx-type" title="${this._escHtml(data.type || '?')}">${typeDisplay}</span>
+                <span class="rx-time">${this._formatTime(data.firstSeen)}</span>${zsBadge}<span class="rx-type" title="${this._escHtml(data.type || '?')}">${typeDisplay}</span>
             </td>
             ${cells}
         </tr>`;
@@ -3541,6 +3562,10 @@ class MeshCoreApp {
         const typeHtml = data.type
             ? `<div class="detail-type">${this._escHtml(data.type)}</div>`
             : '';
+        const zsN = this._zeroStuffedBytes(hex ?? data.rawHex);
+        const zsHtml = zsN >= 8
+            ? `<div class="detail-zs">⚠ Zero-stuffed frame: begins with ${zsN} zero bytes. Real MeshCore traffic never looks like this — most likely a receive artefact or a foreign transmitter on the same radio settings. The decoded fields below are meaningless.</div>`
+            : '';
         const jsonHtml = pkt
             ? `<pre class="detail-json">${this._syntaxHighlightJson(this._formatPacketDetail(pkt))}</pre>`
             : '';
@@ -3563,7 +3588,7 @@ class MeshCoreApp {
             msgHtml = `<div class="detail-msg">💬 ${who}${this._escHtml(String(decMsg.message))}</div>`;
         }
 
-        return `<td colspan="${colspan}" class="detail-cell" title="Click to hide detail"><div class="detail-content">${typeHtml}${header}${metaHtml}${msgHtml}${jsonHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell" title="Click to hide detail"><div class="detail-content">${typeHtml}${zsHtml}${header}${metaHtml}${msgHtml}${jsonHtml}</div></td>`;
     }
 
     _buildSigCells(rssi, snr, hash, col) {

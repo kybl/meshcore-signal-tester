@@ -1129,6 +1129,23 @@ html:not(.light-theme) .btn-connect:disabled {
     color: var(--text-muted);
 }
 
+.zs-badge {
+    color: #d97706;
+    margin-right: 3px;
+    cursor: help;
+}
+
+.detail-zs {
+    font-size: 12px;
+    color: var(--text-primary);
+    background: rgba(217, 119, 6, 0.13);
+    border-left: 3px solid #d97706;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+
 .detail-msg {
     font-size: 13px;
     color: var(--text-primary);
