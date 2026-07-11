@@ -1,5 +1,5 @@
 // MeshCore Signal Tester Application
-import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=4';
+import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=5';
 import { Signal3DMap } from './signal3d.js?v=156';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
@@ -3579,11 +3579,12 @@ class MeshCoreApp {
         const typeHtml = data.type
             ? `<div class="detail-type">${this._escHtml(data.type)}</div>`
             : '';
-        // Trace packets: the decoder surfaces the header path as per-hop SNR
-        // (DecodedPacket.pathSnr) — show it prominently above the JSON.
+        // Trace packets: the header path carries per-hop SNR (exposed by the
+        // decoder as payload.decoded.snrValues) — show it above the JSON.
         let traceHtml = '';
-        if (Array.isArray(pkt?.pathSnr) && pkt.pathSnr.length) {
-            traceHtml = `<div class="detail-trace">📶 Per-hop SNR (header path): ${pkt.pathSnr.map(s => `${s} dB`).join(' → ')}</div>`;
+        const snrVals = pkt?.payloadType === 9 ? pkt.payload?.decoded?.snrValues : null;
+        if (Array.isArray(snrVals) && snrVals.length) {
+            traceHtml = `<div class="detail-trace">📶 Per-hop SNR (header path): ${snrVals.map(s => `${s} dB`).join(' → ')}</div>`;
         }
         const zsN = this._zeroStuffedBytes(hex ?? data.rawHex);
         const zsHtml = zsN >= 8
