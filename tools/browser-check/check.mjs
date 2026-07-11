@@ -101,6 +101,10 @@ function sampleCsv() {
     // structurally "valid" packet, so only the app-side ⚠ flag marks it.
     rows.push([new Date(now - 12 * 60 * 1000).toISOString(), 'RX_LOG_DATA', 'feed', 'AAAA01',
                '3.00', '', -100, '00'.repeat(20) + 'deadbeef', '', '', '', ''].join(','));
+    // One Trace packet (header path = per-hop SNR bytes 0x31/0xFA = 12.25/−1.5 dB):
+    // its detail must render them as dB, not as phantom node hashes.
+    rows.push([new Date(now - 11 * 60 * 1000).toISOString(), 'RX_LOG_DATA', 'trc1', 'AAAA01',
+               '2.00', '', -99, '260231fa112233445566778800aabb', '', '', '', ''].join(','));
     // 110 old filler rows (all AAAA01, so the column order stays untouched)
     // push the table past one page — and hide a needle ('xyzzy-…' in the text
     // column) deep on the LAST page, where only the disk-wide message-filter
@@ -110,7 +114,7 @@ function sampleCsv() {
         rows.push([t, 'RX_LOG_DATA', (0x9000 + i).toString(16), 'AAAA01', '1.00', '', -100, '',
                    '', '', i === 105 ? 'xyzzy-needle in a haystack' : '', ''].join(','));
     }
-    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0) + 1 + 110, order: specs.map(s => s.id),
+    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0) + 2 + 110, order: specs.map(s => s.id),
              contactCount: contacts.length };
 }
 
@@ -236,6 +240,15 @@ async function main() {
         `disabled: ${JSON.stringify(disabledOpts)}`);
     await page.selectOption('#ttlSelect', 'Infinity'); // restore
     await page.waitForTimeout(400);
+
+    // Trace detail: opening the trace row's signal cell must show the header
+    // path as per-hop dB values, not hex "hashes".
+    await page.click('#row-trc1 .sig-snr');
+    const traceDetail = await waitUntil(() =>
+        page.$eval('#detail-trc1 .detail-trace', el => el.textContent.includes('12.25 dB') && el.textContent.includes('-1.5 dB'))
+            .catch(() => false));
+    check('Trace detail shows the header path as per-hop SNR in dB', traceDetail);
+    await page.click('#row-trc1 .sig-snr').catch(() => {});   // close the detail again
 
     // Disk-wide message filter: the needle row sits on the LAST page (rows
     // 101+ newest-first); the filter must repaginate over the whole history

@@ -1146,6 +1146,17 @@ html:not(.light-theme) .btn-connect:disabled {
     word-break: break-word;
 }
 
+.detail-trace {
+    font-size: 12px;
+    color: var(--text-primary);
+    background: rgba(59, 130, 246, 0.12);
+    border-left: 3px solid #3b82f6;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+
 .detail-msg {
     font-size: 13px;
     color: var(--text-primary);

@@ -3514,6 +3514,14 @@ class MeshCoreApp {
         const clean = JSON.parse(JSON.stringify(packet));
         delete clean.isValid;
         if (clean.payload) delete clean.payload.raw;
+        // Trace: header path bytes are per-hop SNR, not node hashes — render
+        // them as dB so the JSON says what the bytes mean.
+        if (clean.payloadType === 9 && Array.isArray(clean.path)) {
+            clean.path = clean.path.map(h => {
+                const v = parseInt(h, 16);
+                return `${(v > 127 ? v - 256 : v) / 4} dB`;   // quarter-dB steps are exact
+            });
+        }
 
         const walk = (obj) => {
             if (!obj || typeof obj !== 'object') return;
@@ -3578,6 +3586,17 @@ class MeshCoreApp {
         const typeHtml = data.type
             ? `<div class="detail-type">${this._escHtml(data.type)}</div>`
             : '';
+        // Trace packets: the header path carries per-hop SNR bytes, not node
+        // hashes (firmware: "append SNR (Not hash!)") — surface them as dB so
+        // the detail doesn't read like a path of phantom nodes 00/FF.
+        let traceHtml = '';
+        if (pkt?.payloadType === 9 && Array.isArray(pkt.path) && pkt.path.length) {
+            const dbs = pkt.path.map(h => {
+                const v = parseInt(h, 16);
+                return `${(v > 127 ? v - 256 : v) / 4} dB`;   // quarter-dB steps are exact
+            });
+            traceHtml = `<div class="detail-trace">📶 Per-hop SNR (header path): ${dbs.join(' → ')}</div>`;
+        }
         const zsN = this._zeroStuffedBytes(hex ?? data.rawHex);
         const zsHtml = zsN >= 8
             ? `<div class="detail-zs">⚠ Zero-stuffed frame: begins with ${zsN} zero bytes. Real MeshCore traffic never looks like this — most likely a receive artefact or a foreign transmitter on the same radio settings. The decoded fields below are meaningless.</div>`
@@ -3604,7 +3623,7 @@ class MeshCoreApp {
             msgHtml = `<div class="detail-msg">💬 ${who}${this._escHtml(String(decMsg.message))}</div>`;
         }
 
-        return `<td colspan="${colspan}" class="detail-cell" title="Click to hide detail"><div class="detail-content">${typeHtml}${zsHtml}${header}${metaHtml}${msgHtml}${jsonHtml}</div></td>`;
+        return `<td colspan="${colspan}" class="detail-cell" title="Click to hide detail"><div class="detail-content">${typeHtml}${zsHtml}${traceHtml}${header}${metaHtml}${msgHtml}${jsonHtml}</div></td>`;
     }
 
     _buildSigCells(rssi, snr, hash, col) {
