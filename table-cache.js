@@ -28,14 +28,19 @@ export class TableCache {
     #narrowHashes = null;        // newest-first matching hashes (null = not narrowed / stale)
     #narrowSet = null;           // same content as a Set, for O(1) ingest checks
     #narrowIndexKey = '';        // narrow key the index hashes were built for
-    #narrowKeyApplied = '';      // narrow key the current page was loaded for
+    #narrowKeyApplied = '\x1f';  // combined "narrow\x1f msgFilter" key the current page was loaded for
+    #textHashes = null;          // newest-first hashes matching the message filter (null = off/stale)
+    #textSet = null;
+    #textIndexKey = null;        // message filter the text index was built for (null = none)
+    #filteredTotal = null;       // effective row total under the active filters (null = unfiltered)
     #firstPageColCounts = new Map(); // per-column occurrences on page 0 (column sort key #2)
     #loadSeq = 0;                // guards concurrent loadPage calls (newest wins wholly)
 
-    constructor(model, { pageSize = 100, resolveCol, narrowFn, narrowKey, displayCutoff }) {
+    constructor(model, { pageSize = 100, resolveCol, narrowFn, narrowKey, displayCutoff,
+                         msgFilter = () => '', rowMatches = () => true }) {
         this.#model = model;
         this.#pageSize = pageSize;
-        this.#deps = { resolveCol, narrowFn, narrowKey, displayCutoff };
+        this.#deps = { resolveCol, narrowFn, narrowKey, displayCutoff, msgFilter, rowMatches };
     }
 
     get page()      { return this.#page; }
@@ -44,6 +49,9 @@ export class TableCache {
     get pageSize()  { return this.#pageSize; }
     get cacheAt()   { return this.#cacheAt; }
     get narrowed()  { return this.#narrowHashes != null; }
+    get textFiltered() { return this.#textIndexKey != null; }
+    // Effective row total under the active narrowing/filter (null = unfiltered).
+    get filterTotal()  { return this.#filteredTotal; }
     get firstPageColCounts() { return this.#firstPageColCounts; }
 
     // ---- union reads (page snapshot ∪ live recent window) -------------------
@@ -65,9 +73,11 @@ export class TableCache {
         if (this.#page === 0) {
             for (const [h, d] of this.#model.recentEntries()) {
                 if (d.lastSeen <= this.#cacheAt) continue;
-                // When narrowed the snapshot holds only matching hashes — keep the
-                // tail consistent so hidden rows don't eat the page cap.
+                // When narrowed/filtered the snapshot holds only matching hashes
+                // — keep the tail consistent so hidden rows don't eat the page cap.
                 if (narrowFn && ![...d.repeaters.keys()].some(narrowFn)) continue;
+                const mf = this.#deps.msgFilter();
+                if (mf && !this.#deps.rowMatches(d, mf)) continue;
                 m.set(h, d);
             }
         }
@@ -89,13 +99,37 @@ export class TableCache {
     noteIngest(hash, canonicalKey, isNewHash) {
         if (isNewHash) this.#hashCount++;
         const narrowFn = this.#deps.narrowFn();
+        const wasInNarrow = this.#narrowSet?.has(hash) ?? false;
         if (this.#narrowHashes && narrowFn
             && this.#narrowIndexKey === this.#deps.narrowKey()
             && narrowFn(canonicalKey) && !this.#narrowSet.has(hash)) {
             this.#narrowHashes.unshift(hash);
             this.#narrowSet.add(hash);
         }
-        const total = this.#narrowHashes ? this.#narrowHashes.length : this.#hashCount;
+        // Text index: a live packet can join it too. Match on the RAM row (it
+        // was just ingested there); guard on the index being current.
+        const wasInText = this.#textSet?.has(hash) ?? false;
+        if (this.#textHashes && this.#textIndexKey === this.#deps.msgFilter()
+            && !this.#textSet.has(hash)) {
+            const row = this.#model.recentGet(hash);
+            if (row && this.#deps.rowMatches(row, this.#textIndexKey)) {
+                this.#textHashes.unshift(hash);
+                this.#textSet.add(hash);
+            }
+        }
+        // Keep the effective total in step: the hash counts when it satisfies
+        // every ACTIVE filter and was not already counted. (Exact totals are
+        // re-established on each loadPage; this keeps the pager live between.)
+        if (this.#filteredTotal != null) {
+            const inNarrow = !this.#narrowHashes || this.#narrowSet.has(hash);
+            const inText   = !this.#textHashes   || this.#textSet.has(hash);
+            const wasCounted = (this.#narrowHashes ? wasInNarrow : true)
+                            && (this.#textHashes ? wasInText : true)
+                            && !isNewHash;
+            if (inNarrow && inText && !wasCounted) this.#filteredTotal++;
+        }
+        const total = this.#filteredTotal
+            ?? (this.#narrowHashes ? this.#narrowHashes.length : this.#hashCount);
         this.#pageCount = Math.max(1, Math.ceil(total / this.#pageSize));
     }
 
@@ -108,10 +142,11 @@ export class TableCache {
         return this.#page > this.#pageCount - 1;
     }
 
-    // True (once) when the narrowing key changed since the last load/check —
-    // the caller then repaginates from page 0.
+    // True (once) when the combined filter key (repeater narrowing + message
+    // filter) changed since the last load/check — the caller then repaginates
+    // from page 0.
     narrowKeyChanged() {
-        const key = this.#deps.narrowKey();
+        const key = this.#deps.narrowKey() + '\x1f' + this.#deps.msgFilter();
         if (key === this.#narrowKeyApplied) return false;
         this.#narrowKeyApplied = key;
         return true;
@@ -140,26 +175,37 @@ export class TableCache {
         await this.#model.flush();   // the page must include still-buffered packets
         const boundary = Date.now(); // snapshot covers disk up to here (tail base)
         if (reset) {
-            // The underlying data may have changed (replay/import/prune/narrow
-            // change) — any narrow index is stale.
+            // The underlying data may have changed (replay/import/prune/filter
+            // change) — any filter index is stale.
             this.#narrowHashes = this.#narrowSet = null;
+            this.#textHashes = this.#textSet = null;
+            this.#textIndexKey = null;
         }
         const size = this.#pageSize;
         const winFrom = this.#deps.displayCutoff() || undefined;
         // Authoritative count from disk; between loads it is maintained in RAM
         // (noteIngest) so the pager needs no disk reads.
         const hashCount = await this.#model.countHashes(winFrom);
-        const narrowKeyApplied = this.#deps.narrowKey();
+        const narrowKeyApplied = this.#deps.narrowKey() + '\x1f' + this.#deps.msgFilter();
         const narrowed = this.#deps.narrowFn() != null;
         if (narrowed && !this.#narrowHashes) await this.#buildNarrowIndex();
-        // A concurrent narrowing change can make #buildNarrowIndex bail (leaving
-        // null); treat as empty — the follow-up repaginate re-renders.
+        const msgFilter = this.#deps.msgFilter();
+        if (msgFilter && this.#textIndexKey !== msgFilter) await this.#buildTextIndex();
+        if (!msgFilter) { this.#textHashes = this.#textSet = null; this.#textIndexKey = null; }
+        // Effective hash list under the active filters. A concurrent filter
+        // change can make an index build bail (leaving null); treat as empty —
+        // the follow-up repaginate re-renders.
         const narrowHashes = narrowed ? (this.#narrowHashes ?? []) : null;
-        const total = narrowed ? narrowHashes.length : hashCount;
+        const textSet = msgFilter ? (this.#textSet ?? new Set()) : null;
+        let listed = null;
+        if (narrowHashes && textSet) listed = narrowHashes.filter(h => textSet.has(h));
+        else if (narrowHashes)       listed = narrowHashes;
+        else if (textSet)            listed = msgFilter ? (this.#textHashes ?? []) : null;
+        const total = listed ? listed.length : hashCount;
         const pageCount = Math.max(1, Math.ceil(total / size));
         const pageNum = Math.min(Math.max(0, page), pageCount - 1);
-        const hashes = narrowed
-            ? await this.#model.getHashes(narrowHashes.slice(pageNum * size, (pageNum + 1) * size))
+        const hashes = listed
+            ? await this.#model.getHashes(listed.slice(pageNum * size, (pageNum + 1) * size))
             : await this.#model.pageHashes(pageNum * size, size, winFrom);
         const map = new Map();
         for (const h of hashes) {
@@ -186,6 +232,7 @@ export class TableCache {
         this.#hashCount = hashCount;
         this.#narrowKeyApplied = narrowKeyApplied;
         if (!narrowed) this.#narrowHashes = this.#narrowSet = null;
+        this.#filteredTotal = listed ? total : null;
         this.#pageCount = pageCount;
         this.#page = pageNum;
         this.#pageData = map;
@@ -201,14 +248,23 @@ export class TableCache {
         }
     }
 
-    // Which page a hash sits on under the current narrowing (one row per hash,
-    // so it is unique). Flushes first — a just-received packet may still sit in
-    // the write buffer, and the index scan is disk-only.
+    // Which page a hash sits on under the current narrowing + message filter
+    // (one row per hash, so it is unique). Flushes first — a just-received
+    // packet may still sit in the write buffer, and the index scans are
+    // disk-only.
     async pageOfHash(hash) {
         await this.#model.flush();
-        if (!this.#narrowHashes || this.#narrowIndexKey !== this.#deps.narrowKey())
+        const narrowed = this.#deps.narrowFn() != null;
+        if (narrowed && (!this.#narrowHashes || this.#narrowIndexKey !== this.#deps.narrowKey()))
             await this.#buildNarrowIndex();
-        const idx = this.#narrowHashes ? this.#narrowHashes.indexOf(hash) : -1;
+        if (!narrowed) this.#narrowHashes = this.#narrowSet = null;
+        const msgFilter = this.#deps.msgFilter();
+        if (msgFilter && this.#textIndexKey !== msgFilter) await this.#buildTextIndex();
+        let listed = this.#narrowHashes;
+        if (msgFilter && this.#textSet) {
+            listed = listed ? listed.filter(h => this.#textSet.has(h)) : (this.#textHashes ?? []);
+        }
+        const idx = listed ? listed.indexOf(hash) : -1;
         return idx >= 0 ? Math.floor(idx / this.#pageSize) : 0;
     }
 
@@ -245,6 +301,44 @@ export class TableCache {
         this.#narrowIndexKey = builtForKey;
     }
 
+    // Build the message-filter index: every hash whose ROW — type, meta, raw
+    // bytes, repeater ids (and through the injected matcher also contact
+    // names) — matches the active text filter, newest-first by firstSeen. One
+    // pass over the hash records plus one over the obs store: the same cost
+    // class as the repeater narrow index. Assembles a minimal row shape per
+    // hash and delegates the actual matching to deps.rowMatches, so the
+    // matching semantics live in ONE place (the app's _rowMatchesFilter) for
+    // both the live tail and the disk index.
+    async #buildTextIndex() {
+        // Capture the filter this scan is FOR — a filter change mid-scan makes
+        // the result stale (same overlap guard as the narrow index).
+        const builtFor = this.#deps.msgFilter();
+        const winFrom = this.#deps.displayCutoff() || -Infinity;
+        const shapes = new Map();   // hash → row shape for deps.rowMatches
+        await this.#model.eachHash(winFrom, h => {
+            shapes.set(h.hash, { type: h.type, meta: h.meta, firstSeen: h.firstSeen,
+                                 rawHex: null, repeaters: new Map() });
+        });
+        const colOf = new Map();    // rawId → col (memoised; rawIds repeat heavily)
+        await this.#model.eachObs(winFrom === -Infinity ? -Infinity : winFrom, Infinity, o => {
+            const s = shapes.get(o.hash);
+            if (!s) return;
+            let col = colOf.get(o.rawId);
+            if (col === undefined) { col = this.#deps.resolveCol(o.rawId); colOf.set(o.rawId, col); }
+            if (!s.repeaters.has(col)) s.repeaters.set(col, { rawId: o.rawId });
+            if (!s.rawHex && o.rawHex) s.rawHex = o.rawHex;
+        });
+        if (builtFor !== this.#deps.msgFilter()) return;   // stale — a newer filter owns the index
+        const matched = [];
+        for (const [hash, s] of shapes) {
+            if (this.#deps.rowMatches(s, builtFor)) matched.push([hash, s.firstSeen ?? 0]);
+        }
+        matched.sort((a, b) => b[1] - a[1]);
+        this.#textHashes = matched.map(([h]) => h);
+        this.#textSet = new Set(this.#textHashes);
+        this.#textIndexKey = builtFor;
+    }
+
     // Reset to the empty state (Clear data), hash count included — so the
     // empty state and the Active stat read 0 immediately instead of showing
     // stale numbers until the follow-up wide-view rebuild recounts from the
@@ -255,7 +349,11 @@ export class TableCache {
         this.#pageCount = 1;
         this.#hashCount = 0;
         this.#narrowHashes = this.#narrowSet = null;
-        this.#narrowIndexKey = this.#narrowKeyApplied = '';
+        this.#narrowIndexKey = '';
+        this.#narrowKeyApplied = '\x1f';
+        this.#textHashes = this.#textSet = null;
+        this.#textIndexKey = null;
+        this.#filteredTotal = null;
         this.#cacheAt = 0;
         this.#firstPageColCounts = new Map();
     }

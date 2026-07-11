@@ -18,7 +18,7 @@
 // The store is injectable (constructor option) so the model is unit-testable in
 // Node without IndexedDB — see test/capture-model.test.js.
 
-import { PacketStore } from './packet-store.js?v=23';
+import { PacketStore } from './packet-store.js?v=24';
 
 export class CaptureModel {
     #recent = new Map();     // hash → packet aggregate (the RAM window)
@@ -138,6 +138,7 @@ export class CaptureModel {
     getHash(hash)                       { return this.#store.getHash(hash); }
     getHashes(hashes)                   { return this.#store.getHashes(hashes); }
     obsForHash(hash)                    { return this.#store.obsForHash(hash); }
+    eachHash(fromTime, cb)              { return this.#store.eachHash(fromTime, cb); }
     eachObs(fromTime, toTime, cb)       { return this.#store.eachObs(fromTime, toTime, cb); }
     eachSent(fromTime, toTime, cb)      { return this.#store.eachSent(fromTime, toTime, cb); }
     gridObs(fromTime, toTime, cellFn, bbox = null) { return this.#store.gridObs(fromTime, toTime, cellFn, bbox); }

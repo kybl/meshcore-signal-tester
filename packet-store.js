@@ -677,6 +677,28 @@ export class PacketStore {
         } catch (_) { return []; }
     }
 
+    /** Iterate every hash record ascending by firstSeen, optionally only
+     *  those first seen at/after `fromTime`. cb may return false to stop.
+     *  Used by the table's message-filter index (one pass over all rows). */
+    async eachHash(fromTime, cb) {
+        if (!this.db) return;
+        try {
+            await new Promise((resolve, reject) => {
+                const tx = this.db.transaction('hashes', 'readonly');
+                const idx = tx.objectStore('hashes').index('firstSeen');
+                const range = Number.isFinite(fromTime) ? IDBKeyRange.lowerBound(fromTime) : null;
+                const req = idx.openCursor(range);
+                req.onsuccess = () => {
+                    const cur = req.result;
+                    if (!cur) { resolve(); return; }
+                    if (cb(cur.value) === false) { resolve(); return; }
+                    cur.continue();
+                };
+                req.onerror = () => reject(req.error);
+            });
+        } catch (_) {}
+    }
+
     /** Batched getHash (one readonly transaction), records in input order.
      *  Used by the repeater-filtered table pager, which pages by hash list
      *  instead of the firstSeen index. A hash with no stored record (shouldn't

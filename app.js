@@ -1,8 +1,8 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=3';
 import { Signal3DMap } from './signal3d.js?v=156';
-import { CaptureModel } from './capture-model.js?v=3';
-import { TableCache } from './table-cache.js?v=2';
+import { CaptureModel } from './capture-model.js?v=4';
+import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
 import { MapCache } from './map-cache.js?v=2';
 import { TimeWindows } from './time-windows.js?v=1';
@@ -172,6 +172,12 @@ class MeshCoreApp {
             narrowFn:      () => this.selection.narrowFn(),
             narrowKey:     () => this.selection.narrowKey(),
             displayCutoff: () => this.windows.displayCutoff(),
+            // The message filter narrows pages disk-wide, like the repeater
+            // filter: TableCache builds an index of matching hashes and pages
+            // over it. Matching semantics live in ONE place, _rowMatchesFilter,
+            // shared by the live tail, the render pass and the disk index.
+            msgFilter:     () => this._msgFilter.toLowerCase().trim(),
+            rowMatches:    (row, filter) => this._rowMatchesFilter(row, filter),
         });
         this.charts = new ChartCache(this.model, {
             bucketCount:     this.DOWNSAMPLE_BUCKETS,
@@ -647,7 +653,11 @@ class MeshCoreApp {
                 msgFilterInput.classList.toggle('has-value', active);
                 msgFilterClear?.classList.toggle('hidden', !active);
                 msgFilterApplied?.classList.toggle('hidden', !active);
-                this._renderMsgTable();
+                this._renderMsgTable();     // instant: narrows the loaded page
+                // Disk-wide: repaginate over the matching-hash index once the
+                // typing settles (each rebuild is a full history scan).
+                clearTimeout(this._msgFilterTimer);
+                this._msgFilterTimer = setTimeout(() => this._repaginateIfNarrowChanged(), 300);
             });
         }
         if (msgFilterClear) {
@@ -656,6 +666,8 @@ class MeshCoreApp {
                 if (msgFilterInput) { msgFilterInput.value = ''; msgFilterInput.classList.remove('has-value'); }
                 msgFilterClear.classList.add('hidden');
                 msgFilterApplied?.classList.add('hidden');
+                clearTimeout(this._msgFilterTimer);
+                this._repaginateIfNarrowChanged();   // drop the filter index, back to plain paging
                 this._renderMsgTable();
                 msgFilterInput?.focus();
             });
@@ -3305,10 +3317,14 @@ class MeshCoreApp {
 
         this._renderMsgTableHeader(visibleCols);
 
-        // Filter count badge
+        // Filter count badge: with the disk-wide index active show matches
+        // across the WHOLE history, not just the visible page.
         if (this.msgFilterCountEl) {
-            const show = filter && allRows.length > 0;
-            this.msgFilterCountEl.textContent = show ? `${rows.length} / ${allRows.length}` : '';
+            const show = !!filter;
+            const label = (this.model.ready && this.table.textFiltered && this.table.filterTotal != null)
+                ? `${this.table.filterTotal} / ${this.table.hashCount}`
+                : `${rows.length} / ${allRows.length}`;
+            this.msgFilterCountEl.textContent = show ? label : '';
             this.msgFilterCountEl.classList.toggle('hidden', !show);
         }
 
@@ -4953,7 +4969,7 @@ class MeshCoreApp {
             pager.querySelector('#msgPagePrev').addEventListener('click', () => this._loadTablePage(this.table.page - 1));
             pager.querySelector('#msgPageNext').addEventListener('click', () => this._loadTablePage(this.table.page + 1));
         }
-        const narrowTag = this.table.narrowed
+        const narrowTag = (this.table.narrowed || this.table.textFiltered)
             ? (this.selection.col ? ' (selected)' : ' (filtered)') : '';
         pager.querySelector('#msgPageInfo').textContent =
             `Page ${this.table.page + 1} / ${this.table.pageCount}${narrowTag}`;
@@ -5165,9 +5181,9 @@ class MeshCoreApp {
     // the new last page so the snapshot matches the pager.
     _afterDiskPrune(deletedHashes) {
         if (!deletedHashes) return;
-        if (this.table.narrowed) {
-            // No way to tell how many of the deleted hashes were in the narrow
-            // index — rebuild it (bounded: finite retention keeps the store
+        if (this.table.narrowed || this.table.textFiltered) {
+            // No way to tell how many of the deleted hashes were in the filter
+            // indexes — rebuild them (bounded: finite retention keeps the store
             // small). Keep the user on their CURRENT page (clamped) instead of
             // yanking them back to page 1 on every ~10 s prune tick.
             this._loadTablePage(this.table.page, true);

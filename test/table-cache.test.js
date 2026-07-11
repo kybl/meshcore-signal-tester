@@ -21,6 +21,11 @@ function stubModel({ hashes = [], obs = new Map(), recent = new Map(), ready = t
             const all = [...obs.values()].flat().sort((a, b) => a.time - b.time);
             for (const o of all) if (o.time >= from && o.time <= to) cb(o);
         },
+        eachHash: async (from, cb) => {
+            const list = hashes.filter(h => !Number.isFinite(from) || h.firstSeen >= from)
+                .sort((a, b) => a.firstSeen - b.firstSeen);
+            for (const h of list) if (cb(h) === false) break;
+        },
         recentEntries: () => recent.entries(),
         recentGet: h => recent.get(h),
         recentHas: h => recent.has(h),
@@ -29,12 +34,18 @@ function stubModel({ hashes = [], obs = new Map(), recent = new Map(), ready = t
 
 // Mutable app-dep state the deps close over (selection/filter, Display window).
 function makeDeps() {
-    const state = { narrow: null, narrowKey: '', cutoff: 0 };
+    const state = { narrow: null, narrowKey: '', cutoff: 0, msgFilter: '' };
     const deps = {
         resolveCol:    id => id,
         narrowFn:      () => state.narrow,
         narrowKey:     () => state.narrowKey,
         displayCutoff: () => state.cutoff,
+        msgFilter:     () => state.msgFilter,
+        // Test-side mirror of the app's _rowMatchesFilter: type, repeater raw
+        // ids and raw hex — enough to exercise the index paths.
+        rowMatches:    (row, f) => (row.type ?? '').toLowerCase().includes(f)
+            || [...row.repeaters.values()].some(r => (r.rawId ?? '').toLowerCase().includes(f))
+            || (row.rawHex ?? '').toLowerCase().includes(f),
     };
     return { state, deps };
 }
@@ -224,6 +235,85 @@ test('concurrent loadPage calls: the newest call wins wholly', async () => {
     assert.equal(t.page, 0, 'stale slower load must not overwrite the newer page');
     assert.ok(t.hasRow('h0'), 'page-0 snapshot still in place');
     assert.ok(!t.hasRow('h4'), 'page-2 rows were dropped, not committed');
+});
+
+// ---- disk-wide message filter -------------------------------------------------
+
+test('message filter pages over the WHOLE history, not just the loaded page', async () => {
+    // 6 hashes, pageSize 2 → 3 pages. The two 'Trace' rows are the OLDEST, so
+    // unfiltered they sit on page 3 — the filter must still find them.
+    const hashes = [
+        { hash: 'n1', firstSeen: 600, type: 'Advert' },
+        { hash: 'n2', firstSeen: 500, type: 'Advert' },
+        { hash: 'n3', firstSeen: 400, type: 'Request' },
+        { hash: 'n4', firstSeen: 300, type: 'Request' },
+        { hash: 't1', firstSeen: 200, type: 'Direct Trace' },
+        { hash: 't2', firstSeen: 100, type: 'Direct Trace' },
+    ];
+    const obs = new Map(hashes.map(h => [h.hash, [{ rawId: 'A', time: h.firstSeen }]]));
+    const model = stubModel({ hashes, obs });
+    const { state, deps } = makeDeps();
+    const t = new TableCache(model, { pageSize: 2, ...deps });
+    await t.loadPage(0, true);
+    assert.equal(t.pageCount, 3);
+    assert.ok(!t.hasRow('t1'), 'traces are beyond page 1 when unfiltered');
+
+    state.msgFilter = 'trace';
+    assert.equal(t.narrowKeyChanged(), true, 'filter change repaginates');
+    await t.loadPage(0, true);
+    assert.equal(t.textFiltered, true);
+    assert.equal(t.filterTotal, 2);
+    assert.equal(t.pageCount, 1);
+    assert.deepEqual(t.visibleRows().map(([h]) => h), ['t1', 't2'], 'both traces found, newest first');
+
+    state.msgFilter = '';
+    assert.equal(t.narrowKeyChanged(), true);
+    await t.loadPage(0, true);
+    assert.equal(t.textFiltered, false);
+    assert.equal(t.filterTotal, null);
+    assert.equal(t.pageCount, 3, 'plain paging restored');
+});
+
+test('message filter combines with the repeater narrowing (intersection)', async () => {
+    const hashes = [
+        { hash: 'h1', firstSeen: 400, type: 'Trace' },   // via A
+        { hash: 'h2', firstSeen: 300, type: 'Trace' },   // via B
+        { hash: 'h3', firstSeen: 200, type: 'Advert' },  // via A
+    ];
+    const obs = new Map([
+        ['h1', [{ hash: 'h1', rawId: 'A', time: 400 }]],
+        ['h2', [{ hash: 'h2', rawId: 'B', time: 300 }]],
+        ['h3', [{ hash: 'h3', rawId: 'A', time: 200 }]],
+    ]);
+    const model = stubModel({ hashes, obs });
+    const { state, deps } = makeDeps();
+    const t = new TableCache(model, { pageSize: 10, ...deps });
+    state.narrow = c => c === 'A';
+    state.narrowKey = 's:A';
+    state.msgFilter = 'trace';
+    await t.loadPage(0, true);
+    assert.equal(t.filterTotal, 1, 'only h1 is both via A and a Trace');
+    assert.ok(t.hasRow('h1'));
+    assert.ok(!t.hasRow('h2') && !t.hasRow('h3'));
+});
+
+test('a live packet matching the filter joins the index and the pager', async () => {
+    const hashes = [{ hash: 'old', firstSeen: 100, type: 'Trace' }];
+    const obs = new Map([['old', [{ rawId: 'A', time: 100 }]]]);
+    const recent = new Map();
+    const model = stubModel({ hashes, obs, recent });
+    const { state, deps } = makeDeps();
+    const t = new TableCache(model, { pageSize: 1, ...deps });
+    state.msgFilter = 'trace';
+    await t.loadPage(0, true);
+    assert.equal(t.filterTotal, 1);
+    // live trace arrives → recent window row, then noteIngest
+    recent.set('new', { repeaters: new Map([['A', { rawId: 'A', time: 200 }]]),
+                        firstSeen: 200, lastSeen: 200, type: 'Flood Trace', _stub: false });
+    t.noteIngest('new', 'A', true);
+    assert.equal(t.filterTotal, 2, 'live match counted');
+    assert.equal(t.pageCount, 2, 'pager grew');
+    assert.equal(await t.pageOfHash('new'), 0, 'newest match pages first');
 });
 
 test('clear() resets paging state including the hash count', async () => {

@@ -101,7 +101,16 @@ function sampleCsv() {
     // structurally "valid" packet, so only the app-side ⚠ flag marks it.
     rows.push([new Date(now - 12 * 60 * 1000).toISOString(), 'RX_LOG_DATA', 'feed', 'AAAA01',
                '3.00', '', -100, '00'.repeat(20) + 'deadbeef', '', '', '', ''].join(','));
-    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0) + 1, order: specs.map(s => s.id),
+    // 110 old filler rows (all AAAA01, so the column order stays untouched)
+    // push the table past one page — and hide a needle ('xyzzy-…' in the text
+    // column) deep on the LAST page, where only the disk-wide message-filter
+    // index can find it.
+    for (let i = 0; i < 110; i++) {
+        const t = new Date(now - (300 + i * 2) * 60 * 1000).toISOString();
+        rows.push([t, 'RX_LOG_DATA', (0x9000 + i).toString(16), 'AAAA01', '1.00', '', -100, '',
+                   '', '', i === 105 ? 'xyzzy-needle in a haystack' : '', ''].join(','));
+    }
+    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0) + 1 + 110, order: specs.map(s => s.id),
              contactCount: contacts.length };
 }
 
@@ -193,9 +202,13 @@ async function main() {
     const rowCount = () => page.$$('#msgTableWrap tbody tr:not(.detail-row)').then(r => r.length);
     const noticeVisible = () => page.$eval('#selNotice', el => !el.classList.contains('hidden'));
     const fullRows = await rowCount();
-    const firstCol = await page.$('#msgTableHead th.msg-col-rep[data-col]');
-    const selCol = await firstCol.getAttribute('data-col');
-    await firstCol.click();
+    // Select the LAST column (the least-frequent repeater, CCCC03): the first
+    // one now has more rows than one page, so selecting it wouldn't shrink
+    // the page-capped row count at all.
+    const colHeaders = await page.$$('#msgTableHead th.msg-col-rep[data-col]');
+    const selHeader = colHeaders[colHeaders.length - 1];
+    const selCol = await selHeader.getAttribute('data-col');
+    await selHeader.click();
     const narrowed = await waitUntil(async () => (await noticeVisible()) && (await rowCount()) < fullRows);
     const selRows = await rowCount();
     await page.click(`#msgTableHead th.msg-col-rep[data-col="${selCol}"]`);
@@ -223,6 +236,26 @@ async function main() {
         `disabled: ${JSON.stringify(disabledOpts)}`);
     await page.selectOption('#ttlSelect', 'Infinity'); // restore
     await page.waitForTimeout(400);
+
+    // Disk-wide message filter: the needle row sits on the LAST page (rows
+    // 101+ newest-first); the filter must repaginate over the whole history
+    // to find it — the old page-local filter showed nothing.
+    const visRows = () => page.$$eval('#msgTableBody tr[id^="row-"]',
+        els => els.filter(e => e.style.display !== 'none').length);
+    await page.evaluate(() => {
+        const i = document.getElementById('msgFilter');
+        i.value = 'xyzzy';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const foundNeedle = await waitUntil(async () => (await visRows()) === 1);
+    check('message filter finds a row beyond the loaded page (disk-wide index)',
+        foundNeedle, `visible rows ${await visRows()}`);
+    await page.evaluate(() => {
+        const i = document.getElementById('msgFilter');
+        i.value = '';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await waitUntil(async () => (await visRows()) > 50);
 
     // 4) Clear data empties the table and resets the counter.
     await page.getByText('Clear data', { exact: false }).first().click();
