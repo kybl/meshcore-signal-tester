@@ -1,5 +1,5 @@
 // MeshCore Signal Tester Application
-import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=2';
+import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=3';
 import { Signal3DMap } from './signal3d.js?v=156';
 import { CaptureModel } from './capture-model.js?v=3';
 import { TableCache } from './table-cache.js?v=2';
