@@ -140,6 +140,21 @@ test('sort ladder: recent count, page presence, lastRssi, lastSnr, total, name',
     assert.deepEqual(m.list, ['RECENT', 'PAGE', 'RSSI', 'SNR', 'TOTAL', 'NAME_A', 'NAME_B']);
 });
 
+test('color(): stable per column, dark variant only lifts lightness', () => {
+    const { m } = make();
+    const light = m.color('AB12');
+    assert.equal(m.color('AB12'), light, 'deterministic');
+    assert.match(light, /^hsl\(\d+, \d+%, \d+%\)$/);
+    const dark = m.color('AB12', { dark: true });
+    assert.notEqual(dark, light);
+    const [, hL, sL, lL] = light.match(/hsl\((\d+), (\d+)%, (\d+)%\)/).map(Number);
+    const [, hD, sD, lD] = dark.match(/hsl\((\d+), (\d+)%, (\d+)%\)/).map(Number);
+    assert.equal(hD, hL, 'hue unchanged in dark variant');
+    assert.equal(sD, sL, 'saturation unchanged in dark variant');
+    assert.ok(lD > lL && lD <= 90, 'dark variant lifts lightness, capped at 90');
+    assert.notEqual(m.color('CD34'), light, 'different columns differ');
+});
+
 test('colorSeed is deterministic in the display id and survives re-ask', () => {
     const { m } = make();
     const s1 = m.colorSeed('AB12');

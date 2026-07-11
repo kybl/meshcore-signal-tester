@@ -18,6 +18,11 @@
 
 import * as ColumnKey from './column-key.js?v=2';
 
+// Colour ranges for the per-column swatch (see color() below).
+const REP_S_MIN = 55, REP_S_MAX = 92;   // saturation range (%) — stays vivid
+const REP_L_MIN = 42, REP_L_MAX = 60;   // lightness range (%) — readable band
+const REP_DARK_BUMP = 18;               // dark variant adds this to lightness
+
 export class ColumnModel {
     #columns = [];
     #stats = new Map();
@@ -203,6 +208,22 @@ export class ColumnModel {
             if (cB !== cA) return cB - cA;
             return a.localeCompare(b);
         });
+    }
+
+    // Per-repeater colour: hue, saturation AND lightness are all derived from
+    // different slices of the seed hash, so repeaters differ in all three —
+    // within bounds that keep the colour usable (never grey, never too
+    // dark/light). `dark: true` lifts the lightness for dark backgrounds; the
+    // 3D map always uses the light variant (its ground tiles are light).
+    // The 'direct'/'unknown' pseudo columns are styled app-side instead
+    // (white/yellow ring), never through this.
+    color(col, { dark = false } = {}) {
+        const h = this.colorSeed(col);
+        const hue = h % 360;
+        const sat = Math.round(REP_S_MIN + ((h >>> 10) & 0xFF) / 255 * (REP_S_MAX - REP_S_MIN));
+        let lit = Math.round(REP_L_MIN + ((h >>> 18) & 0xFF) / 255 * (REP_L_MAX - REP_L_MIN));
+        if (dark) lit = Math.min(90, lit + REP_DARK_BUMP);
+        return `hsl(${hue}, ${sat}%, ${lit}%)`;
     }
 
     // Stable 32-bit FNV-1a hash of the column's display id, memoised — the

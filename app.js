@@ -8,7 +8,7 @@ import { MapCache } from './map-cache.js?v=2';
 import { TimeWindows } from './time-windows.js?v=1';
 import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
-import { ColumnModel } from './column-model.js?v=1';
+import { ColumnModel } from './column-model.js?v=2';
 import { buildCsv, parseCsv } from './csv.js?v=3';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -34,16 +34,6 @@ const APP_VERSION = '1.2.3';
 // long mid-fetch we re-request and merge (contacts upsert by key), up to a cap.
 const CONTACTS_STALL_MS = 4000;
 const CONTACTS_MAX_RETRIES = 8;
-
-// Per-repeater colour: hue, saturation AND lightness are all derived from the id
-// hash, so different repeaters differ in all three — within bounds that keep the
-// colour usable (never grey, never too dark/light). Dark theme lifts the
-// lightness (except the 3D map, whose background is always light). The two
-// pseudo columns 'direct'/'unknown' are drawn as white-filled rings instead.
-const REP_S_MIN = 55, REP_S_MAX = 92;   // saturation range (%) — stays vivid
-const REP_L_MIN = 42, REP_L_MAX = 60;   // lightness range (%) — readable band
-const REP_DARK_BUMP = 18;               // dark theme adds this to lightness
-
 
 
 // Inner padding (px) of the SVG signal charts: left (y-axis labels), right,
@@ -3579,28 +3569,16 @@ class MeshCoreApp {
     // --- Chart ---
 
 
-    // Hue, saturation and lightness — each from a different slice of the hash, so
-    // repeaters vary in all three. Returns the light-theme lightness.
-    _repeaterHSL(col) {
-        const h = this.columns.colorSeed(col);
-        const hue = h % 360;
-        const sat = Math.round(REP_S_MIN + ((h >>> 10) & 0xFF) / 255 * (REP_S_MAX - REP_S_MIN));
-        const lit = Math.round(REP_L_MIN + ((h >>> 18) & 0xFF) / 255 * (REP_L_MAX - REP_L_MIN));
-        return { hue, sat, lit };
-    }
-
-    // Light colour — used by the 3D map, whose background is always light.
+    // Per-column colour lives in ColumnModel (next to its seed); these two are
+    // the presentation entry points. Light variant — used by the 3D map, whose
+    // background is always light.
     getRepeaterColor(col) {
-        const { hue, sat, lit } = this._repeaterHSL(col);
-        return `hsl(${hue}, ${sat}%, ${lit}%)`;
+        return this.columns.color(col);
     }
 
     // Theme-aware colour for the 2D UI: dark theme lifts the lightness.
     _dotColor(col) {
-        const { hue, sat, lit } = this._repeaterHSL(col);
-        const isDark = !document.documentElement.classList.contains('light-theme');
-        const l = isDark ? Math.min(90, lit + REP_DARK_BUMP) : lit;
-        return `hsl(${hue}, ${sat}%, ${l}%)`;
+        return this.columns.color(col, { dark: !document.documentElement.classList.contains('light-theme') });
     }
 
     // Stock-firmware repeater RX lines carry no packet hash: a flood summary
