@@ -223,6 +223,20 @@ async function main() {
         (await page.$$('#msgTableHead th.msg-col-rep')).length === 0);
     check('Clear data removes repeater columns', colsGone);
 
+    // Click every Connect button once. Headless Chromium has no BLE/serial, so
+    // each path ends in an explanatory alert (auto-accepted above) — but the
+    // click must SURVIVE its own code: a browser-only crash in the connect
+    // path (e.g. an extracted window.setTimeout throwing "Illegal invocation"
+    // inside ReconnectController) once made every Connect click do nothing,
+    // while Node unit tests stayed green.
+    const errsBefore = pageErrors.length;
+    for (const id of ['connectBtn', 'connectUsbBtn', 'connectWifiBtn']) {
+        await page.click('#' + id).catch(() => {});
+        await page.waitForTimeout(150);
+    }
+    check('Connect buttons run without page errors',
+        pageErrors.length === errsBefore, pageErrors.slice(errsBefore).join(' | '));
+
     check('no uncaught page errors during the run', pageErrors.length === 0, pageErrors.join(' | '));
 
     await browser.close();

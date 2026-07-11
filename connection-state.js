@@ -88,10 +88,16 @@ export class ReconnectController {
     #tries = 0;
     #timer = null;
 
-    constructor(deps, { setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout } = {}) {
+    constructor(deps, { setTimeoutFn, clearTimeoutFn } = {}) {
         this.#deps = deps;
-        this.#setTimeout = setTimeoutFn;
-        this.#clearTimeout = clearTimeoutFn;
+        // Wrappers, NOT bare references: in a browser, window.setTimeout
+        // extracted into a variable and called with a different `this` throws
+        // "Illegal invocation" — which broke every Connect click, since
+        // _cancelAutoReconnect() → cancel() is their first step. Node's timer
+        // functions don't care, so unit tests alone never see it (the browser
+        // harness clicks Connect Bluetooth to cover exactly this).
+        this.#setTimeout = setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
+        this.#clearTimeout = clearTimeoutFn ?? (id => clearTimeout(id));
     }
 
     get active() { return this.#active; }
