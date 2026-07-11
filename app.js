@@ -1,5 +1,5 @@
 // MeshCore Signal Tester Application
-import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
+import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=2';
 import { Signal3DMap } from './signal3d.js?v=156';
 import { CaptureModel } from './capture-model.js?v=3';
 import { TableCache } from './table-cache.js?v=2';
@@ -26,6 +26,10 @@ import * as ChartZoom from './chart-zoom.js?v=1';
 //   4. CHANGELOG.md                                             — new dated "## [x.y.z]" entry
 //   5. fastlane/metadata/android/en-US/changelogs/<versionCode>.txt — new file named by versionCode
 // (The F-Droid recipe in fdroiddata auto-updates from the git tag — no manual edit there.)
+// Decode GroupText messages on the public ("Public") channel out of the box.
+// Custom channel keys can be added the same way: MeshCoreDecoder.addChannelKey(hexKey).
+MeshCoreDecoder.addChannelKey(MeshCoreDecoder.PUBLIC_CHANNEL_KEY);
+
 const APP_VERSION = '1.2.3';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
@@ -3551,7 +3555,15 @@ class MeshCoreApp {
             metaHtml = `<div class="detail-pubkey">${typeStr ? typeStr + ' &nbsp; ' : ''}Key: <code>${pk}</code></div>`;
         }
 
-        return `<td colspan="${colspan}" class="detail-cell" title="Click to hide detail"><div class="detail-content">${typeHtml}${header}${metaHtml}${jsonHtml}</div></td>`;
+        // Decrypted channel message (e.g. Public channel), when a matching key is known
+        let msgHtml = '';
+        const decMsg = pkt?.payload?.decoded?.decrypted;
+        if (decMsg?.message != null) {
+            const who = decMsg.sender ? `<b>${this._escHtml(String(decMsg.sender))}</b>: ` : '';
+            msgHtml = `<div class="detail-msg">💬 ${who}${this._escHtml(String(decMsg.message))}</div>`;
+        }
+
+        return `<td colspan="${colspan}" class="detail-cell" title="Click to hide detail"><div class="detail-content">${typeHtml}${header}${metaHtml}${msgHtml}${jsonHtml}</div></td>`;
     }
 
     _buildSigCells(rssi, snr, hash, col) {

@@ -1129,6 +1129,17 @@ html:not(.light-theme) .btn-connect:disabled {
     color: var(--text-muted);
 }
 
+.detail-msg {
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--bg-detail-json);
+    border-left: 3px solid #2e9e5b;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+
 .detail-json {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 10px;
