@@ -1,5 +1,5 @@
 // MeshCore Signal Tester Application
-import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=3';
+import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=4';
 import { Signal3DMap } from './signal3d.js?v=156';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
@@ -2798,7 +2798,7 @@ class MeshCoreApp {
         ].filter(Boolean).join(' ');
 
         const path = packet.path || [];
-        const pathLen = path.length;
+        const pathLen = packet.pathLength ?? path.length;   // path is null for traces (SNR bytes)
         const firstItem = pathLen > 0 ? path[0] : null;
         const firstItemBytes = firstItem != null ? firstItem.length / 2 : 0;
         const pathItemBytes = packet.pathHashSize ?? firstItemBytes;
@@ -3514,14 +3514,7 @@ class MeshCoreApp {
         const clean = JSON.parse(JSON.stringify(packet));
         delete clean.isValid;
         if (clean.payload) delete clean.payload.raw;
-        // Trace: header path bytes are per-hop SNR, not node hashes — render
-        // them as dB so the JSON says what the bytes mean.
-        if (clean.payloadType === 9 && Array.isArray(clean.path)) {
-            clean.path = clean.path.map(h => {
-                const v = parseInt(h, 16);
-                return `${(v > 127 ? v - 256 : v) / 4} dB`;   // quarter-dB steps are exact
-            });
-        }
+
 
         const walk = (obj) => {
             if (!obj || typeof obj !== 'object') return;
@@ -3586,16 +3579,11 @@ class MeshCoreApp {
         const typeHtml = data.type
             ? `<div class="detail-type">${this._escHtml(data.type)}</div>`
             : '';
-        // Trace packets: the header path carries per-hop SNR bytes, not node
-        // hashes (firmware: "append SNR (Not hash!)") — surface them as dB so
-        // the detail doesn't read like a path of phantom nodes 00/FF.
+        // Trace packets: the decoder surfaces the header path as per-hop SNR
+        // (DecodedPacket.pathSnr) — show it prominently above the JSON.
         let traceHtml = '';
-        if (pkt?.payloadType === 9 && Array.isArray(pkt.path) && pkt.path.length) {
-            const dbs = pkt.path.map(h => {
-                const v = parseInt(h, 16);
-                return `${(v > 127 ? v - 256 : v) / 4} dB`;   // quarter-dB steps are exact
-            });
-            traceHtml = `<div class="detail-trace">📶 Per-hop SNR (header path): ${dbs.join(' → ')}</div>`;
+        if (Array.isArray(pkt?.pathSnr) && pkt.pathSnr.length) {
+            traceHtml = `<div class="detail-trace">📶 Per-hop SNR (header path): ${pkt.pathSnr.map(s => `${s} dB`).join(' → ')}</div>`;
         }
         const zsN = this._zeroStuffedBytes(hex ?? data.rawHex);
         const zsHtml = zsN >= 8
