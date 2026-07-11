@@ -21,6 +21,7 @@ on:
       - 'contacts-directory.js'
       - 'selection-model.js'
       - 'column-model.js'
+      - 'connection-state.js'
       - 'column-key.js'
       - 'frame.js'
       - 'geo.js'

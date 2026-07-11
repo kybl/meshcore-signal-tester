@@ -9,6 +9,7 @@ import { TimeWindows } from './time-windows.js?v=1';
 import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
+import { ConnectionState, ReconnectController } from './connection-state.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=3';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -44,20 +45,29 @@ class MeshCoreApp {
     constructor() {
         this.device = null;
         this.bleRxCharacteristic = null;
-        // Transport abstraction: 'ble' (Nordic UART, one frame per notification)
-        // or 'serial' (Web Serial, length-prefixed frames). null = disconnected.
-        this.transportKind = null;
+        // The connection LIFECYCLE — transport kind ('ble'/'serial'), companion/
+        // repeater mode, established/intentional/surprise bookkeeping — lives in
+        // ConnectionState, and the auto-reconnect try/backoff/give-up cycle in
+        // ReconnectController (both connection-state.js). The transport HANDLES
+        // (device, serialPort, reader, characteristics) stay on this object,
+        // next to the platform code that owns them.
+        this.conn = new ConnectionState();
+        this.reconnect = new ReconnectController({
+            attempt:        () => this.quickConnect(this._lastConnectedId, { auto: true }),
+            isBack:         () => !!this.device,
+            onAttemptStart: () => this.updateStatus('Reconnecting…', 'connecting'),
+            onGiveUp:       () => {
+                this.updateStatus('Disconnected', 'disconnected');
+                this._playDisconnectAlarm();    // gave up — sound + visual alert
+                this._showDisconnectAlarm();
+            },
+        });
         this._serialBtnKind = 'serial';    // which connect button acts as Cancel/Disconnect: 'serial' (USB) or 'wifi'
-        this._lastDropWasSurprise = false; // last disconnect was an unexpected drop (vs. user-initiated); gates Bluetooth-back-on auto-reconnect
         this.serialPort = null;
         this.serialReader = null;
         this._serialReadBuffer = new Uint8Array(0);
         this._serialClosing = false;
         this._onSerialDisconnect = null;
-        // Connection mode for a serial link: 'companion' (binary frame protocol)
-        // or 'repeater' (plain-text CLI). Decided by probing on connect. null
-        // while detecting, and for BLE (always companion).
-        this.connectionMode = null;
         this._serialTextBuffer = '';
         this._textDecoder = new TextDecoder();
         this._sawCompanionFrame = false;   // set when a companion frame is seen during detection
@@ -1392,8 +1402,7 @@ class MeshCoreApp {
     async connectToDevice(device) {
         this._setActiveTransportBtn('ble', 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting…', 'connecting');
-        this.transportKind = 'ble';
-        this.connectionMode = 'companion';   // BLE is always the companion protocol
+        this.conn.beginAttempt('ble');   // BLE is always the companion protocol
         this.device = device;
 
         // Nordic UART Service (NUS) — a de-facto industry standard from Nordic
@@ -1472,9 +1481,7 @@ class MeshCoreApp {
         this._collecting = true;
         // A fully-established connection: from here a drop we didn't initiate is
         // a surprise disconnect and should raise the alarm.
-        this._wasConnected = true;
-        this._lastDropWasSurprise = false;   // a fresh connection clears any pending reconnect intent
-        this._intentionalDisconnect = false;
+        this.conn.finalise();
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1488,7 +1495,7 @@ class MeshCoreApp {
         clearInterval(this._connectionMonitor);
         // Serial disconnects are detected by the read loop / port 'disconnect'
         // event, not by polling gatt.connected — skip the monitor for serial.
-        if (this.transportKind === 'serial') return;
+        if (this.conn.transportKind === 'serial') return;
         // Delay first check: gatt.connected can be transiently false during GATT setup
         this._monitorDelay = setTimeout(() => {
             this._monitorDelay = null;
@@ -1625,8 +1632,7 @@ class MeshCoreApp {
 
         await port.open({ baudRate: 115200 });
 
-        this.transportKind = 'serial';
-        this.connectionMode = null;        // unknown until detection completes
+        this.conn.beginAttempt('serial');  // mode unknown until detection completes
         this.serialPort = port;
         // A lightweight stand-in for the BLE device object so that the many
         // `this.device` "are we connected?" guards across the app keep working.
@@ -1680,7 +1686,7 @@ class MeshCoreApp {
         }
 
         // Phase 2 — repeater probe over the text CLI.
-        this.connectionMode = 'repeater';   // route the read loop to the text parser
+        this.conn.setMode('repeater');   // route the read loop to the text parser
         this._serialReadBuffer = new Uint8Array(0);
         this._serialTextBuffer = '';
         this._sawRepeaterReply = false;
@@ -1708,7 +1714,7 @@ class MeshCoreApp {
 
     // Finalise a companion (binary frame protocol) serial connection.
     async _finishCompanionConnect(port) {
-        this.connectionMode = 'companion';
+        this.conn.setMode('companion');
         // Battery first (a one-frame request/reply), then the contact dump —
         // injecting commands mid-dump can stall the contact stream.
         await this.sendBatteryQuery();
@@ -1725,9 +1731,7 @@ class MeshCoreApp {
         this._collecting = true;
         // A fully-established connection: from here a drop we didn't initiate is
         // a surprise disconnect and should raise the alarm.
-        this._wasConnected = true;
-        this._lastDropWasSurprise = false;   // a fresh connection clears any pending reconnect intent
-        this._intentionalDisconnect = false;
+        this.conn.finalise();
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1739,7 +1743,7 @@ class MeshCoreApp {
     // line mode, flush the binary probe junk out of the repeater's command
     // buffer, then start packet logging.
     async _finishRepeaterConnect(port) {
-        this.connectionMode = 'repeater';
+        this.conn.setMode('repeater');
         // From here the stream is text; drop whatever the frame detector held.
         this._serialReadBuffer = new Uint8Array(0);
         this._serialTextBuffer = '';
@@ -1760,7 +1764,7 @@ class MeshCoreApp {
         this._startRepeaterPolling();
         // Read the repeater's own configured position once, a moment after the
         // connect-time command burst settles (the CLI serialises writes loosely).
-        setTimeout(() => { if (this.connectionMode === 'repeater') this._queryRepeaterLocation(); }, 600);
+        setTimeout(() => { if (this.conn.mode === 'repeater') this._queryRepeaterLocation(); }, 600);
 
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (repeater)', 'connected');
@@ -1769,9 +1773,7 @@ class MeshCoreApp {
         this._collecting = true;
         // A fully-established connection: from here a drop we didn't initiate is
         // a surprise disconnect and should raise the alarm.
-        this._wasConnected = true;
-        this._lastDropWasSurprise = false;   // a fresh connection clears any pending reconnect intent
-        this._intentionalDisconnect = false;
+        this.conn.finalise();
         this._updatePauseBtn();
         if (this.emptyState) {
             const p = this.emptyState.querySelector('p');
@@ -1827,7 +1829,7 @@ class MeshCoreApp {
     // resynchronise after any corruption.
     _onSerialBytes(chunk) {
         // Repeater links speak text, not binary frames.
-        if (this.connectionMode === 'repeater') { this._onSerialText(chunk); return; }
+        if (this.conn.mode === 'repeater') { this._onSerialText(chunk); return; }
         if (this._serialReadBuffer.length) {
             const merged = new Uint8Array(this._serialReadBuffer.length + chunk.length);
             merged.set(this._serialReadBuffer, 0);
@@ -2043,7 +2045,7 @@ class MeshCoreApp {
     // and clear it ('log erase' on the EOF marker) to get only-new entries.
     _startRepeaterPolling() {
         this._stopRepeaterPolling();
-        const alive = () => this.connectionMode === 'repeater' && this.serialPort;
+        const alive = () => this.conn.mode === 'repeater' && this.serialPort;
         this._neighborPollTimer = setInterval(() => {
             if (alive()) this._serialWriteText('neighbors\r\n').catch(() => {});
         }, 5000);
@@ -2084,7 +2086,7 @@ class MeshCoreApp {
     // Transport-agnostic frame send: raw notification write over BLE, or
     // length-prefixed frame over serial.
     async _sendFrame(bytes) {
-        if (this.transportKind === 'serial') {
+        if (this.conn.transportKind === 'serial') {
             await this._serialSendFrame(bytes);
         } else if (this.bleRxCharacteristic) {
             await this.bleRxCharacteristic.writeValueWithoutResponse(bytes);
@@ -2093,7 +2095,7 @@ class MeshCoreApp {
 
     // True when a transport is up and able to accept commands.
     _canSend() {
-        return this.transportKind === 'serial' ? !!this.serialPort : !!this.bleRxCharacteristic;
+        return this.conn.transportKind === 'serial' ? !!this.serialPort : !!this.bleRxCharacteristic;
     }
 
     async sendAppStart() {
@@ -2126,7 +2128,7 @@ class MeshCoreApp {
     _startBatteryPoll() {
         clearInterval(this._batteryPollTimer);
         this._batteryPollTimer = setInterval(() => {
-            if (this.connectionMode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
                 this.sendBatteryQuery();
             }
         }, 60000);
@@ -2167,7 +2169,7 @@ class MeshCoreApp {
     // list is as complete as it'll get — likely just the END frame was lost) or
     // after the retry cap.
     _onContactsStall() {
-        if (!this._canSend() || this.connectionMode !== 'companion') {
+        if (!this._canSend() || this.conn.mode !== 'companion') {
             this._contactsFetchActive = false;
             this._setContactsLoading(false);
             return;
@@ -2351,7 +2353,7 @@ class MeshCoreApp {
         }
         // Repeater CLI: trigger an active neighbour discovery. Responses refresh
         // the repeater's neighbours table (ingested by a later phase).
-        if (this.connectionMode === 'repeater') {
+        if (this.conn.mode === 'repeater') {
             await this._serialWriteText('discover.neighbors\r\n');
             if (btn) { btn.textContent = 'Discovering…'; setTimeout(() => { btn.textContent = 'Discover nodes'; }, 2000); }
             // Read the table back once responses have had time to arrive (the
@@ -2648,7 +2650,7 @@ class MeshCoreApp {
     // this is negligible BT load. Gated purely on the (default-off) device marker
     // — turning it on is the user opting in.
     _updateDeviceLocationRefresh() {
-        const wants = this.connectionMode === 'companion' && this._showDeviceMarker;
+        const wants = this.conn.mode === 'companion' && this._showDeviceMarker;
         if (!wants) {
             clearInterval(this._deviceRefreshTimer);
             this._deviceRefreshTimer = null;
@@ -2658,7 +2660,7 @@ class MeshCoreApp {
         const poll = () => {
             // Never poll while contacts are being fetched: re-issuing APP_START
             // mid-stream disrupts the companion's contact dump and stalls it.
-            if (this.connectionMode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
                 this.sendAppStart().catch(() => {});   // its SELF_INFO reply refreshes the position
             }
         };
@@ -5111,7 +5113,7 @@ class MeshCoreApp {
         // by coincidence (the next auto-reconnect, or a stall-watchdog retry of
         // an in-flight fetch, re-requesting with the now-zero marker), so the
         // reload looked random: sometimes instant, sometimes not at all.
-        if (this.connectionMode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+        if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
             this.sendGetContacts().catch(() => {});
         }
     }
@@ -5588,53 +5590,17 @@ class MeshCoreApp {
     // a surprise drop (not a manual disconnect), and not while already connected
     // or mid-reconnect.
     _onBleAdapterOn() {
-        if (!this._autoReconnect || !this._lastDropWasSurprise) return;
-        if (this.device || this.serialPort || this._reconnecting) return;
+        if (!this._autoReconnect || !this.conn.lastDropWasSurprise) return;
+        if (this.device || this.serialPort || this.reconnect.active) return;
         if (!this._lastConnectedId) return;
-        this._startAutoReconnect();
+        this.reconnect.start();
     }
 
-    _startAutoReconnect() {
-        if (this._reconnecting) return;
-        this._reconnecting = true;
-        this._reconnectTries = 0;
-        this.updateStatus('Reconnecting…', 'connecting');
-        this._scheduleReconnect(500);
-    }
-
-    _scheduleReconnect(delay) {
-        clearTimeout(this._reconnectTimer);
-        this._reconnectTimer = setTimeout(() => this._tryReconnect(), delay);
-    }
-
-    async _tryReconnect() {
-        if (!this._reconnecting) return;
-        if (this.device) { this._cancelAutoReconnect(); return; }   // already back (manual connect)
-        this._reconnectTries++;
-        // auto:true → only the zero-friction transports, no gesture-required
-        // picker and no error alerts (those would stack up modally).
-        this.updateStatus('Reconnecting…', 'connecting');
-        try { await this.quickConnect(this._lastConnectedId, { auto: true }); } catch (e) { console.warn('Auto-reconnect attempt failed:', e); }
-        if (!this._reconnecting) return;        // cancelled meanwhile
-        if (this.device) { this._reconnecting = false; this._reconnectTimer = null; return; }  // success
-        if (this._reconnectTries >= 5) {
-            this._cancelAutoReconnect();
-            this.updateStatus('Disconnected', 'disconnected');
-            this._playDisconnectAlarm();        // gave up — sound + visual alert
-            this._showDisconnectAlarm();
-            return;
-        }
-        // A failed attempt left the status at 'Disconnected'; restore the
-        // distinct 'Reconnecting…' so it doesn't look like a manual disconnect.
-        this.updateStatus('Reconnecting…', 'connecting');
-        this._scheduleReconnect(Math.min(8000, 2000 * 2 ** (this._reconnectTries - 1)));
-    }
-
-    _cancelAutoReconnect() {
-        this._reconnecting = false;
-        clearTimeout(this._reconnectTimer);
-        this._reconnectTimer = null;
-    }
+    // The try/backoff/give-up cycle itself lives in this.reconnect
+    // (ReconnectController — see connection-state.js); this is the one-line
+    // cancel every manual connect path calls (a user-initiated attempt
+    // supersedes the automatic cycle).
+    _cancelAutoReconnect() { this.reconnect.cancel(); }
 
     // --- BLE Device Battery ---
 
@@ -6174,9 +6140,9 @@ class MeshCoreApp {
         // disconnect alarm that onDisconnected() would otherwise raise, and stop
         // any auto-reconnect cycle.
         this._cancelAutoReconnect();
-        this._intentionalDisconnect = true;
+        this.conn.intendDisconnect();
         // Serial teardown is handled synchronously inside onDisconnected().
-        if (this.transportKind === 'serial') {
+        if (this.conn.transportKind === 'serial') {
             this._serialClosing = true;
             this.onDisconnected();
             return;
@@ -6253,8 +6219,7 @@ class MeshCoreApp {
         }
         this._serialReadBuffer = new Uint8Array(0);
         this._serialTextBuffer = '';
-        this.transportKind = null;
-        this.connectionMode = null;
+        // (transport kind and mode are reset by conn.drop() at the tail below)
         this._sawCompanionFrame = false;
         this._sawRepeaterReply = false;
         this._sawRepeaterRaw = false;
@@ -6290,22 +6255,13 @@ class MeshCoreApp {
         }
         // A drop on an established connection that we didn't initiate ourselves
         // is a surprise disconnect — flash the screen red and sound the alarm.
-        const surprise = this._wasConnected && !this._intentionalDisconnect;
-        this._wasConnected = false;
-        this._intentionalDisconnect = false;
-        // A reconnect cycle already owns the recovery. Return BEFORE touching
-        // _lastDropWasSurprise: each failed retry re-enters here with
-        // _wasConnected false (surprise=false), and clobbering the flag would
-        // wipe the original surprise intent that "reconnect when Bluetooth comes
-        // back on" (_onBleAdapterOn) depends on.
-        if (this._reconnecting) return;
-        // Remember whether we'd want to come back: a surprise drop yes, a manual
-        // disconnect no. Bluetooth turning back on (e.g. after airplane mode) uses
-        // this to decide whether to restart auto-reconnect after it gave up.
-        this._lastDropWasSurprise = surprise;
+        // While a reconnect cycle owns the recovery, drop() reports no surprise
+        // and leaves the remembered lastDropWasSurprise alone (each failed
+        // retry passes through here too — see ConnectionState.drop).
+        const surprise = this.conn.drop({ midReconnect: this.reconnect.active });
         if (surprise) {
             this._playDisconnectAlarm();   // audible cue on every unexpected drop (if sound on)
-            if (this._autoReconnect && this._lastConnectedId) this._startAutoReconnect();
+            if (this._autoReconnect && this._lastConnectedId) this.reconnect.start();
             else this._showDisconnectAlarm();
         }
     }
