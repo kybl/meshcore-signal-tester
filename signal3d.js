@@ -892,10 +892,21 @@ export class Signal3DMap {
         }
         if (best) {
             // camDist lets _onCanvasClick reject emoji icons occluded by this dot.
-            if (this._clickedPoint === best.p) return { newCol: null, clickedPt: null, camDist: best.camDist };
+            // Same-dot toggle by VALUE, not reference: the wide-view arrays are
+            // replaced with fresh objects on every disk push, so a re-click on
+            // the same dot after a refresh never matched by identity and
+            // re-selected instead of deselecting.
+            if (this._samePoint(this._clickedPoint, best.p)) return { newCol: null, clickedPt: null, camDist: best.camDist };
             return { newCol: best.p.col, clickedPt: best.p, camDist: best.camDist };
         }
         return { newCol: null, clickedPt: null, camDist: Infinity };
+    }
+
+    // Same logical point? Compare by value — col + time + position identify a
+    // point (or a cell representative) stably across wide-view array rebuilds.
+    _samePoint(a, b) {
+        return !!a && !!b && a.col === b.col && a.time === b.time
+            && a.lat === b.lat && a.lon === b.lon;
     }
 
     _updateInfoPanel() {
@@ -907,7 +918,11 @@ export class Signal3DMap {
         // Collision-aware match (colsOverlap), consistent with _isColShown and
         // _rebuildDots — strict === hid the panel once packets migrated under a
         // collision key while the selection itself stayed alive.
-        const pts = this._rxPoints.filter(p => colsOverlap(p.col, col))
+        // Read the points from the array actually RENDERED (_rebuildDots): in
+        // wide/"All" mode that is the disk layer, and _rxPoints may be empty
+        // (imported/restored data older than the RAM window) — the panel then
+        // wrongly never appeared for a clicked dot.
+        const pts = (this._histPoints ?? this._rxPoints).filter(p => colsOverlap(p.col, col))
             .concat((this._histOutgoingPts ?? this._outgoingPts).filter(p => colsOverlap(p.col, col)));
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const isPseudo = col === 'direct' || col === 'unknown';

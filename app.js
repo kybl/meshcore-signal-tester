@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=1';
-import { Signal3DMap } from './signal3d.js?v=155';
+import { Signal3DMap } from './signal3d.js?v=156';
 import { CaptureModel } from './capture-model.js?v=3';
 import { TableCache } from './table-cache.js?v=2';
 import { ChartCache } from './chart-cache.js?v=1';
@@ -10,7 +10,7 @@ import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
 import { ConnectionState, ReconnectController } from './connection-state.js?v=1';
-import { buildCsv, parseCsv } from './csv.js?v=3';
+import { buildCsv, parseCsv } from './csv.js?v=4';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
@@ -3035,8 +3035,12 @@ class MeshCoreApp {
             });
         } else {
             const data = this.model.recentGet(hash);
-            // When importing/replaying, skip (hash, repeater) pairs that already exist — existing data wins
-            if (!live && data.repeaters.has(canonicalKey)) return;
+            // No import-level dedup here: _importCsvFiles already skips rows
+            // that are on disk (keyed hash|rawId|time), so a same-(hash,
+            // repeater) row at a DIFFERENT time is a real second reception.
+            // Skipping it made Total RX disagree with what was stored and a
+            // re-export come out smaller than the file just imported; the
+            // strongest-RSSI merge below keeps the representative correct.
             data.lastSeen = now;
             // Keep the strongest-RSSI observation per (packet, repeater), matching
             // the disk grid/page representative so the table cell reads the same
@@ -6040,6 +6044,9 @@ class MeshCoreApp {
             if (existingSent.has(r.time + '|' + r.repeater)) continue;
             existingSent.add(r.time + '|' + r.repeater);
             const snr = r.remoteSnr ?? r.snr;
+            // A sent record IS an SNR reading — a row without one (possible now
+            // that empty numeric cells parse as null) has nothing to plot.
+            if (snr == null) continue;
             const lat = r.lat, lon = r.lon;
             this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater });
             this.model.bufferSent({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });

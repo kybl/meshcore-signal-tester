@@ -290,6 +290,16 @@
     window.__mcBleDisconnected = function (devId) {
         var d = _devices[devId];
         if (!d) return;
+        // Drop this device's characteristic proxies: they hold the previous
+        // session's last notification in .value plus any listeners the page
+        // didn't remove. A reconnect re-discovers services and gets FRESH
+        // proxies, so nothing stale can leak into the next session (and the
+        // cache no longer grows without bound). The device proxy itself stays
+        // — like a real Web Bluetooth BluetoothDevice, its identity persists
+        // across connections.
+        Object.keys(_chars).forEach(function (k) {
+            if (k.indexOf(devId + '|') === 0) delete _chars[k];
+        });
         d._dispatch('gattserverdisconnected', { target: d });
     };
 
