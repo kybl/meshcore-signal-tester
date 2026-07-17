@@ -270,6 +270,7 @@ class MeshCoreApp {
         this._setupControls();
         this._setupFiltersAndNotices();
         this._initHelpSystem();
+        this._initExitLog();
         this._initWifiModal();
         this._initSignalMap();
         this._initDebug();
@@ -1232,6 +1233,58 @@ class MeshCoreApp {
             }
             return false;
         };
+    }
+
+    // --- Process-death diagnostics (Android) ---
+    // The OS keeps a short history of why it killed our processes
+    // (ActivityManager.getHistoricalProcessExitReasons, API 30+, surfaced by
+    // ScreenBridge.exitReasons). That history is capped and rolls over, so on
+    // every launch we merge it into a persistent localStorage log and show it
+    // under Help ▸ Diagnostics — the point is to attribute overnight capture
+    // gaps (OEM app killer? low memory? crash?) instead of guessing. In a
+    // browser the bridge is absent and the section simply stays hidden.
+    _initExitLog() {
+        let fresh = [];
+        try { fresh = JSON.parse(window.AndroidScreen?.exitReasons?.() ?? '[]'); } catch (_) {}
+        let log = [];
+        try { log = JSON.parse(localStorage.getItem('mc_exit_log') ?? '[]'); } catch (_) {}
+        // The OS timestamp + process name uniquely identify one death.
+        const key = e => `${e.ts}|${e.process}`;
+        const seen = new Set(log.map(key));
+        for (const e of fresh) {
+            if (e && typeof e.ts === 'number' && !seen.has(key(e))) log.push(e);
+        }
+        log.sort((a, b) => b.ts - a.ts);
+        if (log.length > 40) log.length = 40;
+        try { localStorage.setItem('mc_exit_log', JSON.stringify(log)); } catch (_) {}
+        this._renderExitLog(log);
+    }
+
+    _renderExitLog(log) {
+        const section = document.getElementById('exitLogSection');
+        const list = document.getElementById('exitLogList');
+        if (!section || !list || !log.length) return;
+        const IMPORTANCE = {
+            100: 'foreground', 125: 'foreground-service', 200: 'visible',
+            230: 'perceptible', 300: 'service', 325: 'top-sleeping',
+            350: 'cant-save-state', 400: 'cached', 1000: 'gone',
+        };
+        const SIGNALS = { 4: 'SIGILL', 6: 'SIGABRT', 9: 'SIGKILL', 11: 'SIGSEGV', 15: 'SIGTERM' };
+        list.innerHTML = log.map(e => {
+            const when = new Date(e.ts).toLocaleString();
+            // Main process = the bare package name; WebView renderers show up
+            // as "<pkg>:sandboxed_process0:org.chromium…".
+            const proc = /sandboxed_process|webview/i.test(e.process) ? 'webview-renderer'
+                : e.process?.includes(':') ? e.process.slice(e.process.indexOf(':') + 1)
+                : 'app';
+            const imp = IMPORTANCE[e.importance] ?? e.importance;
+            const sig = e.reasonName === 'signaled' ? ` (${SIGNALS[e.status] ?? `signal ${e.status}`})` : '';
+            const desc = e.desc ? ` — ${e.desc}` : '';
+            return `<div class="exit-log-row"><span class="exit-log-when">${this._escHtml(when)}</span> `
+                + `<b>${this._escHtml(proc)}</b>: ${this._escHtml(e.reasonName ?? String(e.reason))}${this._escHtml(sig)}`
+                + `, importance ${this._escHtml(String(imp))}${this._escHtml(desc)}</div>`;
+        }).join('');
+        section.classList.remove('hidden');
     }
 
     // --- Bluetooth connection ---

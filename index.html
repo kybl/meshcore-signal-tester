@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=172">
+    <link rel="stylesheet" href="style.css?v=173">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -24,7 +24,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=426">
+    <link rel="modulepreload" href="app.js?v=427">
     <link rel="modulepreload" href="capture-model.js?v=4">
     <link rel="modulepreload" href="chart-cache.js?v=1">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -428,6 +428,18 @@
             <div class="help-section-title">Why no iOS app?</div>
             <p>This is a hobby project and the author doesn't own an iOS device to build or test on — sorry.</p>
 
+            <!-- Filled by _initExitLog (Android only); stays hidden in browsers
+                 and when the OS reports no process deaths. -->
+            <div id="exitLogSection" class="hidden">
+                <div class="help-section-title">Diagnostics — process restarts</div>
+                <p>Times when the Android system killed this app's processes (newest first),
+                   as reported by the OS. An entry for the main app process with importance
+                   <b>foreground-service</b> means capture was running when it was killed —
+                   that's a data gap. WebView renderer entries are recovered automatically
+                   and usually only cost a reload, not the whole gap.</p>
+                <div id="exitLogList" class="exit-log-list"></div>
+            </div>
+
             <div class="help-section-title">About</div>
             <p>MeshCore Signal Tester was created by <a href="https://alesjanda.cz" target="_blank" rel="noopener">Aleš Janda</a>. If you have feedback, found a bug, or just want to say hi — feel free to reach out at <a href="mailto:ales.janda@kyblsoft.cz">ales.janda@kyblsoft.cz</a>.</p>
             <p>The app was developed with the help of <a href="https://claude.ai/code" target="_blank" rel="noopener">Claude Code</a>.</p>
@@ -444,6 +456,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=426"></script>
+    <script type="module" src="app.js?v=427"></script>
 </body>
 </html>

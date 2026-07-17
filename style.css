@@ -1648,6 +1648,16 @@ header .help-icon.active {
     margin: 18px 0 8px;
 }
 
+/* Help ▸ Diagnostics: the process-death log (Android only, see _initExitLog) */
+.exit-log-list {
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+.exit-log-row { white-space: nowrap; }
+.exit-log-when { color: #888; }
+
 .help-dl {
     display: grid;
     /* Cap the term column so a long term (e.g. a code token) wraps instead of
