@@ -43,9 +43,18 @@
             } catch (e) {}
         }
         window.addEventListener('error', function (e) {
-            if (!e.message) return;   // resource-load events carry no message — skip
+            if (!e.message) return;   // resource-load events are handled below
             rec(e.message + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'));
         });
+        // Resource-load failures (capture phase — they don't bubble): a module
+        // missing from the APK assets kills the entire page with NO ErrorEvent,
+        // which is exactly how a broken build once shipped silently.
+        window.addEventListener('error', function (e) {
+            if (e.message) return;
+            var t = e.target;
+            var src = t && (t.src || t.href);
+            if (src) rec('failed to load: ' + src);
+        }, true);
         window.addEventListener('unhandledrejection', function (e) {
             var r = e.reason;
             rec('unhandled rejection: ' + (r && (r.stack || r.message) || r));

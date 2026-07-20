@@ -101,28 +101,15 @@ android {
 def webGen = layout.buildDirectory.dir("generated/web").get().asFile
 tasks.register('copyWebApp', Copy) {
     from(rootProject.file("..")) {
+        // Every root-level .js IS an app module (tests/tools live in their own
+        // directories), so include them wholesale. A hand-maintained file list
+        // once silently shipped an APK without a newly added module — the
+        // import then failed and killed the whole page with every button dead.
+        // test/apk-assets.test.js additionally asserts these patterns cover
+        // every file index.html references.
+        include '*.js'
         include 'index.html'
-        include 'app.js'
-        include 'csv.js'
-        include 'storage.js'
-        include 'signal3d.js'
-        include 'packet-store.js'
-        include 'capture-model.js'
-        include 'table-cache.js'
-        include 'chart-cache.js'
-        include 'map-cache.js'
-        include 'time-windows.js'
-        include 'contacts-directory.js'
-        include 'selection-model.js'
-        include 'column-model.js'
-        include 'connection-state.js'
-        include 'column-key.js'
-        include 'frame.js'
-        include 'geo.js'
-        include 'maplod.js'
-        include 'chart-zoom.js'
         include 'style.css'
-        include 'native-bridge.js'
         include 'logo.svg'
         include 'vendor/**'
     }
