@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=5';
-import { Signal3DMap } from './signal3d.js?v=157';
+import { Signal3DMap } from './signal3d.js?v=158';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
@@ -83,7 +83,13 @@ class MeshCoreApp {
         this._logPollTimer = null;
         this._pendingRaw = [];             // decoded RAW dumps awaiting their summary line (logging build)
         this._showDeviceMarker = false;    // is the 3D-map device marker enabled
-        this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown
+        // Where packets get their map position from: 'phone' = this device's
+        // own GPS (needs the location permission), 'device' = the position the
+        // connected MeshCore radio reports (no phone permission needed) — for
+        // when the radio moves separately (car roof, dog collar) or the
+        // measuring machine has no GPS. See _myLocation / _setupMapSettings.
+        this._locSource = Store.get('locSource', 'phone');
+        this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown or device-sourced geotagging is on
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         // Packet storage lives in this.model (CaptureModel, created below): the
@@ -1035,6 +1041,20 @@ class MeshCoreApp {
             this.signalMap?.setPerspSize(perspSizeChk.checked);
             Store.set('perspSize', perspSizeChk.checked);
         });
+        // Packet position source (see _myLocation). Switching to 'device'
+        // means the phone's location permission is no longer needed — the
+        // native side is told so the next connect flow doesn't demand it.
+        // Switching back to 'phone' needs that permission again: start the
+        // map's GPS watch right away, which prompts for it (in the Android
+        // app via AndroidGeo.startUpdates, in a browser via watchPosition).
+        const locSourceSel = document.getElementById('locSourceSelect');
+        locSourceSel?.addEventListener('change', () => {
+            this._locSource = locSourceSel.value;
+            Store.set('locSource', this._locSource);
+            window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
+            this._updateDeviceLocationRefresh();   // device source needs the 1 Hz position poll
+            if (this._locSource === 'phone') this.signalMap?.startWatching?.();
+        });
         // Restore saved values into the controls (the map itself was already
         // constructed with the same Store-backed defaults above).
         const showLines = Store.bool('showLines', true);
@@ -1045,6 +1065,11 @@ class MeshCoreApp {
         this._showDeviceMarker = showDevice;
         if (showDeviceChk) { showDeviceChk.checked = showDevice; this.signalMap?.setShowDeviceMarker(showDevice); }
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
+        // _locSource itself was restored in the constructor (packets may arrive
+        // before this UI wiring runs); here just sync the control and let the
+        // native connect flow know whether to still ask for phone location.
+        if (locSourceSel) locSourceSel.value = this._locSource;
+        window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
         document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.toggleFollowUser());
@@ -1123,6 +1148,8 @@ class MeshCoreApp {
                 'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. When the repeater\'s own position is known, the info panel offers an eye button (turn the camera toward it) and a pushpin (keep it on the map — tilted = shown only temporarily, upright = kept permanently). "Center on me" is a toggle — it recentres on your location and then follows you as you move (the camera tracks your GPS); press it again, or pan/rotate the map yourself, to stop following. "Show all repeaters" adds every known position. Use ⚙ (top right) to change map source, dot size, guide lines, your own location marker, and the connected device\'s own location (a blue antenna marker, shown when the radio or repeater reports a position). Navigation: drag to pan · scroll/pinch to zoom · two-finger twist (or right-drag) to tilt/rotate.',
             'device-location':
                 'Shows the connected device\'s own position on the map (a blue antenna marker). While this is on, the app keeps asking the radio for its location, which means more constant work and can drain the battery faster. If you don\'t need it, turn it off.',
+            'loc-source':
+                'Where captured packets get their map position from. "This phone / browser" (the default) stamps each packet with this device\'s own GPS fix and needs the location permission. "MeshCore device" instead uses the position the connected radio reports (re-read about once a second), so no phone location permission is needed — handy when the radio moves separately from you (mounted on a car while you measure from a laptop without GPS, or on a dog\'s collar roaming the garden). The radio must have a GPS fix, or at least a configured position, for packets to appear on the map. Works with a connected companion; a repeater only ever reports its fixed configured position.',
             'discover':
                 'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
             'auto-reconnect':
@@ -2733,7 +2760,8 @@ class MeshCoreApp {
     // this is negligible BT load. Gated purely on the (default-off) device marker
     // — turning it on is the user opting in.
     _updateDeviceLocationRefresh() {
-        const wants = this.conn.mode === 'companion' && this._showDeviceMarker;
+        const wants = this.conn.mode === 'companion'
+            && (this._showDeviceMarker || this._locSource === 'device');
         if (!wants) {
             clearInterval(this._deviceRefreshTimer);
             this._deviceRefreshTimer = null;
@@ -3076,12 +3104,16 @@ class MeshCoreApp {
         return window.scrollY + window.innerHeight >= document.body.scrollHeight - margin;
     }
 
-    // The user's current GPS fix as { lat, lon } (null fields when unknown), to
-    // stamp onto a freshly received live packet. The geolocation watch lives in
-    // the 3D map; this is the single point that reads it, so callers (and
-    // _ingestPacket) stay decoupled from where the fix comes from.
+    // The capture position as { lat, lon } (null fields when unknown), to
+    // stamp onto a freshly received live packet. This is the single point that
+    // decides WHERE that position comes from (the "Packet position" map
+    // setting): the phone/browser GPS watch living in the 3D map, or the
+    // position the connected MeshCore device itself reports (kept fresh by the
+    // 1 Hz poll in _updateDeviceLocationRefresh).
     _myLocation() {
-        const l = this.signalMap?.currentLocation();
+        const l = this._locSource === 'device'
+            ? this.signalMap?.deviceLocation()
+            : this.signalMap?.currentLocation();
         return { lat: l?.lat ?? null, lon: l?.lon ?? null };
     }
 

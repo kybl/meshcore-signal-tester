@@ -709,6 +709,13 @@ export class Signal3DMap {
         return this._userLoc;
     }
 
+    // The connected MeshCore device's last reported position (see
+    // setDeviceLocation) — read by the app when packet geotagging is set to
+    // "MeshCore device" instead of the phone GPS. Null while unknown.
+    deviceLocation() {
+        return this._deviceLoc;
+    }
+
     // ---- Filter ----
 
     // Pass col => boolean to show only matching repeaters; null to show all.

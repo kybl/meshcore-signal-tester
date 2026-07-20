@@ -104,6 +104,12 @@ class MainActivity : AppCompatActivity() {
     private val foundAddrs = ArrayList<String>()
     private val foundNames = ArrayList<String>()
 
+    // Mirrors the web app's "Packet position from" map setting (via
+    // ScreenBridge.setWantsPhoneLocation): when packets are geotagged from the
+    // MeshCore device's own GPS, the connect flow must not demand the phone's
+    // location permission. Written from a WebView binder thread, read on main.
+    @Volatile var wantsPhoneLocation: Boolean = true
+
     private var _onPermsResult: ((Boolean) -> Unit)? = null
 
     private val requestPerms = registerForActivityResult(
@@ -111,11 +117,16 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         // Empty map (system dismissed the request without a decision) ⇒ denied.
         val granted = result.isNotEmpty() && result.values.all { it }
-        // Start the foreground service only when we actually hold location (its
-        // declared FGS type); starting it with everything denied can crash on
+        // Start the foreground service when the requested set was granted OR we
+        // hold location: with the "MeshCore device" packet-position source the
+        // request legitimately contains no location permission at all, and
+        // startAsForeground picks an FGS type set matching what we actually
+        // hold. Still never start with everything denied — that can crash on
         // Android 14+ (ForegroundServiceDidNotStartInTime).
-        if (hasLocationPermission()) {
+        if (granted || hasLocationPermission()) {
             MeshcoreService.start(this)
+        }
+        if (hasLocationPermission()) {
             // Connect-flow grant doubles as the trigger to start GPS capture, so
             // the map geotags packets from connect time without a separate tap.
             jsApi.locationPermissionGranted()
@@ -517,7 +528,7 @@ class MainActivity : AppCompatActivity() {
         onDenied: (() -> Unit)? = null,
         onGranted: () -> Unit
     ) {
-        val missing = Permissions.connectPermissions(includeBluetooth).filter {
+        val missing = Permissions.connectPermissions(includeBluetooth, wantsPhoneLocation).filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (missing.isEmpty()) {

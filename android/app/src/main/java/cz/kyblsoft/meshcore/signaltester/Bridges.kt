@@ -81,8 +81,8 @@ class SerialBridge(private val activity: MainActivity) {
     fun open(reqId: String, portId: String, baudRate: Int) {
         activity.checkBatteryOptimization()
         activity.main.post {
-            // USB doesn't need Bluetooth permissions; location is still requested
-            // so GPS for the map works and the foreground service can start. But
+            // USB doesn't need Bluetooth permissions; location is requested only
+            // while packets are geotagged from the phone GPS (wantsPhoneLocation).
             // USB works without location, so a location denial must still connect
             // (just without GPS) rather than hang or reject.
             activity.ensureConnectPermissions(
@@ -117,8 +117,8 @@ class WifiBridge(private val activity: MainActivity) {
     fun open(reqId: String, host: String, port: Int) {
         activity.checkBatteryOptimization()
         activity.main.post {
-            // TCP needs no Bluetooth permission; location is still requested (as
-            // for USB) so the GPS map works and the foreground service can start.
+            // TCP needs no Bluetooth permission; location is requested only while
+            // packets are geotagged from the phone GPS (wantsPhoneLocation).
             // TCP works without location, so a denial must still connect.
             activity.ensureConnectPermissions(
                 includeBluetooth = false,

@@ -278,6 +278,27 @@ async function main() {
         (await page.$$('#msgTableHead th.msg-col-rep')).length === 0);
     check('Clear data removes repeater columns', colsGone);
 
+    // 5) Packet-position source: switching to "MeshCore device" persists and a
+    // debug-injected packet still ingests cleanly (its geotag reads the device
+    // position, which is unknown here — must yield null coords, not a crash).
+    await page.evaluate(() => {
+        const s = document.getElementById('locSourceSelect');
+        s.value = 'device';
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const locPersisted = await page.evaluate(() => localStorage.getItem('locSource'));
+    await page.click('button.collapse-btn[data-target="debugBody"]');   // expand the Debug section
+    await page.fill('#debugRepeater', 'AB12CD');
+    await page.click('#debugInject');
+    const injected = await waitUntil(async () => (await page.textContent('#totalRx'))?.trim() === '1');
+    check('packet-position source "MeshCore device" persists and ingests without phone GPS',
+        locPersisted === 'device' && injected, `locSource=${locPersisted}, totalRx=${await page.textContent('#totalRx')}`);
+    await page.evaluate(() => {
+        const s = document.getElementById('locSourceSelect');
+        s.value = 'phone';
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
     // Click every Connect button once. Headless Chromium has no BLE/serial, so
     // each path ends in an explanatory alert (auto-accepted above) — but the
     // click must SURVIVE its own code: a browser-only crash in the connect

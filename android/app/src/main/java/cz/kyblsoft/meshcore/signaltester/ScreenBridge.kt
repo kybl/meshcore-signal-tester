@@ -64,6 +64,15 @@ class ScreenBridge(private val activity: MainActivity) {
         MeshcoreService.updateStatus(activity.applicationContext, text)
     }
 
+    /** The web app's packet-position source. When it geotags packets from the
+     *  MeshCore device's own GPS instead of the phone's ("Packet position
+     *  from" map setting), the connect flow must not demand the phone's
+     *  location permission. Called once at startup and on every change. */
+    @JavascriptInterface
+    fun setWantsPhoneLocation(wants: Boolean) {
+        activity.wantsPhoneLocation = wants
+    }
+
     /** Recent process-death records for this app as a JSON array (API 30+;
      *  "[]" where unsupported or on any failure). Each entry: ts (epoch ms),
      *  process (full process name — the main app or a WebView renderer),
