@@ -1,23 +1,30 @@
 // MeshCore regional radio presets and the matcher that names the connected
 // device's configuration ("which preset is this radio on?").
 //
-// The table mirrors the official MeshCore configurator's presets.json
-// (https://www.meshcore.co.uk/configurator/presets.json, retrieved 2026-07)
-// with frequencies normalised to integer kHz so matching never touches float
-// equality. Presets are community-maintained and drift over time — when they
-// do, re-fetch the JSON and update this table (titles are kept verbatim).
+// The table mirrors the official preset list served by the MeshCore API —
+// GET https://api.meshcore.nz/api/v1/config, path
+// config.suggested_radio_settings.entries (retrieved 2026-07-20). That is the
+// live source both the official app and config.meshcore.io load presets from
+// (the copy at meshcore.co.uk/configurator/presets.json is a stale mirror).
+// Frequencies are normalised to integer kHz so matching never touches float
+// equality. Presets are community-maintained and drift a few times a year —
+// to refresh, re-fetch the URL above and update this table (titles verbatim).
 //
 // Pure (no DOM) — unit-tested in test/radio-presets.test.js.
 
 export const RADIO_PRESETS = [
     { title: 'Australia',                 freqKhz: 915800, bwKhz: 250,  sf: 10, cr: 5 },
     { title: 'Australia (Narrow)',        freqKhz: 916575, bwKhz: 62.5, sf: 7,  cr: 8 },
+    { title: 'Australia (Mid)',           freqKhz: 915075, bwKhz: 125,  sf: 9,  cr: 5 },
     { title: 'Australia: SA, WA',         freqKhz: 923125, bwKhz: 62.5, sf: 8,  cr: 8 },
     { title: 'Australia: QLD',            freqKhz: 923125, bwKhz: 62.5, sf: 8,  cr: 5 },
+    { title: 'Brazil',                    freqKhz: 923125, bwKhz: 62.5, sf: 8,  cr: 8 },
     { title: 'EU/UK (Narrow)',            freqKhz: 869618, bwKhz: 62.5, sf: 8,  cr: 8 },
     { title: 'EU/UK (Deprecated)',        freqKhz: 869525, bwKhz: 250,  sf: 11, cr: 5 },
     { title: 'Czech Republic (Narrow)',   freqKhz: 869432, bwKhz: 62.5, sf: 7,  cr: 5 },
     { title: 'EU 433MHz (Long Range)',    freqKhz: 433650, bwKhz: 250,  sf: 11, cr: 5 },
+    { title: 'EU 433MHz (Narrow)',        freqKhz: 433650, bwKhz: 62.5, sf: 8,  cr: 8 },
+    { title: 'Netherlands',               freqKhz: 869618, bwKhz: 62.5, sf: 7,  cr: 5 },
     { title: 'New Zealand',               freqKhz: 917375, bwKhz: 250,  sf: 11, cr: 5 },
     { title: 'New Zealand (Narrow)',      freqKhz: 917375, bwKhz: 62.5, sf: 7,  cr: 5 },
     { title: 'Portugal 433',              freqKhz: 433375, bwKhz: 62.5, sf: 9,  cr: 6 },

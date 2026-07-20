@@ -15,6 +15,9 @@ test('identical presets all match (EU/UK Narrow ≡ Switzerland)', () => {
     assert.deepEqual(
         matchRadioPreset({ freqKhz: 869618, bwKhz: 62.5, sf: 8, cr: 8 }),
         ['EU/UK (Narrow)', 'Switzerland']);
+    assert.deepEqual(
+        matchRadioPreset({ freqKhz: 923125, bwKhz: 62.5, sf: 8, cr: 8 }),
+        ['Australia: SA, WA', 'Brazil']);
 });
 
 test('same frequency, different SF/CR does not cross-match', () => {
