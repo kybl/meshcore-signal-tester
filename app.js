@@ -10,6 +10,7 @@ import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
 import { ConnectionState, ReconnectController } from './connection-state.js?v=2';
+import { matchRadioPreset, formatRadioConfig } from './radio-presets.js?v=1';
 import { buildCsv, parseCsv } from './csv.js?v=4';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -92,6 +93,7 @@ class MeshCoreApp {
         this._deviceRefreshTimer = null;   // periodic SELF_INFO re-request while the device marker is shown or device-sourced geotagging is on
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
+        this._radioConfig = null;          // connected device's radio settings (freqKhz/bwKhz/sf/cr) — see _setRadioConfig
         // Packet storage lives in this.model (CaptureModel, created below): the
         // recent RAM window (model.recent*), the full on-disk history (async
         // model methods) and the write-through buffers are all PRIVATE inside
@@ -2000,6 +2002,21 @@ class MeshCoreApp {
         // End of a 'log' dump → erase the file so the next dump is only-new.
         if (body === 'EOF') { this._serialWriteText('log erase\r\n').catch(() => {}); return; }
 
+        // Reply to our 'get radio' probe: "> 869.525,250,11,5" (freq MHz, BW
+        // kHz, SF, CR). Matched BEFORE the positional lat/lon queue — a 4-field
+        // CSV can never be one of its bare-decimal replies.
+        const rm = body.match(/^>\s*(\d+(?:\.\d+)?),(\d+(?:\.\d+)?),(\d+),(\d+)$/);
+        if (rm) {
+            this._sawRepeaterReply = true;
+            this._setRadioConfig({
+                freqKhz: Math.round(parseFloat(rm[1]) * 1000),
+                bwKhz: parseFloat(rm[2]),
+                sf: parseInt(rm[3], 10),
+                cr: parseInt(rm[4], 10),
+            });
+            return;
+        }
+
         // Reply to our get lat / get lon location probe. The firmware answers
         // each with a bare "> <decimal>" carrying no field name, so we map the
         // replies to fields in the order we asked (lat first, then lon).
@@ -2147,6 +2164,9 @@ class MeshCoreApp {
         // both at once would make the second getWriter() throw.
         await this._serialWriteText('get lat\r\n').catch(() => {});
         await this._serialWriteText('get lon\r\n').catch(() => {});
+        // Radio settings ride along: the reply ("> freq,bw,sf,cr") is
+        // self-describing, so it needs no slot in the ordered pos queue.
+        await this._serialWriteText('get radio\r\n').catch(() => {});
         clearTimeout(this._posQueryTimer);
         this._posQueryTimer = setTimeout(() => { this._pendingPosFields = []; }, 5000);
     }
@@ -2730,13 +2750,49 @@ class MeshCoreApp {
 
     // PACKET_SELF_INFO (0x05) layout: [0]=code, [1]=adv_type, [2-3]=tx powers,
     // [4-35]=pub_key, [36-39]=adv_lat, [40-43]=adv_lon (int32 LE / 1e6),
-    // [45]=adv_loc_policy. We read only the device's own advertised position.
+    // [45]=adv_loc_policy, [48-51]=freq kHz (uint32 LE), [52-55]=bw Hz
+    // (uint32 LE), [56]=sf, [57]=cr. We read the device's own position and its
+    // radio configuration (shown as a preset name in the header).
     _handleSelfInfo(payload) {
         if (payload.length < 44) return;
         const lat = ((payload[36] | (payload[37] << 8) | (payload[38] << 16) | (payload[39] << 24)) | 0) / 1e6;
         const lon = ((payload[40] | (payload[41] << 8) | (payload[42] << 16) | (payload[43] << 24)) | 0) / 1e6;
         this._setDeviceLocation(lat, lon);
+        if (payload.length >= 58) {
+            const dv = new DataView(payload.buffer, payload.byteOffset);
+            const freqKhz = dv.getUint32(48, true);
+            const bwKhz = dv.getUint32(52, true) / 1000;
+            const sf = payload[56], cr = payload[57];
+            // Sanity gate: an older firmware with a shorter/different layout
+            // must not paint garbage — accept only physically plausible values.
+            if (freqKhz >= 100000 && freqKhz <= 2600000
+                && bwKhz >= 7 && bwKhz <= 1000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8) {
+                this._setRadioConfig({ freqKhz, bwKhz, sf, cr });
+            }
+        }
         this._updateDeviceLocationRefresh();
+    }
+
+    // Remember the connected device's radio configuration and show it in the
+    // header — as the matching MeshCore preset name(s) when the community
+    // preset table recognises it, else as the raw parameters. Cleared on
+    // disconnect. `cfg` = { freqKhz, bwKhz, sf, cr }.
+    _setRadioConfig(cfg) {
+        const prev = this._radioConfig;
+        if (prev && cfg && prev.freqKhz === cfg.freqKhz && prev.bwKhz === cfg.bwKhz
+            && prev.sf === cfg.sf && prev.cr === cfg.cr) return;   // unchanged (1 Hz poll)
+        this._radioConfig = cfg;
+        const el = document.getElementById('radioPreset');
+        if (!el) return;
+        if (!cfg) { el.classList.add('hidden'); el.textContent = ''; return; }
+        const raw = formatRadioConfig(cfg);
+        const titles = matchRadioPreset(cfg);
+        el.textContent = titles.length ? `📻 ${titles.join(' / ')}` : `📻 ${raw}`;
+        el.title = titles.length
+            ? `Radio preset: ${titles.join(' / ')} (${raw})`
+            : `Radio settings: ${raw} — matches no known MeshCore preset`;
+        el.classList.toggle('radio-preset-custom', !titles.length);
+        el.classList.remove('hidden');
     }
 
     // Periodically re-read the device's own position while the user is watching
@@ -6398,6 +6454,7 @@ class MeshCoreApp {
         clearInterval(this._batteryPollTimer);
         this._batteryPollTimer = null;
         this._setDeviceLocation(null, null);
+        this._setRadioConfig(null);
         // Clear any in-flight contact fetch so a fresh connection starts clean
         // (a stuck _contactsReceiving from an interrupted stream would otherwise
         // linger). The lastmod marker is intentionally kept — it only ever

@@ -1648,6 +1648,16 @@ header .help-icon.active {
     margin: 18px 0 8px;
 }
 
+/* Connected device's radio preset (header, next to the device name) */
+.radio-preset {
+    font-size: 11px;
+    color: #7bd88f;
+    white-space: nowrap;
+}
+.radio-preset.radio-preset-custom { color: #e0b653; }   /* custom settings — no known preset */
+html.light-theme .radio-preset { color: #2e8b46; }
+html.light-theme .radio-preset.radio-preset-custom { color: #a97b13; }
+
 /* Help ▸ Diagnostics: the process-death log (Android only, see _initExitLog) */
 .exit-log-list {
     font-family: 'SF Mono', Consolas, monospace;
