@@ -74,3 +74,43 @@ export class TimeWindows {
         return Math.min(Math.max(disp, this.#renderBudgetMs), ret);
     }
 }
+
+// --- Timestamp display formatting ------------------------------------------
+// The tables, packet detail and map/chart tooltips show packet times as bare
+// HH:MM:SS, which turns ambiguous once a session spans midnight. Rule: same
+// calendar day as `now` → time only; any other day → "dd/mm HH:MM:SS".
+// `now` is injectable for tests; callers just omit it.
+
+export function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear()
+        && a.getMonth() === b.getMonth()
+        && a.getDate() === b.getDate();
+}
+
+function datePrefix(d, now) {
+    if (sameDay(d, now)) return '';
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm} `;
+}
+
+export function formatWhen(timestamp, now = new Date()) {
+    const d = new Date(timestamp);
+    return datePrefix(d, now) + d.toLocaleTimeString('en-GB');
+}
+
+export function formatWhenMs(timestamp, now = new Date()) {
+    const d = new Date(timestamp);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    const ms = String(d.getMilliseconds()).padStart(3, '0');
+    return `${datePrefix(d, now)}${hh}:${mi}:${ss}.${ms}`;
+}
+
+// Time until the next LOCAL midnight (the moment yesterday's rows need their
+// date prefix). Built via the Date constructor's day rollover, so DST shifts
+// land on the real wall-clock midnight.
+export function msUntilNextMidnight(now = new Date()) {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now;
+}

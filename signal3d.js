@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js?v=1';
 import { colsOverlap } from './column-key.js?v=2';
+import { formatWhen } from './time-windows.js?v=2';
 import { lonLatToTile, tileToLatLon } from './geo.js?v=1';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
@@ -937,7 +938,7 @@ export class Signal3DMap {
             : pts.reduce((best, q) => q.time > best.time ? q : best, pts[0]);
         const snrStr  = p.snr  != null ? `${p.snr  >= 0 ? '+' : ''}${p.snr.toFixed(1)} dB`  : null;
         const rssiStr = p.rssi != null ? `${p.rssi} dBm` : null;
-        const timeStr = new Date(p.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const timeStr = formatWhen(p.time);   // dated when not from today
         const sigParts = [snrStr ? `SNR <b>${this._escHtml(snrStr)}</b>` : null,
                           rssiStr ? `RSSI <b>${this._escHtml(rssiStr)}</b>` : null].filter(Boolean);
         const sigHtml = sigParts.length

@@ -1,11 +1,11 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=5';
-import { Signal3DMap } from './signal3d.js?v=156';
+import { Signal3DMap } from './signal3d.js?v=157';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
 import { MapCache } from './map-cache.js?v=2';
-import { TimeWindows } from './time-windows.js?v=1';
+import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './time-windows.js?v=2';
 import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
@@ -303,6 +303,20 @@ class MeshCoreApp {
             }
             this._updateStats();
         }, 2000);
+        this._scheduleMidnightRerender();
+    }
+
+    // At local midnight, every time rendered before the boundary is suddenly
+    // yesterday's and needs its date prefix (see formatWhen). The 2 s tick
+    // above repaints the tables only while the Display window is finite, so
+    // with Display = "All" in a quiet net the date-less times would sit stale
+    // until the next packet — repaint both tables once at each midnight.
+    _scheduleMidnightRerender() {
+        setTimeout(() => {
+            this._renderRepTable();
+            this._renderMsgTable();
+            this._scheduleMidnightRerender();
+        }, msUntilNextMidnight() + 1000);   // +1 s: land safely past the boundary
     }
 
     _setupCollapsibleSections() {
@@ -4548,7 +4562,7 @@ class MeshCoreApp {
         // buckets (count > 1) are aggregates over a range.
         const single = !nearest._bucket || nearest._exactTime;
         const tDate = new Date(nearest.time);
-        const time = tDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const time = formatWhen(nearest.time);   // dated when not from today
         // Milliseconds only when the time is a real packet timestamp — a clustered
         // bucket's time is a range midpoint, so a sub-second figure would mislead.
         // Wrapped in its own span so the ms (and the dot) can be dimmed.
@@ -6243,17 +6257,13 @@ class MeshCoreApp {
 
     // --- Utilities ---
 
+    // Time-only today, "dd/mm HH:MM:SS" for any other day — see time-windows.js.
     _formatTime(timestamp) {
-        return new Date(timestamp).toLocaleTimeString('en-GB');
+        return formatWhen(timestamp);
     }
 
     _formatTimeMs(timestamp) {
-        const d = new Date(timestamp);
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mm = String(d.getMinutes()).padStart(2, '0');
-        const ss = String(d.getSeconds()).padStart(2, '0');
-        const ms = String(d.getMilliseconds()).padStart(3, '0');
-        return `${hh}:${mm}:${ss}.${ms}`;
+        return formatWhenMs(timestamp);
     }
 
     async disconnect() {
