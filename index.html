@@ -13,6 +13,45 @@
         else if(_s==="large")document.documentElement.classList.add("ui-large");
         else if(_s==="larger")document.documentElement.classList.add("ui-larger");
     }catch(e){}</script>
+    <!-- Global JS-error reporter, deliberately BEFORE any other script and
+         dependency-free: records uncaught errors / rejections (including a
+         failed module load, which kills the whole app) into localStorage
+         mc_js_errors and shows a red banner — so a device-specific breakage
+         is visible and reportable even when the UI itself is dead. -->
+    <script>
+    (function () {
+        function rec(msg) {
+            msg = String(msg).slice(0, 500);
+            try {
+                var a = JSON.parse(localStorage.getItem('mc_js_errors') || '[]');
+                a.unshift({ t: Date.now(), m: msg });
+                if (a.length > 20) a.length = 20;
+                localStorage.setItem('mc_js_errors', JSON.stringify(a));
+            } catch (e) {}
+            try {
+                var b = document.getElementById('mcErrBanner');
+                if (!b) {
+                    b = document.createElement('div');
+                    b.id = 'mcErrBanner';
+                    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;'
+                        + 'background:#b3261e;color:#fff;font:12px/1.5 monospace;'
+                        + 'padding:6px 10px;white-space:pre-wrap;word-break:break-all';
+                    b.onclick = function () { b.remove(); };
+                    (document.body || document.documentElement).appendChild(b);
+                }
+                b.textContent = 'JS error (tap to dismiss): ' + msg;
+            } catch (e) {}
+        }
+        window.addEventListener('error', function (e) {
+            if (!e.message) return;   // resource-load events carry no message — skip
+            rec(e.message + ' @ ' + (e.filename || '?') + ':' + (e.lineno || '?'));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+            var r = e.reason;
+            rec('unhandled rejection: ' + (r && (r.stack || r.message) || r));
+        });
+    })();
+    </script>
     <script src="native-bridge.js?v=13"></script>
     <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js?v=1" } }
@@ -24,7 +63,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=433">
+    <link rel="modulepreload" href="app.js?v=434">
     <link rel="modulepreload" href="capture-model.js?v=4">
     <link rel="modulepreload" href="chart-cache.js?v=1">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -441,6 +480,11 @@
                    that's a data gap. WebView renderer entries are recovered automatically
                    and usually only cost a reload, not the whole gap.</p>
                 <div id="exitLogList" class="exit-log-list"></div>
+                <div id="jsErrorBlock" class="hidden">
+                    <p>Uncaught JavaScript errors (newest first) — captured by the page-level
+                       reporter, including failures that break the whole UI:</p>
+                    <div id="jsErrorList" class="exit-log-list"></div>
+                </div>
             </div>
 
             <div class="help-section-title">Stored data</div>
@@ -468,6 +512,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=433"></script>
+    <script type="module" src="app.js?v=434"></script>
 </body>
 </html>

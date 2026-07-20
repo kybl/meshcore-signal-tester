@@ -1305,6 +1305,24 @@ class MeshCoreApp {
         if (log.length > 40) log.length = 40;
         try { localStorage.setItem('mc_exit_log', JSON.stringify(log)); } catch (_) {}
         this._renderExitLog(log);
+        this._renderJsErrorLog();
+    }
+
+    // Uncaught JS errors recorded by the inline reporter in index.html
+    // (mc_js_errors) — shown under Diagnostics so a device-specific breakage
+    // can be reported even after the red banner was dismissed.
+    _renderJsErrorLog() {
+        const block = document.getElementById('jsErrorBlock');
+        const list = document.getElementById('jsErrorList');
+        if (!block || !list) return;
+        let errs = [];
+        try { errs = JSON.parse(localStorage.getItem('mc_js_errors') ?? '[]'); } catch (_) {}
+        if (!errs.length) return;
+        list.innerHTML = errs.map(e =>
+            `<div class="exit-log-row"><span class="exit-log-when">${this._escHtml(new Date(e.t).toLocaleString())}</span> ${this._escHtml(e.m ?? '')}</div>`
+        ).join('');
+        block.classList.remove('hidden');
+        document.getElementById('exitLogSection')?.classList.remove('hidden');
     }
 
     _renderExitLog(log) {
@@ -2861,7 +2879,9 @@ class MeshCoreApp {
         if (cached?.list) setActivePresets(cached.list);
         if (cached && Date.now() - (cached.at || 0) < 24 * 3600 * 1000) return;
         try {
-            const res = await fetch(PRESETS_CONFIG_URL, { signal: AbortSignal.timeout(10000) });
+            const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+                ? AbortSignal.timeout(10000) : undefined;   // older WebViews lack .timeout
+            const res = await fetch(PRESETS_CONFIG_URL, { signal });
             if (!res.ok) return;
             const list = parseApiPresets(await res.json());
             if (!list) return;
