@@ -495,6 +495,27 @@ class MeshCoreApp {
             if (forgetBtn) this.forgetDevice(forgetBtn.dataset.id);
         });
 
+        // Packet position source (see _myLocation) — a header setting because
+        // it only affects packets received from now on, not loaded data.
+        // Switching to 'device' means the phone's location permission is no
+        // longer needed — the native side is told so the next connect flow
+        // doesn't demand it. Switching back to 'phone' needs that permission
+        // again: start the map's GPS watch right away, which prompts for it
+        // (in the Android app via AndroidGeo.startUpdates, in a browser via
+        // watchPosition). _locSource itself was restored in the constructor
+        // (packets may arrive before this wiring runs); here just sync the
+        // control and tell the native side.
+        const locSourceSel = document.getElementById('locSourceSelect');
+        locSourceSel?.addEventListener('change', () => {
+            this._locSource = locSourceSel.value;
+            Store.set('locSource', this._locSource);
+            window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
+            this._updateDeviceLocationRefresh();   // device source needs the 1 Hz position poll
+            if (this._locSource === 'phone') this.signalMap?.startWatching?.();
+        });
+        if (locSourceSel) locSourceSel.value = this._locSource;
+        window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
+
         const ttlSelect  = document.getElementById('ttlSelect');
         const hideSelect = document.getElementById('hideSelect');
         if (ttlSelect) {
@@ -1041,20 +1062,6 @@ class MeshCoreApp {
             this.signalMap?.setPerspSize(perspSizeChk.checked);
             Store.set('perspSize', perspSizeChk.checked);
         });
-        // Packet position source (see _myLocation). Switching to 'device'
-        // means the phone's location permission is no longer needed — the
-        // native side is told so the next connect flow doesn't demand it.
-        // Switching back to 'phone' needs that permission again: start the
-        // map's GPS watch right away, which prompts for it (in the Android
-        // app via AndroidGeo.startUpdates, in a browser via watchPosition).
-        const locSourceSel = document.getElementById('locSourceSelect');
-        locSourceSel?.addEventListener('change', () => {
-            this._locSource = locSourceSel.value;
-            Store.set('locSource', this._locSource);
-            window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
-            this._updateDeviceLocationRefresh();   // device source needs the 1 Hz position poll
-            if (this._locSource === 'phone') this.signalMap?.startWatching?.();
-        });
         // Restore saved values into the controls (the map itself was already
         // constructed with the same Store-backed defaults above).
         const showLines = Store.bool('showLines', true);
@@ -1065,11 +1072,6 @@ class MeshCoreApp {
         this._showDeviceMarker = showDevice;
         if (showDeviceChk) { showDeviceChk.checked = showDevice; this.signalMap?.setShowDeviceMarker(showDevice); }
         if (perspSizeChk)    perspSizeChk.checked    = Store.bool('perspSize', true);
-        // _locSource itself was restored in the constructor (packets may arrive
-        // before this UI wiring runs); here just sync the control and let the
-        // native connect flow know whether to still ask for phone location.
-        if (locSourceSel) locSourceSel.value = this._locSource;
-        window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
 
         document.getElementById('showAllRepeatersBtn')?.addEventListener('click', () => this._toggleAllRepeatersOnMap());
         document.getElementById('centerOnMeBtn')?.addEventListener('click', () => this.signalMap?.toggleFollowUser());
@@ -1149,7 +1151,7 @@ class MeshCoreApp {
             'device-location':
                 'Shows the connected device\'s own position on the map (a blue antenna marker). While this is on, the app keeps asking the radio for its location, which means more constant work and can drain the battery faster. If you don\'t need it, turn it off.',
             'loc-source':
-                'Where captured packets get their map position from. "This phone / browser" (the default) stamps each packet with this device\'s own GPS fix and needs the location permission. "MeshCore device" instead uses the position the connected radio reports (re-read about once a second), so no phone location permission is needed — handy when the radio moves separately from you (mounted on a car while you measure from a laptop without GPS, or on a dog\'s collar roaming the garden). The radio must have a GPS fix, or at least a configured position, for packets to appear on the map. Works with a connected companion; a repeater only ever reports its fixed configured position.',
+                'Where newly received packets get their map position from — already captured data keeps the positions it was stored with. "This phone / browser" (the default) stamps each packet with this device\'s own GPS fix and needs the location permission. "MeshCore device" instead uses the position the connected radio reports (re-read about once a second), so no phone location permission is needed — handy when the radio moves separately from you (mounted on a car while you measure from a laptop without GPS, or on a dog\'s collar roaming the garden). The radio must have a GPS fix, or at least a configured position, for packets to appear on the map. Works with a connected companion; a repeater only ever reports its fixed configured position.',
             'discover':
                 'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
             'auto-reconnect':

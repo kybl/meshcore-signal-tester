@@ -24,7 +24,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=429">
+    <link rel="modulepreload" href="app.js?v=430">
     <link rel="modulepreload" href="capture-model.js?v=4">
     <link rel="modulepreload" href="chart-cache.js?v=1">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -82,6 +82,7 @@
                 <label class="ttl-header-label">Text size<select id="uiScaleSelect" class="ttl-header-select"><option value="small" style="font-size:10px">Small</option><option value="normal" selected style="font-size:13px">Normal</option><option value="large" style="font-size:17px">Large</option><option value="larger" style="font-size:24px">Larger</option></select></label>
                 <label class="size-label">2D graphs dot size<input type="range" id="dotSizeInput" class="size-range" min="0.3" max="2.5" step="0.1" value="1"><span id="dotSizeVal" class="size-val">1</span></label>
                 <label class="sound-toggle"><input type="checkbox" id="keepScreenChk" checked> Keep screen on<span class="help-icon" data-help="keepscreen">?</span></label>
+                <label class="ttl-header-label">Packet position from<select id="locSourceSelect" class="ttl-header-select"><option value="phone">This phone / browser</option><option value="device">MeshCore device</option></select><span class="help-icon" data-help="loc-source">?</span></label>
             </div>
             <div class="header-stats-row">
                 <div class="header-stats">
@@ -252,12 +253,6 @@
                                     <label class="map-setting-toggle"><input type="checkbox" id="showLinesChk" checked> Guide lines</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showMarkerChk" checked> My location</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showDeviceChk"> Device location<span class="help-icon" data-help="device-location">?</span></label>
-                                    <label class="map-source-label">Packet position from:
-                                        <select id="locSourceSelect" class="map-source-select">
-                                            <option value="phone">This phone / browser</option>
-                                            <option value="device">MeshCore device</option>
-                                        </select><span class="help-icon" data-help="loc-source">?</span>
-                                    </label>
                                 </div>
                             </div>
                         </div>
@@ -462,6 +457,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=429"></script>
+    <script type="module" src="app.js?v=430"></script>
 </body>
 </html>
