@@ -250,6 +250,18 @@ async function main() {
     check('Trace detail shows the header path as per-hop SNR in dB', traceDetail);
     await page.click('#row-trc1 .sig-snr').catch(() => {});   // close the detail again
 
+    // Stored-session scanner (Help ▸ Stored data): with the fixture imported,
+    // scanning must list this session's database, marked as the current one.
+    await page.click('#helpBtn');
+    await page.click('#scanSessionsBtn');
+    const scanOk = await waitUntil(async () => {
+        const t = (await page.textContent('#sessionScanList')) ?? '';
+        return t.includes('(current)') && /\d+ packets/.test(t);
+    });
+    check('stored-session scanner lists the current session', scanOk,
+        ((await page.textContent('#sessionScanList')) ?? '').slice(0, 140));
+    await page.keyboard.press('Escape');   // close the Help modal
+
     // Disk-wide message filter: the needle row sits on the LAST page (rows
     // 101+ newest-first); the filter must repaginate over the whole history
     // to find it — the old page-local filter showed nothing.

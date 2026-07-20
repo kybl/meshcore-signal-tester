@@ -58,3 +58,39 @@ test('formatRadioConfig renders MHz, kHz and CR as 4/x', () => {
         formatRadioConfig({ freqKhz: 915800, bwKhz: 250, sf: 10, cr: 5 }),
         '915.800 MHz, BW 250 kHz, SF10, CR4/5');
 });
+
+// --- API payload parsing and the active-table override -----------------------
+
+import { parseApiPresets, setActivePresets, getActivePresets } from '../radio-presets.js';
+
+test('parseApiPresets converts the API shape to table rows', () => {
+    const rows = parseApiPresets({ config: { suggested_radio_settings: { entries: [
+        { title: 'Custom' },   // no params → skipped
+        { title: 'EU/UK (Narrow)', frequency: '869.618', bandwidth: '62.5', spreading_factor: '8', coding_rate: '8' },
+        { title: '  Trimmed  ', frequency: '915.800', bandwidth: '250', spreading_factor: '10', coding_rate: '5' },
+        { title: 'Broken', frequency: 'abc', bandwidth: '250', spreading_factor: '10', coding_rate: '5' },
+    ] } } });
+    assert.deepEqual(rows, [
+        { title: 'EU/UK (Narrow)', freqKhz: 869618, bwKhz: 62.5, sf: 8, cr: 8 },
+        { title: 'Trimmed', freqKhz: 915800, bwKhz: 250, sf: 10, cr: 5 },
+    ]);
+});
+
+test('parseApiPresets rejects unknown shapes with null (keep current table)', () => {
+    assert.equal(parseApiPresets(null), null);
+    assert.equal(parseApiPresets({}), null);
+    assert.equal(parseApiPresets({ config: { suggested_radio_settings: { entries: [] } } }), null);
+    assert.equal(parseApiPresets({ config: { suggested_radio_settings: { entries: [{ title: 'Custom' }] } } }), null);
+});
+
+test('setActivePresets swaps the matcher table; null/empty restores fallback', () => {
+    try {
+        setActivePresets([{ title: 'Testland', freqKhz: 869432, bwKhz: 62.5, sf: 7, cr: 5 }]);
+        assert.deepEqual(matchRadioPreset({ freqKhz: 869432, bwKhz: 62.5, sf: 7, cr: 5 }), ['Testland']);
+        assert.deepEqual(matchRadioPreset({ freqKhz: 869618, bwKhz: 62.5, sf: 8, cr: 8 }), []);
+        assert.equal(getActivePresets().length, 1);
+    } finally {
+        setActivePresets(null);
+    }
+    assert.deepEqual(matchRadioPreset({ freqKhz: 869432, bwKhz: 62.5, sf: 7, cr: 5 }), ['Czech Republic (Narrow)']);
+});

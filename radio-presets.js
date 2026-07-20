@@ -35,13 +35,46 @@ export const RADIO_PRESETS = [
     { title: 'Vietnam (Deprecated)',      freqKhz: 920250, bwKhz: 250,  sf: 11, cr: 5 },
 ];
 
+// Where the live list is served from (see the header comment). Fetched by the
+// app at most once a day; RADIO_PRESETS above is the offline fallback.
+export const PRESETS_CONFIG_URL = 'https://api.meshcore.nz/api/v1/config';
+
+// Parse the API payload into table rows. Returns null when the payload
+// doesn't look like the known shape (so callers keep their current table
+// rather than blanking it); individually malformed entries are skipped.
+export function parseApiPresets(json) {
+    const entries = json?.config?.suggested_radio_settings?.entries;
+    if (!Array.isArray(entries)) return null;
+    const out = [];
+    for (const e of entries) {
+        const title = typeof e?.title === 'string' ? e.title.trim() : '';
+        const f = parseFloat(e?.frequency), bw = parseFloat(e?.bandwidth);
+        const sf = parseInt(e?.spreading_factor, 10), cr = parseInt(e?.coding_rate, 10);
+        if (!title || !isFinite(f) || !isFinite(bw) || !Number.isFinite(sf) || !Number.isFinite(cr)) continue;
+        out.push({ title, freqKhz: Math.round(f * 1000), bwKhz: bw, sf, cr });
+    }
+    return out.length ? out : null;
+}
+
+// The table the matcher actually uses: the baked-in fallback until the app
+// installs a fresher list (from the API or its localStorage cache).
+let activePresets = RADIO_PRESETS;
+
+export function setActivePresets(list) {
+    activePresets = Array.isArray(list) && list.length ? list : RADIO_PRESETS;
+}
+
+export function getActivePresets() {
+    return activePresets;
+}
+
 // All preset titles matching a radio configuration, in table order. Several
 // presets are intentionally identical (e.g. Switzerland ≡ EU/UK (Narrow)), so
 // this returns a list, not a single winner; empty = custom settings.
 // freqKhz is compared to the nearest kHz, bwKhz to 0.1 kHz (62.5 must match
 // exactly but float noise from a Hz→kHz division must not break it).
 export function matchRadioPreset({ freqKhz, bwKhz, sf, cr }) {
-    return RADIO_PRESETS
+    return activePresets
         .filter(p => Math.round(freqKhz) === p.freqKhz
                   && Math.abs(bwKhz - p.bwKhz) < 0.1
                   && sf === p.sf && cr === p.cr)

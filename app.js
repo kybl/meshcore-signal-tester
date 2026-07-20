@@ -10,7 +10,7 @@ import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
 import { ConnectionState, ReconnectController } from './connection-state.js?v=2';
-import { matchRadioPreset, formatRadioConfig } from './radio-presets.js?v=2';
+import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
 import { buildCsv, parseCsv } from './csv.js?v=4';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
@@ -279,6 +279,8 @@ class MeshCoreApp {
         this._setupFiltersAndNotices();
         this._initHelpSystem();
         this._initExitLog();
+        this._initSessionScanner();
+        this._refreshRadioPresets();   // async, fire-and-forget (cache + daily re-fetch)
         this._initWifiModal();
         this._initSignalMap();
         this._initDebug();
@@ -1330,6 +1332,81 @@ class MeshCoreApp {
                 + `, importance ${this._escHtml(String(imp))}${this._escHtml(desc)}</div>`;
         }).join('');
         section.classList.remove('hidden');
+    }
+
+    // --- Stored-session scanner (Help ▸ Stored data) ---
+    // The resume prompt only knows sessions listed in the localStorage
+    // registry. A registry entry can be lost (e.g. the OEM killer striking
+    // mid-write) while the IndexedDB database itself survives — orphaned data
+    // the app would never offer again. This scanner enumerates the actual
+    // databases, shows what each holds, and lets the user load one: it writes
+    // the id to mc_adopt and reloads, which _chooseSession picks up first.
+    _initSessionScanner() {
+        document.getElementById('scanSessionsBtn')?.addEventListener('click', () => {
+            this._scanStoredSessions().catch(e => console.error('Session scan failed:', e));
+        });
+        document.getElementById('sessionScanList')?.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-adopt]');
+            if (!btn) return;
+            if (!confirm('Load this stored session? The app reloads into it '
+                + '(disconnecting any device). Your current session stays on disk '
+                + 'and can be loaded back the same way.')) return;
+            try { localStorage.setItem('mc_adopt', btn.dataset.adopt); } catch (_) {}
+            location.reload();
+        });
+    }
+
+    async _scanStoredSessions() {
+        const list = document.getElementById('sessionScanList');
+        if (!list) return;
+        if (!indexedDB.databases) {
+            list.textContent = 'This browser cannot enumerate stored databases (indexedDB.databases() missing).';
+            return;
+        }
+        list.textContent = 'Scanning…';
+        const reg = this._readReg();
+        const dbs = (await indexedDB.databases()).filter(d => d.name?.startsWith('meshcore-capture-'));
+        const rows = [];
+        for (const d of dbs) {
+            const id = d.name.slice('meshcore-capture-'.length);
+            // Open at the DB's current version (no version arg → no upgrade) and
+            // count the two data stores; a store missing in an old schema simply
+            // counts as null.
+            let hashes = null, obs = null;
+            try {
+                const db = await new Promise((res, rej) => {
+                    const r = indexedDB.open(d.name);
+                    r.onsuccess = () => res(r.result);
+                    r.onerror = () => rej(r.error);
+                });
+                const cnt = store => new Promise(res => {
+                    try {
+                        const c = db.transaction(store, 'readonly').objectStore(store).count();
+                        c.onsuccess = () => res(c.result);
+                        c.onerror = () => res(null);
+                    } catch (_) { res(null); }
+                });
+                hashes = await cnt('hashes');
+                obs = await cnt('obs');
+                db.close();
+            } catch (_) {}
+            rows.push({ id, hashes, obs, entry: reg[id] });
+        }
+        if (!rows.length) {
+            list.textContent = 'No stored capture databases found.';
+            return;
+        }
+        rows.sort((a, b) => (b.entry?.beat ?? 0) - (a.entry?.beat ?? 0));
+        list.innerHTML = rows.map(r => {
+            const cur = r.id === this._tabId;
+            const when = r.entry?.beat ? new Date(r.entry.beat).toLocaleString() : 'not in registry';
+            const counts = `${r.hashes ?? '?'} packets / ${r.obs ?? '?'} receptions`;
+            const status = cur ? ' <b>(current)</b>'
+                : r.entry ? '' : ' <span class="scan-orphan">(orphaned — invisible to the resume prompt)</span>';
+            const loadBtn = cur ? ''
+                : ` <button class="btn-pause scan-load-btn" data-adopt="${this._escHtml(r.id)}">Load</button>`;
+            return `<div class="scan-row"><code>${this._escHtml(r.id)}</code> — ${counts}; last seen: ${this._escHtml(when)}${status}${loadBtn}</div>`;
+        }).join('');
     }
 
     // --- Bluetooth connection ---
@@ -2771,6 +2848,28 @@ class MeshCoreApp {
             }
         }
         this._updateDeviceLocationRefresh();
+    }
+
+    // Keep the preset table fresh: adopt the cached copy immediately, then at
+    // most once a day re-fetch the official list (the same API the MeshCore
+    // app and config.meshcore.io load from). Failures are silent — the cache
+    // and, beneath it, the baked-in table in radio-presets.js keep working
+    // offline. On an update, re-run the current config through the matcher so
+    // an already-shown preset name reflects the new table.
+    async _refreshRadioPresets() {
+        const cached = Store.json('radioPresets', null);
+        if (cached?.list) setActivePresets(cached.list);
+        if (cached && Date.now() - (cached.at || 0) < 24 * 3600 * 1000) return;
+        try {
+            const res = await fetch(PRESETS_CONFIG_URL, { signal: AbortSignal.timeout(10000) });
+            if (!res.ok) return;
+            const list = parseApiPresets(await res.json());
+            if (!list) return;
+            Store.set('radioPresets', JSON.stringify({ at: Date.now(), list }));
+            setActivePresets(list);
+            const cfg = this._radioConfig;
+            if (cfg) { this._radioConfig = null; this._setRadioConfig(cfg); }
+        } catch (_) { /* offline / API down — fallback table stays active */ }
     }
 
     // Remember the connected device's radio configuration and show it in the
@@ -4767,6 +4866,20 @@ class MeshCoreApp {
     async _chooseSession() {
         const mk = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         const setTab = id => { try { sessionStorage.setItem('mc_tab', id); } catch (_) {} this._tabId = id; return 'meshcore-capture-' + id; };
+
+        // Explicit adoption from the stored-sessions scanner (Help ▸ Stored
+        // data): the user picked a database to load — take it over before any
+        // other path runs, and put it (back) in the registry so future resume
+        // prompts see it again (the heartbeat then keeps its count fresh).
+        try {
+            const adopt = localStorage.getItem('mc_adopt');
+            if (adopt) {
+                localStorage.removeItem('mc_adopt');
+                const reg = this._readReg();
+                if (!reg[adopt]) { reg[adopt] = { beat: Date.now(), count: 1 }; this._writeReg(reg); }
+                return setTab(adopt);
+            }
+        } catch (_) {}
 
         // The session this tab would continue: the just-crashed one on an Android
         // renderer rebuild (?recover=1, via mc_last_tab), otherwise the within-tab
