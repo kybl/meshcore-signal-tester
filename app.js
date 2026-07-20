@@ -94,6 +94,9 @@ class MeshCoreApp {
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         this._radioConfig = null;          // connected device's radio settings (freqKhz/bwKhz/sf/cr) — see _setRadioConfig
+        this._deviceNodeName = null;       // the device's own configured node name — see _setDeviceNodeName
+        this._connBaseName = '';           // transport-derived label ("USB 1A86:7523", GAP name) shown until the node name is known
+        this._pendingNameQuery = false;    // a repeater 'get name' reply is awaited
         // Packet storage lives in this.model (CaptureModel, created below): the
         // recent RAM window (model.recent*), the full on-disk history (async
         // model methods) and the write-through buffers are all PRIVATE inside
@@ -2134,6 +2137,20 @@ class MeshCoreApp {
         const nb = body.match(/^([0-9A-Fa-f]{8}):(\d+):(-?\d+)$/);
         if (nb) { this._sawRepeaterReply = true; this._handleNeighborLine(nb[1], parseInt(nb[2], 10), parseInt(nb[3], 10)); return; }
 
+        // Reply to our 'get name' probe: "> <any text>". Deliberately checked
+        // AFTER every structured pattern (radio CSV, positional decimals,
+        // neighbour rows), so those can't be swallowed as a "name" — the CLI
+        // answers in request order, which puts the name reply last anyway.
+        if (this._pendingNameQuery) {
+            const nm = body.match(/^>\s*(.+)$/);
+            if (nm) {
+                this._sawRepeaterReply = true;
+                this._pendingNameQuery = false;
+                this._setDeviceNodeName(nm[1]);
+                return;
+            }
+        }
+
         // Other replies (logging on/off, -none-, errors, command echoes) ignored.
     }
 
@@ -2262,8 +2279,15 @@ class MeshCoreApp {
         // Radio settings ride along: the reply ("> freq,bw,sf,cr") is
         // self-describing, so it needs no slot in the ordered pos queue.
         await this._serialWriteText('get radio\r\n').catch(() => {});
+        // Node name last — its reply ("> <any text>") is recognised by being
+        // the one awaited free-form reply left after the structured ones.
+        this._pendingNameQuery = true;
+        await this._serialWriteText('get name\r\n').catch(() => {});
         clearTimeout(this._posQueryTimer);
-        this._posQueryTimer = setTimeout(() => { this._pendingPosFields = []; }, 5000);
+        this._posQueryTimer = setTimeout(() => {
+            this._pendingPosFields = [];
+            this._pendingNameQuery = false;
+        }, 5000);
     }
 
     // Repeater data is pulled, not pushed. Both the neighbours table and the
@@ -2863,6 +2887,13 @@ class MeshCoreApp {
             if (freqKhz >= 100000 && freqKhz <= 2600000
                 && bwKhz >= 7 && bwKhz <= 1000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8) {
                 this._setRadioConfig({ freqKhz, bwKhz, sf, cr });
+                // The node name trails the radio fields; parse it only when
+                // those passed the sanity gate (same layout confidence).
+                if (payload.length > 58) {
+                    try {
+                        this._setDeviceNodeName(new TextDecoder().decode(payload.subarray(58)));
+                    } catch (_) {}
+                }
             }
         }
         this._updateDeviceLocationRefresh();
@@ -6474,8 +6505,28 @@ class MeshCoreApp {
 
     // Show the name/id of the currently connected device (same label as the
     // matching "Saved:" entry). Hidden by CSS while not connected.
+    // The transport-derived label (BLE GAP name, "USB 1A86:7523", "WiFi
+    // host:port"). Clearing it (disconnect) also drops the node name.
     _setConnectedDeviceName(name) {
-        if (this.connectedNameEl) this.connectedNameEl.textContent = name || '';
+        this._connBaseName = name || '';
+        if (!name) this._deviceNodeName = null;
+        this._renderConnectedName();
+    }
+
+    // The device's own configured node name — from SELF_INFO for companions,
+    // from 'get name' for repeaters. Preferred over the transport label once
+    // known (a USB port's vid:pid says nothing about WHICH node it is).
+    _setDeviceNodeName(name) {
+        const n = (name ?? '').trim();
+        if (!n || n === this._deviceNodeName) return;
+        this._deviceNodeName = n;
+        this._renderConnectedName();
+    }
+
+    _renderConnectedName() {
+        if (this.connectedNameEl) {
+            this.connectedNameEl.textContent = this._deviceNodeName || this._connBaseName || '';
+        }
     }
 
     // --- Utilities ---
@@ -6581,6 +6632,7 @@ class MeshCoreApp {
         this._neighborSeen = new Map();
         this._pendingRaw = [];
         this._pendingPosFields = [];
+        this._pendingNameQuery = false;
         clearTimeout(this._posQueryTimer);
         clearInterval(this._deviceRefreshTimer);
         this._deviceRefreshTimer = null;
