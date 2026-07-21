@@ -734,7 +734,12 @@ export class Signal3DMap {
         if (!el) return;
         const missing = !this._navLoc();
         el.classList.toggle('hidden', !missing);
-        if (missing) el.dataset.help = this._positionSource === 'device' ? 'nav-no-pos-device' : 'nav-no-pos-phone';
+        if (missing) {
+            const key = this._positionSource === 'device' ? 'nav-no-pos-device' : 'nav-no-pos-phone';
+            // Text and its embedded ? icon both open the tip (see app.js note).
+            el.dataset.help = key;
+            el.querySelector('.help-icon')?.setAttribute('data-help', key);
+        }
     }
 
     // The connected MeshCore device's last reported position (see

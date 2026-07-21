@@ -72,7 +72,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=440">
+    <link rel="modulepreload" href="app.js?v=441">
     <link rel="modulepreload" href="capture-model.js?v=4">
     <link rel="modulepreload" href="chart-cache.js?v=1">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -88,7 +88,7 @@
     <link rel="modulepreload" href="packet-store.js?v=24">
     <link rel="modulepreload" href="radio-presets.js?v=3">
     <link rel="modulepreload" href="selection-model.js?v=1">
-    <link rel="modulepreload" href="signal3d.js?v=159">
+    <link rel="modulepreload" href="signal3d.js?v=160">
     <link rel="modulepreload" href="storage.js?v=1">
     <link rel="modulepreload" href="table-cache.js?v=3">
     <link rel="modulepreload" href="time-windows.js?v=2">
@@ -132,7 +132,7 @@
                 <label class="ttl-header-label">Text size<select id="uiScaleSelect" class="ttl-header-select"><option value="small" style="font-size:10px">Small</option><option value="normal" selected style="font-size:13px">Normal</option><option value="large" style="font-size:17px">Large</option><option value="larger" style="font-size:24px">Larger</option></select></label>
                 <label class="size-label">2D graphs dot size<input type="range" id="dotSizeInput" class="size-range" min="0.3" max="2.5" step="0.1" value="1"><span id="dotSizeVal" class="size-val">1</span></label>
                 <label class="sound-toggle"><input type="checkbox" id="keepScreenChk" checked> Keep screen on<span class="help-icon" data-help="keepscreen">?</span></label>
-                <label class="ttl-header-label">Packet position from<select id="locSourceSelect" class="ttl-header-select"><option value="phone">This phone / browser</option><option value="device">MeshCore device</option></select><span class="help-icon" data-help="loc-source">?</span><span id="locSourceWarn" class="loc-source-warn help-tap hidden">⚠ no position</span></label>
+                <label class="ttl-header-label">Packet position from<select id="locSourceSelect" class="ttl-header-select"><option value="phone">This phone / browser</option><option value="device">MeshCore device</option></select><span class="help-icon" data-help="loc-source">?</span><span id="locSourceWarn" class="loc-source-warn help-tap hidden">⚠ no position<span class="help-icon">?</span></span></label>
             </div>
             <div class="header-stats-row">
                 <div class="header-stats">
@@ -257,7 +257,7 @@
                     <div class="map-inner">
                         <div class="map-controls">
                             <button id="enableLocationBtn" class="btn-primary">Enable location</button>
-                            <button id="centerOnMeBtn" class="btn-show-all-repeaters" title="Center the map on the selected position source (phone or MeshCore device) and follow it">📍 Center on me</button><span id="centerNoPos" class="loc-source-warn help-tap hidden">⚠ no position</span>
+                            <button id="centerOnMeBtn" class="btn-show-all-repeaters" title="Center the map on the selected position source (phone or MeshCore device) and follow it">📍 Center on me</button><span id="centerNoPos" class="loc-source-warn help-tap hidden">⚠ no position<span class="help-icon">?</span></span>
                             <span id="locationStatus" class="map-location-status">Location not enabled.</span>
                             <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
                             <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
@@ -521,6 +521,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=440"></script>
+    <script type="module" src="app.js?v=441"></script>
 </body>
 </html>

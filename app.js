@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=5';
-import { Signal3DMap } from './signal3d.js?v=159';
+import { Signal3DMap } from './signal3d.js?v=160';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
@@ -3348,7 +3348,11 @@ class MeshCoreApp {
             // Tap opens the explanation via the help-tip system (see the
             // .help-tap handling in _initHelpSystem) — the title attribute
             // alone would be desktop-hover only, invisible on a phone.
-            el.dataset.help = this._locSource === 'device' ? 'loc-warn-device' : 'loc-warn-phone';
+            const key = this._locSource === 'device' ? 'loc-warn-device' : 'loc-warn-phone';
+            // Both the text (help-tap) and its embedded ? icon open the tip —
+            // the icon exists because a tappable bare text isn't discoverable.
+            el.dataset.help = key;
+            el.querySelector('.help-icon')?.setAttribute('data-help', key);
             el.title = this._locSource === 'device'
                 ? 'Packets are being captured WITHOUT a position: the connected MeshCore '
                   + 'device reports none (no GPS fix, no configured position). '
