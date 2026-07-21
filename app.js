@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=5';
-import { Signal3DMap } from './signal3d.js?v=160';
+import { Signal3DMap } from './signal3d.js?v=161';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
@@ -1227,10 +1227,7 @@ class MeshCoreApp {
         };
 
         document.addEventListener('click', e => {
-            // .help-tap: non-icon elements (e.g. the "⚠ no position" warning)
-            // that show a tip on tap — title-attribute tooltips don't exist on
-            // touch devices, so this is their mobile equivalent.
-            const icon = e.target.closest('.help-icon, .help-tap');
+            const icon = e.target.closest('.help-icon');
             if (icon) {
                 // Prevent the enclosing <label> from focusing its input
                 e.preventDefault();
@@ -3348,11 +3345,10 @@ class MeshCoreApp {
             // Tap opens the explanation via the help-tip system (see the
             // .help-tap handling in _initHelpSystem) — the title attribute
             // alone would be desktop-hover only, invisible on a phone.
-            const key = this._locSource === 'device' ? 'loc-warn-device' : 'loc-warn-phone';
-            // Both the text (help-tap) and its embedded ? icon open the tip —
-            // the icon exists because a tappable bare text isn't discoverable.
-            el.dataset.help = key;
-            el.querySelector('.help-icon')?.setAttribute('data-help', key);
+            // Only the embedded ? icon opens the tip — consistent with every
+            // other setting; the text itself is not a tap target.
+            el.querySelector('.help-icon')?.setAttribute('data-help',
+                this._locSource === 'device' ? 'loc-warn-device' : 'loc-warn-phone');
             el.title = this._locSource === 'device'
                 ? 'Packets are being captured WITHOUT a position: the connected MeshCore '
                   + 'device reports none (no GPS fix, no configured position). '

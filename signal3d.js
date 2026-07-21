@@ -734,11 +734,11 @@ export class Signal3DMap {
         if (!el) return;
         const missing = !this._navLoc();
         el.classList.toggle('hidden', !missing);
+        // Only the embedded ? icon opens the tip (consistent with the rest of
+        // the app); it carries the per-source explanation key.
         if (missing) {
-            const key = this._positionSource === 'device' ? 'nav-no-pos-device' : 'nav-no-pos-phone';
-            // Text and its embedded ? icon both open the tip (see app.js note).
-            el.dataset.help = key;
-            el.querySelector('.help-icon')?.setAttribute('data-help', key);
+            el.querySelector('.help-icon')?.setAttribute('data-help',
+                this._positionSource === 'device' ? 'nav-no-pos-device' : 'nav-no-pos-phone');
         }
     }
 
