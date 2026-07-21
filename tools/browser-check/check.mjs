@@ -308,6 +308,36 @@ async function main() {
     // Not collecting (no device connected) → the no-position warning stays hidden.
     const warnHidden = await page.$eval('#locSourceWarn', el => el.classList.contains('hidden'));
     check('no-position warning stays hidden while not collecting', warnHidden);
+
+    // End-to-end warning behavior with the device source: collecting + no
+    // device position → warning shows; a position arriving → warning clears.
+    // (_collecting is forced — headless has no real radio to connect.)
+    const setSource = v => page.evaluate(val => {
+        const s = document.getElementById('locSourceSelect');
+        s.value = val;
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+    }, v);
+    await setSource('device');
+    const warnShown = await page.evaluate(() => {
+        const app = window.__mcApp;
+        app._collecting = true;
+        app.signalMap?.setDeviceLocation(null, null);
+        app._updateLocSourceWarning();
+        return !document.getElementById('locSourceWarn').classList.contains('hidden');
+    });
+    const warnCleared = await page.evaluate(() => {
+        const app = window.__mcApp;
+        app.signalMap?.setDeviceLocation(50.08, 14.43);
+        app._updateLocSourceWarning();
+        const hidden = document.getElementById('locSourceWarn').classList.contains('hidden');
+        app.signalMap?.setDeviceLocation(null, null);   // restore
+        app._collecting = false;
+        app._updateLocSourceWarning();
+        return hidden;
+    });
+    await setSource('phone');
+    check('no-position warning: shows while collecting without a device position, clears on a fix',
+        warnShown && warnCleared);
     await page.evaluate(() => {
         const s = document.getElementById('locSourceSelect');
         s.value = 'phone';

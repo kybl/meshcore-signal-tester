@@ -6727,7 +6727,13 @@ class MeshCoreApp {
 }
 
 let monitor;
-function init() { monitor = new MeshCoreApp(); }
+function init() {
+    monitor = new MeshCoreApp();
+    // Exposed for the browser regression harness (tools/browser-check), which
+    // needs to drive states a headless browser can't reach (e.g. "collecting"
+    // without a real device). Not a public API.
+    window.__mcApp = monitor;
+}
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
