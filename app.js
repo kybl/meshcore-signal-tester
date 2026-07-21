@@ -1159,6 +1159,10 @@ class MeshCoreApp {
                 'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. When the repeater\'s own position is known, the info panel offers an eye button (turn the camera toward it) and a pushpin (keep it on the map — tilted = shown only temporarily, upright = kept permanently). "Center on me" is a toggle — it recentres on your location and then follows you as you move (the camera tracks your GPS); press it again, or pan/rotate the map yourself, to stop following. "Show all repeaters" adds every known position. Use ⚙ (top right) to change map source, dot size, guide lines, your own location marker, and the connected device\'s own location (a blue antenna marker, shown when the radio or repeater reports a position). Navigation: drag to pan · scroll/pinch to zoom · two-finger twist (or right-drag) to tilt/rotate.',
             'device-location':
                 'Shows the connected device\'s own position on the map (a blue antenna marker). While this is on, the app keeps asking the radio for its location, which means more constant work and can drain the battery faster. If you don\'t need it, turn it off.',
+            'loc-warn-phone':
+                'Packets are being captured WITHOUT a position: there is no phone/browser GPS fix — location is not enabled/allowed, or a fix hasn\'t arrived yet. Packets are stored and measured normally, but they will not appear on the 3D map. Enable location (the button on the 3D map) or wait for a GPS fix.',
+            'loc-warn-device':
+                'Packets are being captured WITHOUT a position: the connected MeshCore device reports none — it has no GPS fix and no configured position. Packets are stored and measured normally, but they will not appear on the 3D map.',
             'loc-source':
                 'Where newly received packets get their map position from — already captured data keeps the positions it was stored with. "This phone / browser" (the default) stamps each packet with this device\'s own GPS fix and needs the location permission. "MeshCore device" instead uses the position the connected radio reports (re-read about once a second), so no phone location permission is needed — handy when the radio moves separately from you (mounted on a car while you measure from a laptop without GPS, or on a dog\'s collar roaming the garden). The radio must have a GPS fix, or at least a configured position, for packets to appear on the map. Works with a connected companion; a repeater only ever reports its fixed configured position.',
             'discover':
@@ -1214,7 +1218,10 @@ class MeshCoreApp {
         };
 
         document.addEventListener('click', e => {
-            const icon = e.target.closest('.help-icon');
+            // .help-tap: non-icon elements (e.g. the "⚠ no position" warning)
+            // that show a tip on tap — title-attribute tooltips don't exist on
+            // touch devices, so this is their mobile equivalent.
+            const icon = e.target.closest('.help-icon, .help-tap');
             if (icon) {
                 // Prevent the enclosing <label> from focusing its input
                 e.preventDefault();
@@ -3329,6 +3336,10 @@ class MeshCoreApp {
         const show = this._collecting && (lat == null || lon == null);
         el.classList.toggle('hidden', !show);
         if (show) {
+            // Tap opens the explanation via the help-tip system (see the
+            // .help-tap handling in _initHelpSystem) — the title attribute
+            // alone would be desktop-hover only, invisible on a phone.
+            el.dataset.help = this._locSource === 'device' ? 'loc-warn-device' : 'loc-warn-phone';
             el.title = this._locSource === 'device'
                 ? 'Packets are being captured WITHOUT a position: the connected MeshCore '
                   + 'device reports none (no GPS fix, no configured position). '
