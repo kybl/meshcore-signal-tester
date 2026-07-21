@@ -5952,19 +5952,25 @@ class MeshCoreApp {
         // knock rather than ring.
         const knock = (start, vol) => {
             const t = now + start;
-            for (const [mult, amp] of [[1, 1.0], [2.76, 0.3]]) {
+            // Percussive attack, but a marimba-like ring-out that scales with
+            // the chosen mode — long enough to work as the audible anchor for
+            // the SNR notes that follow. The inharmonic overtone dies much
+            // faster than the fundamental, so it keeps the woody "knock" onset
+            // without turning the tail metallic.
+            const dur = 0.25 + ring * 0.4;
+            for (const [mult, amp, decay] of [[1, 1.0, dur], [2.76, 0.3, dur * 0.3]]) {
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
                 osc.type = 'triangle';
                 osc.frequency.value = baseFreq * mult;
                 osc.connect(gain);
                 gain.connect(out);
-                const peak = vol * amp * 0.1;
+                const peak = vol * amp * 0.12;
                 gain.gain.setValueAtTime(0.0001, t);
                 gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.002);
-                gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t + decay);
                 osc.start(t);
-                osc.stop(t + 0.17);
+                osc.stop(t + decay + 0.05);
             }
         };
 
