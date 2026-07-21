@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=5';
-import { Signal3DMap } from './signal3d.js?v=158';
+import { Signal3DMap } from './signal3d.js?v=159';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
@@ -520,6 +520,7 @@ class MeshCoreApp {
             window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
             this._updateDeviceLocationRefresh();   // device source needs the 1 Hz position poll
             if (this._locSource === 'phone') this.signalMap?.startWatching?.();
+            this.signalMap?.setPositionSource?.(this._locSource);   // "Center on me" tracks the same source
             this._updateLocSourceWarning();
         });
         if (locSourceSel) locSourceSel.value = this._locSource;
@@ -932,6 +933,7 @@ class MeshCoreApp {
                 btnEl:         document.getElementById('enableLocationBtn'),
                 statusEl:      document.getElementById('locationStatus'),
                 centerBtnEl:   document.getElementById('centerOnMeBtn'),
+                centerNoPosEl: document.getElementById('centerNoPos'),
                 emptyEl:       document.getElementById('mapEmpty'),
                 infoEl:        document.getElementById('mapInfo'),
                 colorFor:      col => this.getRepeaterColor(col),
@@ -1006,6 +1008,9 @@ class MeshCoreApp {
                 },
                 onToggleMapPin: col => this._toggleMapPinForCol(col),
             });
+            // "Center on me" tracks the same source as packet geotagging
+            // (restored into _locSource before the map exists).
+            this.signalMap.setPositionSource(this._locSource);
         } catch (_) {
             this.signalMap = null;
             document.getElementById('mapWrap')?.classList.add('map-offline');
@@ -1159,6 +1164,10 @@ class MeshCoreApp {
                 'Interactive 3D map of received signal quality. Each dot is positioned at your GPS location at reception time; height reflects SNR (taller = higher SNR). Click a dot to select that repeater — shows an info panel and syncs the selection across Seen Repeaters, charts, and Received Packets. When the repeater\'s own position is known, the info panel offers an eye button (turn the camera toward it) and a pushpin (keep it on the map — tilted = shown only temporarily, upright = kept permanently). "Center on me" is a toggle — it recentres on your location and then follows you as you move (the camera tracks your GPS); press it again, or pan/rotate the map yourself, to stop following. "Show all repeaters" adds every known position. Use ⚙ (top right) to change map source, dot size, guide lines, your own location marker, and the connected device\'s own location (a blue antenna marker, shown when the radio or repeater reports a position). Navigation: drag to pan · scroll/pinch to zoom · two-finger twist (or right-drag) to tilt/rotate.',
             'device-location':
                 'Shows the connected device\'s own position on the map (a blue antenna marker). While this is on, the app keeps asking the radio for its location, which means more constant work and can drain the battery faster. If you don\'t need it, turn it off.',
+            'nav-no-pos-phone':
+                '"Center on me" follows this phone\'s / browser\'s position, but there is no GPS fix yet — location is not enabled/allowed, or a fix hasn\'t arrived. Tap "Enable location" or wait for a fix.',
+            'nav-no-pos-device':
+                '"Center on me" follows the MeshCore device\'s position (per the "Packet position from" setting), but none is known — no device is connected, or the connected device has no GPS fix and no configured position.',
             'loc-warn-phone':
                 'Packets are being captured WITHOUT a position: there is no phone/browser GPS fix — location is not enabled/allowed, or a fix hasn\'t arrived yet. Packets are stored and measured normally, but they will not appear on the 3D map. Enable location (the button on the 3D map) or wait for a GPS fix.',
             'loc-warn-device':

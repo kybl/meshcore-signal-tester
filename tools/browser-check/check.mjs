@@ -338,6 +338,22 @@ async function main() {
     await setSource('phone');
     check('no-position warning: shows while collecting without a device position, clears on a fix',
         warnShown && warnCleared);
+
+    // "Center on me" is always visible; its "⚠ no position" note reflects the
+    // selected source: shown with no fix (headless has none), hidden once the
+    // device source has a position.
+    const navUi = await page.evaluate(() => {
+        const app = window.__mcApp;
+        const btnVisible = !document.getElementById('centerOnMeBtn').classList.contains('hidden');
+        const noteShown = !document.getElementById('centerNoPos').classList.contains('hidden');
+        app.signalMap?.setPositionSource('device');
+        app.signalMap?.setDeviceLocation(50.08, 14.43);
+        const noteHidden = document.getElementById('centerNoPos').classList.contains('hidden');
+        app.signalMap?.setDeviceLocation(null, null);   // restore
+        app.signalMap?.setPositionSource('phone');
+        return btnVisible && noteShown && noteHidden;
+    });
+    check('Center on me is always visible; its no-position note tracks the selected source', navUi);
     await page.evaluate(() => {
         const s = document.getElementById('locSourceSelect');
         s.value = 'phone';

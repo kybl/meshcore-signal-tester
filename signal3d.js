@@ -144,7 +144,12 @@ export class Signal3DMap {
         this.canvas    = opts.canvas;
         this.statusEl  = opts.statusEl;
         this.btnEl     = opts.btnEl;
-        this.centerBtnEl = opts.centerBtnEl;   // "Center on me" — only useful with a fix
+        this.centerBtnEl = opts.centerBtnEl;   // "Center on me" — always visible; targets _navLoc()
+        this.centerNoPosEl = opts.centerNoPosEl;   // "⚠ no position" note next to it
+        // Which position "Center on me"/follow tracks — mirrors the app's
+        // "Packet position from" setting ('phone' | 'device').
+        this._positionSource = 'phone';
+        this._updateNavUi();   // the note is visible from the start when no position is known
         this.emptyEl   = opts.emptyEl;
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
@@ -566,20 +571,19 @@ export class Signal3DMap {
         this.btnEl.addEventListener('click', () => this.startWatching());
     }
 
-    // Every status message means "location isn't available (yet)". Show the
-    // message where the "Center on me" button normally sits and hide that button
-    // — it only makes sense once we have a fix. _locationReady() does the inverse.
+    // Every status message means "phone location isn't available (yet)".
+    // The "Center on me" button stays visible regardless — it may be tracking
+    // the MeshCore device's position (see setPositionSource), and when its
+    // target is missing the "⚠ no position" note next to it says so.
     _setStatus(text) {
         if (this.statusEl) {
             this.statusEl.textContent = text;
             this.statusEl.classList.remove('hidden');
         }
-        if (this.centerBtnEl) this.centerBtnEl.classList.add('hidden');
     }
 
     _locationReady() {
         if (this.statusEl) this.statusEl.classList.add('hidden');
-        if (this.centerBtnEl) this.centerBtnEl.classList.remove('hidden');
     }
 
     startWatching() {
@@ -616,6 +620,7 @@ export class Signal3DMap {
                 }
                 this._scheduleMapUpdate();
                 this._updateUserMarker();
+                this._updateNavUi();
                 // In follow mode, glide after the user only once their marker
                 // drifts out of the central-third dead zone — small moves don't
                 // nudge the map. Never recentre mid-gesture (it would fight the
@@ -707,6 +712,29 @@ export class Signal3DMap {
 
     currentLocation() {
         return this._userLoc;
+    }
+
+    // The position "Center on me" and follow mode navigate by, per the
+    // selected source. Null/undefined while unknown.
+    _navLoc() {
+        return this._positionSource === 'device' ? this._deviceLoc : this._userLoc;
+    }
+
+    setPositionSource(src) {
+        this._positionSource = src === 'device' ? 'device' : 'phone';
+        this._updateNavUi();
+        // Follow mode continues on the NEW target — recenter if it's off-view.
+        if (this._followUser && !this._userDragging && !this._followTargetInDeadZone()) this.flyToUser(450);
+    }
+
+    // Show/hide the "⚠ no position" note next to "Center on me" and point its
+    // tap-help at the right explanation for the selected source.
+    _updateNavUi() {
+        const el = this.centerNoPosEl;
+        if (!el) return;
+        const missing = !this._navLoc();
+        el.classList.toggle('hidden', !missing);
+        if (missing) el.dataset.help = this._positionSource === 'device' ? 'nav-no-pos-device' : 'nav-no-pos-phone';
     }
 
     // The connected MeshCore device's last reported position (see
@@ -1193,11 +1221,17 @@ export class Signal3DMap {
             this._deviceLoc = null;
             if (this._deviceMarker) this._deviceMarker.visible = false;
             this._scheduleMapUpdate();
+            this._updateNavUi();
             return;
         }
         this._deviceLoc = { lat, lon };
         this._updateDeviceMarker();
         this._scheduleMapUpdate();
+        this._updateNavUi();
+        // Follow mode tracking the device: glide after it like the GPS watch
+        // does for the phone (dead zone and drag guards identical).
+        if (this._positionSource === 'device' && this._followUser && !this._userDragging
+            && !this._followTargetInDeadZone()) this.flyToUser(450);
     }
 
     setMapSource(source) {
@@ -1670,8 +1704,9 @@ export class Signal3DMap {
     // toward a theoretical max-SNR dot directly above them, so the view shows the
     // marker plus the upward spire direction. Null until the location is known.
     _followTarget() {
-        if (!this._userLoc) return null;
-        const u = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
+        const loc = this._navLoc();
+        if (!loc) return null;
+        const u = this._latLonToWorld(loc.lat, loc.lon);
         if (!u) return null;
         u.y = this._followCenterY();
         return u;
@@ -1680,8 +1715,11 @@ export class Signal3DMap {
     // Recenter the view on the follow target (keeps angle/zoom). Returns false
     // (and shows a status message) when the location is unknown.
     flyToUser(duration = 700) {
-        if (!this._userLoc) {
-            this._setStatus('Location not known yet — tap “Enable location” first.');
+        if (!this._navLoc()) {
+            if (this._positionSource === 'phone') {
+                this._setStatus('Location not known yet — tap “Enable location” first.');
+            }
+            // Device source: the persistent "⚠ no position" note already says why.
             return false;
         }
         if (!this._followTarget()) return false;
