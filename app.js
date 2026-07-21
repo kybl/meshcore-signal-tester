@@ -5907,6 +5907,29 @@ class MeshCoreApp {
         // this beep. (Only sound is gated; capture is unaffected.)
         if (ctx.state !== 'running') { ctx.resume?.(); return; }
         const now = ctx.currentTime;
+
+        // Deep sleep (Doze) can stall the audio renderer while state still
+        // says 'running': currentTime freezes, every beep lands on the same
+        // frozen instant, and waking unleashes them as one chord. The state
+        // check above never sees this, so ALSO watch the clock itself: keep an
+        // anchor at the last moment currentTime advanced, and once it has
+        // stood still for >2 s of wall time, drop beeps exactly like the
+        // suspended-state skip (and remember the stall for _muteAudioBurst).
+        const wall = performance.now();
+        if (!this._audioAnchor || now > this._audioAnchor.audio + 0.05) {
+            this._audioAnchor = { audio: now, wall };   // clock is moving
+        } else if (wall - this._audioAnchor.wall > 2000) {
+            this._audioStalled = true;
+            ctx.resume?.();
+            return;
+        }
+
+        // Master gain — the mute point for _muteAudioBurst (the disconnect
+        // alarm bypasses it on purpose; it must never be swallowed).
+        if (!this._audioMaster) {
+            this._audioMaster = ctx.createGain();
+            this._audioMaster.connect(ctx.destination);
+        }
         const baseFreq = 700;
 
         // Ring-out length grows with the chosen mode (short / medium / long).
@@ -5919,7 +5942,7 @@ class MeshCoreApp {
         out.type = 'lowpass';
         out.frequency.value = 10700;
         out.Q.value = 0.3;
-        out.connect(ctx.destination);
+        out.connect(this._audioMaster);
 
         // One struck bell note: fundamental + octave + a touch of detuned high
         // shimmer (4.01×) over a sub-octave (0.5×) for body. Very fast attack
@@ -5982,6 +6005,25 @@ class MeshCoreApp {
         const onset = ring * 0.18;
         if (isNewHash) knock(0, 0.9);
         bell(baseFreq * Math.pow(2, (snr ?? 0) / 10), isNewHash ? onset : 0, ring, 1.0);
+    }
+
+    // Belt to the stall detector's braces: when a stall WAS detected (some
+    // beeps may have piled onto the frozen clock before the detector engaged),
+    // mute the RX-sound master for the first 2 s after the renderer wakes, so
+    // whatever queued rings out silently. Called on visibilitychange→visible,
+    // before the context resume. The disconnect alarm bypasses the master and
+    // is unaffected.
+    _muteAudioBurst() {
+        if (!this._audioStalled) return;
+        this._audioStalled = false;
+        const ctx = this.audioCtx, master = this._audioMaster;
+        if (!ctx || !master) return;
+        // currentTime is still the frozen instant here — everything queued
+        // starts at (and rings out shortly after) that same instant.
+        const t = ctx.currentTime;
+        master.gain.cancelScheduledValues(0);
+        master.gain.setValueAtTime(0, t);
+        master.gain.setValueAtTime(1, t + 2);
     }
 
     // An interrupted two-tone alarm (880-440-880-440-880-440 Hz) for the
@@ -6785,8 +6827,11 @@ document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
         monitor?._syncWakeLock();
         // Recover audio promptly on return so the next packet beeps without a
-        // one-packet delay. Nothing was queued while suspended (see _playRxSound),
-        // so this can't unleash a backlog.
+        // one-packet delay. A plain suspend queued nothing (see the state skip
+        // in _playRxSound); a Doze stall may have queued a few beeps before
+        // the frozen-clock detector engaged — _muteAudioBurst silences those
+        // for the first moments after the wake, so resume can't unleash them.
+        monitor?._muteAudioBurst?.();
         monitor?.audioCtx?.resume?.();
     } else {
         monitor?.releaseWakeLock();
