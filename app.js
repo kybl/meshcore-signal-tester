@@ -315,6 +315,7 @@ class MeshCoreApp {
                 this._renderMsgTable();
             }
             this._updateStats();
+            this._updateLocSourceWarning();
         }, 2000);
         this._scheduleMidnightRerender();
     }
@@ -519,6 +520,7 @@ class MeshCoreApp {
             window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
             this._updateDeviceLocationRefresh();   // device source needs the 1 Hz position poll
             if (this._locSource === 'phone') this.signalMap?.startWatching?.();
+            this._updateLocSourceWarning();
         });
         if (locSourceSel) locSourceSel.value = this._locSource;
         window.AndroidScreen?.setWantsPhoneLocation?.(this._locSource === 'phone');
@@ -3310,6 +3312,27 @@ class MeshCoreApp {
         const margin = 80;
         if (document.body.scrollHeight <= window.innerHeight + margin) return false;
         return window.scrollY + window.innerHeight >= document.body.scrollHeight - margin;
+    }
+
+    // Warn next to the "Packet position from" setting while packets are being
+    // captured but the chosen source has no fix — they'd silently land off the
+    // 3D map. Re-evaluated by the 2 s tick (position/collecting changes) and
+    // immediately on a source switch.
+    _updateLocSourceWarning() {
+        const el = document.getElementById('locSourceWarn');
+        if (!el) return;
+        const { lat, lon } = this._myLocation();
+        const show = this._collecting && (lat == null || lon == null);
+        el.classList.toggle('hidden', !show);
+        if (show) {
+            el.title = this._locSource === 'device'
+                ? 'Packets are being captured WITHOUT a position: the connected MeshCore '
+                  + 'device reports none (no GPS fix, no configured position). '
+                  + 'They will not appear on the 3D map.'
+                : 'Packets are being captured WITHOUT a position: no phone/browser GPS fix '
+                  + '(location not enabled, or no fix yet). '
+                  + 'They will not appear on the 3D map.';
+        }
     }
 
     // The capture position as { lat, lon } (null fields when unknown), to

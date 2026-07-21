@@ -1648,6 +1648,16 @@ header .help-icon.active {
     margin: 18px 0 8px;
 }
 
+/* "No position available" warning next to the Packet-position-from setting */
+.loc-source-warn {
+    color: #e0b653;
+    font-size: 11px;
+    margin-left: 5px;
+    white-space: nowrap;
+    cursor: help;
+}
+html.light-theme .loc-source-warn { color: #a97b13; }
+
 /* Connected device's radio preset (header, next to the device name) */
 .radio-preset {
     font-size: 11px;

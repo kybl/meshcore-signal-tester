@@ -305,6 +305,9 @@ async function main() {
     const injected = await waitUntil(async () => (await page.textContent('#totalRx'))?.trim() === '1');
     check('packet-position source "MeshCore device" persists and ingests without phone GPS',
         locPersisted === 'device' && injected, `locSource=${locPersisted}, totalRx=${await page.textContent('#totalRx')}`);
+    // Not collecting (no device connected) → the no-position warning stays hidden.
+    const warnHidden = await page.$eval('#locSourceWarn', el => el.classList.contains('hidden'));
+    check('no-position warning stays hidden while not collecting', warnHidden);
     await page.evaluate(() => {
         const s = document.getElementById('locSourceSelect');
         s.value = 'phone';
