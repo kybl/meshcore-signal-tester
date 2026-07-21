@@ -2712,7 +2712,7 @@ class MeshCoreApp {
         // list and can be reconnected with one tap (Android only).
         if (info.wifi) {
             const id = `wifi:${info.host}:${info.port}`;
-            const name = `WiFi ${info.host}:${info.port}`;
+            const name = `WiFi: ${info.host}:${info.port}`;
             const devices = this.getSavedDevices();
             const existing = devices.find(d => d.id === id);
             if (existing) {
@@ -2730,7 +2730,7 @@ class MeshCoreApp {
         const pid = info.usbProductId;
         const hex4 = n => (n == null ? '????' : n.toString(16).padStart(4, '0').toUpperCase());
         const id = `serial:${hex4(vid)}:${hex4(pid)}`;
-        const name = (vid != null || pid != null) ? `USB ${hex4(vid)}:${hex4(pid)}` : 'USB device';
+        const name = (vid != null || pid != null) ? `USB: ${hex4(vid)}:${hex4(pid)}` : 'USB device';
         const devices = this.getSavedDevices();
         const existing = devices.find(d => d.id === id);
         if (existing) {
@@ -2763,11 +2763,15 @@ class MeshCoreApp {
         }
         el.classList.remove('hidden');
         // d.name and d.id come from the BLE peripheral (advertised/GAP name),
-        // which is attacker-controllable — escape before injecting as HTML.
+        // and d.nodeName from the device's own config — all attacker-
+        // controllable, so escape before injecting as HTML. Non-BT entries
+        // carry the technical port label in d.name ("USB: 1A86:7523"); once
+        // the node has identified itself, its name is appended in parentheses.
+        const label = d => d.nodeName ? `${d.name} (${d.nodeName})` : d.name;
         el.innerHTML = '<span class="saved-label">Saved:</span>' +
             devices.map(d => `
                 <span class="saved-device">
-                    <button class="saved-btn" data-id="${this._escHtml(d.id)}">${this._escHtml(d.name)}</button>
+                    <button class="saved-btn" data-id="${this._escHtml(d.id)}">${this._escHtml(label(d))}</button>
                     <button class="forget-btn" data-id="${this._escHtml(d.id)}" title="Forget">✕</button>
                 </span>
             `).join('');
@@ -6544,6 +6548,20 @@ class MeshCoreApp {
         if (!n || n === this._deviceNodeName) return;
         this._deviceNodeName = n;
         this._renderConnectedName();
+        // Remember it on the saved non-BT record too, so the Saved button says
+        // "USB: 1A86:7523 (MyNode)" instead of just the port. BLE records keep
+        // their GAP name (already the node's identity, kept fresh by
+        // _refreshBleName). Survives reconnects: saveSerialPort never touches
+        // nodeName.
+        if (this._lastConnectedId) {
+            const devices = this.getSavedDevices();
+            const d = devices.find(x => x.id === this._lastConnectedId);
+            if (d && (d.transport === 'serial' || d.transport === 'wifi') && d.nodeName !== n) {
+                d.nodeName = n;
+                Store.set('devices', JSON.stringify(devices));
+                this._renderSavedDevices();
+            }
+        }
     }
 
     _renderConnectedName() {
