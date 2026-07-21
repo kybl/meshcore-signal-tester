@@ -1137,7 +1137,7 @@ class MeshCoreApp {
             'contact-no-gps':
                 'The owner of this node hasn\'t configured its position.',
             'sound':
-                'off = silent. disconnect only = no per-packet sound, just an alarm if the connection drops unexpectedly. short / medium / long play a two-note bell/chime of increasing duration (long is 4× short) on each new packet. The first note (1/3 of the sound) is a fixed 700 Hz tone; the second note (2/3) shifts pitch with SNR — higher SNR → higher pitch. When a repeater filter is active, the sound plays only for packets from the filtered repeater(s). Any non-off setting also sounds an alarm when an established connection drops unexpectedly. Setting is remembered across sessions.',
+                'off = silent. disconnect only = no per-packet sound, just an alarm if the connection drops unexpectedly. short / medium / long play sounds of increasing duration (long is 4× short). A short wooden knock marks a packet with a NEW hash; every reception (including repeats of the same packet via other repeaters) then adds a bell note whose pitch shifts with SNR — higher SNR → higher pitch. One packet heard via five repeaters = one knock + five pitched notes. When a repeater filter is active, the sound plays only for packets from the filtered repeater(s). Any non-off setting also sounds an alarm when an established connection drops unexpectedly. Setting is remembered across sessions.',
             'ttl':
                 'Data older than this window is permanently deleted — packets, signal history, seen repeaters, and 3D map points all expire together. Collision labels are recalculated when their evidence ages out. "Never" keeps everything for the whole session (set automatically on CSV import) — but note that when Auto-remove is "Never", the Display window below also bounds how much is held in memory, so the heap can\'t grow without limit on long runs.',
             'display':
@@ -3485,7 +3485,7 @@ class MeshCoreApp {
         const data = this.model.recentGet(hash);
         const filterText = this._msgFilter.toLowerCase().trim();
         const matchesMsgFilter = !filterText || this._rowMatchesFilter(data, filterText);
-        if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr);
+        if (matchesMsgFilter && matchesRepFilter) this._playRxSound(snr, isNewHash);
         this._updateEmptyState();
     }
 
@@ -5891,7 +5891,7 @@ class MeshCoreApp {
 
     // --- Sound ---
 
-    _playRxSound(snr) {
+    _playRxSound(snr, isNewHash = false) {
         const mode = this.soundSelect?.value ?? 'off';
         // 'disconnect' = alarm on drop only, no per-packet beep (see _playDisconnectAlarm).
         if (mode === 'off' || mode === 'disconnect') return;
@@ -5945,12 +5945,37 @@ class MeshCoreApp {
             }
         };
 
-        // Two notes: a brief, quieter reference ding, then the SNR-pitched note
-        // that rings out. SNR 0 dB = base pitch; ±10 dB = ±1 octave. A small
-        // overlap makes it a gentle "di-iing" instead of two separate ticks.
+        // Reference "knock": a woodblock-ish triangle tick with a fast
+        // percussive decay — deliberately a different voice from the
+        // sine-partial bell, so the ear separates "new packet" from "another
+        // reception of it". The 2.76× inharmonic overtone is what makes it
+        // knock rather than ring.
+        const knock = (start, vol) => {
+            const t = now + start;
+            for (const [mult, amp] of [[1, 1.0], [2.76, 0.3]]) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.value = baseFreq * mult;
+                osc.connect(gain);
+                gain.connect(out);
+                const peak = vol * amp * 0.1;
+                gain.gain.setValueAtTime(0.0001, t);
+                gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + 0.002);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+                osc.start(t);
+                osc.stop(t + 0.17);
+            }
+        };
+
+        // The knock marks a NEW packet hash only; every reception then plays
+        // its SNR-pitched bell (SNR 0 dB = base pitch; ±10 dB = ±1 octave).
+        // So one packet heard via five repeaters sounds as: one knock, five
+        // pitched notes — the old behavior replayed the reference note every
+        // time, which drowned multi-path arrivals in identical dings.
         const onset = ring * 0.18;
-        bell(baseFreq, 0, ring * 0.5, 0.5);
-        bell(baseFreq * Math.pow(2, (snr ?? 0) / 10), onset, ring, 1.0);
+        if (isNewHash) knock(0, 0.9);
+        bell(baseFreq * Math.pow(2, (snr ?? 0) / 10), isNewHash ? onset : 0, ring, 1.0);
     }
 
     // An interrupted two-tone alarm (880-440-880-440-880-440 Hz) for the
