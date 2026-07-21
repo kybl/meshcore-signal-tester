@@ -2257,7 +2257,7 @@ export class Signal3DMap {
         };
         // localH = each marker's model height; targetPx is its on-screen height.
         if (this._userMarker) scaleFor(this._userMarker, 2.8);
-        if (this._deviceMarker) scaleFor(this._deviceMarker, 3.1);
+        if (this._deviceMarker) scaleFor(this._deviceMarker, 2.8);   // same footprint as the user cone
         for (const g of this._pinGroups) {
             scaleFor(g, 4.0);
         }
@@ -2317,9 +2317,10 @@ export class Signal3DMap {
         this._userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
     }
 
-    // The connected device's own position — drawn as a blue antenna (mast +
-    // ball), deliberately distinct from the red "my location" cone and from the
-    // repeater pins, so it reads as "this is the radio/repeater I'm talking to".
+    // The connected device's own position — the same cone as the red "my
+    // location" marker but upside down (tip at the ground) and blue, so the
+    // pair reads as related-but-different. (It used to be a mast+ball antenna,
+    // which looked too much like a signal dot on a spire.)
     _updateDeviceMarker() {
         if (!this._deviceLoc || !this._tileBounds) return;
         const pos = this._latLonToWorld(this._deviceLoc.lat, this._deviceLoc.lon);
@@ -2327,18 +2328,14 @@ export class Signal3DMap {
         if (!this._deviceMarker) {
             const COL = 0x2299ff;
             const group = new THREE.Group();
-            const mast = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.18, 0.18, 2.4, 10),
-                new THREE.MeshBasicMaterial({ color: COL })
+            const cone = new THREE.Mesh(
+                new THREE.ConeGeometry(1, 2.8, 14),
+                // Lambert like the user cone, so both shade identically.
+                new THREE.MeshLambertMaterial({ color: COL })
             );
-            mast.position.y = 1.2;
-            group.add(mast);
-            const ball = new THREE.Mesh(
-                new THREE.SphereGeometry(0.5, 16, 12),
-                new THREE.MeshBasicMaterial({ color: COL })
-            );
-            ball.position.y = 2.6;
-            group.add(ball);
+            cone.rotation.z = Math.PI;   // flip: apex points down
+            cone.position.y = 1.4;       // apex touches the ground
+            group.add(cone);
             group.add(this._makeMarkerBase(COL));
             this._markerNoZFight(group);
             this._deviceMarker = group;
