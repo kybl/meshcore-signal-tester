@@ -94,6 +94,8 @@ class MeshCoreApp {
         this._pendingPosFields = [];       // repeater get lat/lon replies awaited, in order
         this._posQueryTimer = null;
         this._radioConfig = null;          // connected device's radio settings (freqKhz/bwKhz/sf/cr) — see _setRadioConfig
+        this._noisePollTimer = null;       // 10 s GET_STATS RADIO poll — feeds the measured noise-floor chart line
+        this._noiseSamples = [];           // { t, nf } — device-measured noise floor (dBm), RAM-only
         this._deviceNodeName = null;       // the device's own configured node name — see _setDeviceNodeName
         this._connBaseName = '';           // transport-derived label ("USB 1A86:7523", GAP name) shown until the node name is known
         this._pendingNameQuery = false;    // a repeater 'get name' reply is awaited
@@ -1148,7 +1150,7 @@ class MeshCoreApp {
             'chart-snr':
                 'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map — and open that packet\'s row in Received Packets; click the same dot again (or elsewhere) to close it and deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, SNR/RSSI, time (to the millisecond) and packet type in a small box — and, for a clustered point, how many receptions it represents; click the box to dismiss it. Circles (●) = incoming SNR; stars (★) = outgoing SNR reported by the remote node via Discover. Zoom the time axis with the mouse wheel, by dragging across a region, or by pinching with two fingers; once zoomed, pan with a one-finger drag or a horizontal (or Shift+) wheel — and while measuring, a window left at the right edge keeps following new packets. Double-click or Reset zoom to return to the full view.',
             'chart-interact':
-                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map — and open that packet\'s row in Received Packets; click the same dot again (or elsewhere) to close it and deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, RSSI/SNR, time (to the millisecond) and packet type in a small box — and, for a clustered point, how many receptions it represents; click the box to dismiss it. Zoom and pan the time axis just like the SNR chart (wheel, drag a region, or pinch; double-click or Reset zoom to reset) — both charts share one window, and while measuring a window kept at the right edge follows new packets. The shaded area shows the estimated noise floor (RSSI − SNR).',
+                'Click a dot to select that repeater — dims others across both charts, Seen Repeaters, Received Packets, and the 3D map — and open that packet\'s row in Received Packets; click the same dot again (or elsewhere) to close it and deselect. A notice appears top-right with options to filter or deselect. Hover or tap a point to see its exact ID, RSSI/SNR, time (to the millisecond) and packet type in a small box — and, for a clustered point, how many receptions it represents; click the box to dismiss it. Zoom and pan the time axis just like the SNR chart (wheel, drag a region, or pinch; double-click or Reset zoom to reset) — both charts share one window, and while measuring a window kept at the right edge follows new packets. The shaded area shows the estimated noise floor (RSSI − SNR); the dashed grey line is the noise floor as measured by the connected radio itself (read every ~10 s), which also covers quiet stretches with no packets.',
             'rate':
                 'Packets received in the last 60 seconds (rolling). Resets to 0 when the network goes quiet.',
             'rep-filter':
@@ -2325,6 +2327,14 @@ class MeshCoreApp {
                 this.sendBatteryQuery();
             }
         }, 60000);
+        // Noise floor polls much faster than the battery — it feeds a chart
+        // line, so 10 s resolution matters; the request/reply is ~10 bytes.
+        clearInterval(this._noisePollTimer);
+        this._noisePollTimer = setInterval(() => {
+            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+                this._sendFrame(new Uint8Array([56, 1])).catch(() => {});   // CMD_GET_STATS type RADIO
+            }
+        }, 10000);
     }
 
     async sendGetContacts() {
@@ -2743,9 +2753,14 @@ class MeshCoreApp {
         // boot). Older firmware answers the request with ERR, which is simply
         // never parsed here, so the display stays hidden.
         if (pushCode === 0x18) {
+            const dv = payload.length >= 4 ? new DataView(payload.buffer, payload.byteOffset) : null;
             if (payload[1] === 2 && payload.length >= 30) {
-                const dv = new DataView(payload.buffer, payload.byteOffset);
                 this._updateCrcStats(dv.getUint32(26, true), dv.getUint32(2, true));
+            } else if (payload[1] === 1 && payload.length >= 14) {
+                // Type RADIO: int16 LE noise floor (dBm) at [2] — the radio's
+                // own continuous measurement, unlike the per-packet RSSI−SNR
+                // estimate, so it also covers stretches with no traffic.
+                this._noteNoiseFloor(dv.getInt16(2, true));
             }
             return;
         }
@@ -4621,6 +4636,36 @@ class MeshCoreApp {
             }
         }
 
+        // Device-measured noise floor (GET_STATS RADIO, 10 s poll) — a dashed
+        // line over the shaded estimate above. Unlike the estimate it also
+        // exists between packets; the two deliberately coexist (the estimate
+        // covers imports/old data and browsers without the stats poll). The
+        // polyline breaks where sampling gapped (disconnect, Doze).
+        if (type === 'rssi' && this._noiseSamples.length) {
+            const win = this._noiseSamples.filter(s => s.t >= tMin && s.t <= tMax);
+            // Decimate to ~2 samples per pixel column so an "All" view over
+            // days doesn't emit tens of thousands of points.
+            const maxPts = Math.max(4, cw * 2);
+            const step = Math.ceil(win.length / maxPts);
+            const runs = [];
+            let run = [];
+            let prevT = null;
+            for (let i = 0; i < win.length; i += step) {
+                const s = win[i];
+                if (prevT != null && s.t - prevT > Math.max(30000, step * 10000 * 1.5)) {
+                    if (run.length > 1) runs.push(run);
+                    run = [];
+                }
+                run.push(`${xOf(s.t)},${yOf(s.nf)}`);
+                prevT = s.t;
+            }
+            if (run.length > 1) runs.push(run);
+            for (const r of runs) {
+                parts.push(`<polyline points="${r.join(' ')}" fill="none" ` +
+                    `stroke="rgba(160,160,160,0.85)" stroke-width="1.2" stroke-dasharray="5 3"/>`);
+            }
+        }
+
         const selected = this.selection.col;
 
         const groups = new Map();
@@ -6045,6 +6090,20 @@ class MeshCoreApp {
     // receptions at this spot; only CRC-clean packets ever reach the app.
     // Shown raw next to the battery (the slot the static storage number used
     // to occupy) to see how useful it is in practice. Polled with the battery.
+    // One device-measured noise-floor sample for the RSSI chart's dashed
+    // line. RAM-only (lost on reload — it's live context, not capture data);
+    // pruned to the retention window, capped at 48 h.
+    _noteNoiseFloor(nf) {
+        if (!(nf <= -20 && nf >= -165)) return;   // implausible / unsupported firmware
+        const now = Date.now();
+        this._noiseSamples.push({ t: now, nf });
+        const keep = Math.min(isFinite(this.windows.retentionMs) ? this.windows.retentionMs : Infinity, 48 * 3600e3);
+        const cutoff = now - keep;
+        if (this._noiseSamples[0].t < cutoff) {
+            this._noiseSamples = this._noiseSamples.filter(s => s.t >= cutoff);
+        }
+    }
+
     _updateCrcStats(errors, recv) {
         const el = document.getElementById('crcStatus');
         if (!el || !this.device) return;
@@ -6706,6 +6765,10 @@ class MeshCoreApp {
         this._deviceRefreshTimer = null;
         clearInterval(this._batteryPollTimer);
         this._batteryPollTimer = null;
+        clearInterval(this._noisePollTimer);
+        this._noisePollTimer = null;
+        // _noiseSamples survive a disconnect on purpose — they're chart
+        // history, pruned by time in _noteNoiseFloor.
         this._setDeviceLocation(null, null);
         this._setRadioConfig(null);
         // Clear any in-flight contact fetch so a fresh connection starts clean
