@@ -1668,16 +1668,6 @@ html.light-theme .loc-source-warn { color: #a97b13; }
 html.light-theme .radio-preset { color: #2e8b46; }
 html.light-theme .radio-preset.radio-preset-custom { color: #a97b13; }
 
-/* Help ▸ Stored data: the session scanner (see _scanStoredSessions) */
-.session-scan-list {
-    margin-top: 8px;
-    font-size: 12px;
-    line-height: 1.7;
-}
-.session-scan-list .scan-row { overflow-x: auto; white-space: nowrap; }
-.session-scan-list .scan-orphan { color: #e0b653; }
-.session-scan-list .scan-load-btn { padding: 1px 10px; font-size: 11px; }
-
 /* Help ▸ Diagnostics: the process-death log (Android only, see _initExitLog) */
 .exit-log-list {
     font-family: 'SF Mono', Consolas, monospace;
