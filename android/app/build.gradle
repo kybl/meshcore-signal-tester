@@ -14,15 +14,15 @@ def appVersionName = (project.findProperty("appVersionName")?.toString()?.trim()
 
 android {
     namespace 'cz.kyblsoft.meshcore.signaltester'
-    compileSdk 35
+    compileSdk 36
     // Pin the build-tools version explicitly (reproducible builds) instead of
     // letting AGP pick its default.
-    buildToolsVersion '35.0.0'
+    buildToolsVersion '36.0.0'
 
     defaultConfig {
         applicationId "cz.kyblsoft.meshcore.signaltester"
         minSdk 26
-        targetSdk 35
+        targetSdk 36
         // The version number lives in several places — keep them in sync when
         // bumping (see the full list in app.js next to APP_VERSION):
         //   • app.js APP_VERSION (must match this versionName)
