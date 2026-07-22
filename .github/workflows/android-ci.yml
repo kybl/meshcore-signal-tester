@@ -9,26 +9,12 @@ on:
     branches: ['**']
     paths: &paths
       - 'android/**'
+      # Every root-level .js is an app module bundled into the APK (mirrors
+      # copyWebApp's pattern include in app/build.gradle) — a hand-kept list
+      # here once missed a new module, so CI didn't build what shipped.
       - 'index.html'
-      - 'app.js'
-      - 'signal3d.js'
-      - 'packet-store.js'
-      - 'capture-model.js'
-      - 'table-cache.js'
-      - 'chart-cache.js'
-      - 'map-cache.js'
-      - 'time-windows.js'
-      - 'contacts-directory.js'
-      - 'selection-model.js'
-      - 'column-model.js'
-      - 'connection-state.js'
-      - 'column-key.js'
-      - 'frame.js'
-      - 'geo.js'
-      - 'maplod.js'
-      - 'chart-zoom.js'
+      - '*.js'
       - 'style.css'
-      - 'native-bridge.js'
       - 'logo.svg'
       - 'vendor/**'
       - '.github/workflows/android-ci.yml'
