@@ -2386,6 +2386,9 @@ class MeshCoreApp {
     async sendBatteryQuery() {
         if (!this._canSend()) return;
         try { await this._sendFrame(new Uint8Array([0x14])); } catch (e) {}
+        // CMD_GET_STATS(56) type PACKETS(2) rides along — its reply feeds the
+        // CRC-error display (see the 0x18 handler). One tiny frame each way.
+        try { await this._sendFrame(new Uint8Array([56, 2])); } catch (e) {}
     }
 
     // Refresh the battery reading once a minute while a companion is connected.
@@ -2799,18 +2802,26 @@ class MeshCoreApp {
     handlePayload(payload) {
         const pushCode = payload[0];
         // RESP_CODE_BATT_AND_STORAGE (0x0C), reply to CMD_GET_BATT_AND_STORAGE:
-        // bytes [1-2] = uint16 LE voltage in mV; [3-6]/[7-10] = storage used/total
-        // in kB (older firmware sends the 3-byte battery-only form). Sent only
-        // on request — see sendBatteryQuery.
+        // bytes [1-2] = uint16 LE voltage in mV. The storage kB fields that
+        // follow are ignored — they track the radio's internal config
+        // filesystem (contacts/prefs), which turned out to be a static number;
+        // the CRC-error counter (RESP_CODE_STATS) took its display slot.
         if (pushCode === 0x0c) {
             if (payload.length >= 3) {
-                const milliVolts = payload[1] | (payload[2] << 8);
-                let storage = null;
-                if (payload.length >= 11) {
-                    const dv = new DataView(payload.buffer, payload.byteOffset);
-                    storage = { usedKb: dv.getUint32(3, true), totalKb: dv.getUint32(7, true) };
-                }
-                this._updateBleBatteryVoltage(milliVolts, storage);
+                this._updateBleBatteryVoltage(payload[1] | (payload[2] << 8));
+            }
+            return;
+        }
+
+        // RESP_CODE_STATS (0x18, v8+ firmware), [1] = stats type; we only ask
+        // for PACKETS (2): 7× uint32 LE from [2] — recv, sent, sentFlood,
+        // sentDirect, recvFlood, recvDirect, recvErrors (CRC failures since
+        // boot). Older firmware answers the request with ERR, which is simply
+        // never parsed here, so the display stays hidden.
+        if (pushCode === 0x18) {
+            if (payload[1] === 2 && payload.length >= 30) {
+                const dv = new DataView(payload.buffer, payload.byteOffset);
+                this._updateCrcStats(dv.getUint32(26, true), dv.getUint32(2, true));
             }
             return;
         }
@@ -6110,18 +6121,30 @@ class MeshCoreApp {
 
     // --- BLE Device Battery ---
 
-    _updateBleBatteryVoltage(milliVolts, storage = null) {
+    _updateBleBatteryVoltage(milliVolts) {
         if (!this.batteryEl || !this.device) return;
         // LiPo: 3000 mV = 0%, 4200 mV = 100%
         const pct = Math.round(Math.min(100, Math.max(0, (milliVolts - 3000) / 1200 * 100)));
-        // Device flash storage (used/total), reported in the same reply. Shown
-        // raw in kB for now, to see what devices actually report.
-        const storageHtml = storage
-            ? ` <span class="storage-status" title="Device storage used / total">💾${storage.usedKb}/${storage.totalKb} kB</span>`
-            : '';
-        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span><span class="batt-icon">🔋</span>${pct}%${storageHtml}`;
+        this.batteryEl.innerHTML = `<span class="hstat-label">Bat </span><span class="batt-icon">🔋</span>${pct}%`;
         this.batteryEl.classList.remove('hidden', 'battery-low');
         if (pct <= 20) this.batteryEl.classList.add('battery-low');
+    }
+
+    // The radio's own count of receptions it dropped for a failed CRC (since
+    // its boot) — a rough gauge of interference, collisions and too-weak
+    // receptions at this spot; only CRC-clean packets ever reach the app.
+    // Shown raw next to the battery (the slot the static storage number used
+    // to occupy) to see how useful it is in practice. Polled with the battery.
+    _updateCrcStats(errors, recv) {
+        const el = document.getElementById('crcStatus');
+        if (!el || !this.device) return;
+        const total = recv + errors;
+        const pct = total > 0 ? (errors / total * 100).toFixed(1) : '0';
+        el.textContent = `CRC✗ ${errors}`;
+        el.title = `Receptions the radio dropped for a failed CRC check since its boot: `
+            + `${errors} of ${total} (${pct}%). A gauge of local interference / collisions / `
+            + `weak signals — these frames never reach the app.`;
+        el.classList.remove('hidden');
     }
 
     // --- Wake Lock ---
@@ -6703,6 +6726,7 @@ class MeshCoreApp {
         }
         // Hide battery immediately — no BLE events can re-show it after this point
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
+        document.getElementById('crcStatus')?.classList.add('hidden');
 
         // stopNotifications BEFORE gatt.disconnect() so Chrome fully releases the notify pipe
         if (txChar) {
@@ -6784,6 +6808,7 @@ class MeshCoreApp {
         document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
+        document.getElementById('crcStatus')?.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
         this._setConnectedDeviceName('');
         this._setConnectIdle();
