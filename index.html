@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=179">
+    <link rel="stylesheet" href="style.css?v=180">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -261,11 +261,6 @@
                 </div>
                 <div class="section-body" id="mapBody">
                     <div class="map-inner">
-                        <div class="map-controls">
-                            <button id="enableLocationBtn" class="btn-primary">Enable location</button>
-                            <span id="locationStatus" class="map-location-status">Location not enabled.</span>
-                            <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
-                        </div>
                         <div class="map-container">
                             <canvas id="mapCanvas" class="map-canvas"></canvas>
                             <div id="mapEmpty" class="map-empty">Allow location and capture some packets to populate the 3D map.</div>
@@ -274,6 +269,8 @@
                             <div class="map-overlay-buttons">
                                 <button id="centerOnMeBtn" class="btn-show-all-repeaters" title="Center the map on the selected position source (phone or MeshCore device) and follow it">📍 Center on me</button><span id="centerNoPos" class="loc-source-warn hidden">⚠ no position<span class="help-icon">?</span></span>
                                 <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
+                                <button id="enableLocationBtn" class="btn-primary">Enable location</button>
+                                <span id="locationStatus" class="map-location-status">Location not enabled.</span>
                             </div>
                             <div class="map-settings-wrap map-overlay-settings">
                                 <button id="mapSettingsBtn" class="map-settings-btn" title="Map settings">⚙</button>
@@ -317,6 +314,7 @@
                                     <label class="map-setting-toggle"><input type="checkbox" id="showLinesChk" checked> Guide lines</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showMarkerChk" checked> My location</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showDeviceChk"> Device location<span class="help-icon" data-help="device-location">?</span></label>
+                                    <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
                                 </div>
                             </div>
                         </div>
