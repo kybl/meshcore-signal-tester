@@ -306,8 +306,11 @@ class MeshCoreApp {
         }
 
         // Custom resize handles — large touch target below each chart
-        document.querySelectorAll('.chart-svg-wrap').forEach(
-            wrap => this._attachResizeHandle(wrap, 'chart-resize-handle', 80));
+        document.querySelectorAll('.chart-svg-wrap').forEach(wrap => {
+            const footer = wrap.nextElementSibling?.classList.contains('chart-footer')
+                ? wrap.nextElementSibling : null;
+            this._attachResizeHandle(wrap, 'chart-resize-handle', 80, footer);
+        });
         setInterval(() => {
             if (!this.windows.frozenAt) { this._advanceLiveZoom(); this._scheduleChartRender(); }
             if (isFinite(this.windows.displayMs)) {
@@ -887,10 +890,13 @@ class MeshCoreApp {
     // Append a drag-to-resize handle below `target` that adjusts its height
     // between `minHeight` and the viewport. Shared by the signal charts and the
     // 3D map container.
-    _attachResizeHandle(target, handleClass, minHeight) {
+    _attachResizeHandle(target, handleClass, minHeight, host = null) {
         const handle = document.createElement('div');
         handle.className = handleClass;
-        target.insertAdjacentElement('afterend', handle);
+        // With a host (the charts' footer row) the handle joins it on the
+        // right; otherwise it sits directly under the target as before.
+        if (host) host.appendChild(handle);
+        else target.insertAdjacentElement('afterend', handle);
         let startY = 0, startH = 0;
         const onMove = e => {
             const cy = e.touches ? e.touches[0].clientY : e.clientY;

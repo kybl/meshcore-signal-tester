@@ -1971,7 +1971,9 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     min-height: 200px;
     max-height: calc(100vh - 80px);
     border-radius: 8px;
-    overflow: hidden;
+    /* visible, not hidden: the settings dropdown (top-right, inside the map)
+       may be taller than the map — the canvas clips its own corners below */
+    overflow: visible;
     /* Shown while the WebGL canvas is mid-resize (before it repaints). Matches
        the content/table background (and the map's own clear colour, see
        _bgColor in signal3d.js) so there's no flash — dark in the dark theme,
@@ -2076,6 +2078,7 @@ html.light-theme .map-fullscreen-btn:hover {
     display: block;
     width: 100%;
     height: 100%;
+    border-radius: 8px;
     touch-action: none;
     cursor: grab;
 }
@@ -2331,6 +2334,51 @@ html.light-theme .debug-input-label {
 .map-settings-wrap {
     position: relative;
     margin-left: auto;
+}
+
+/* Footer row under each chart: SNR toggles on the left, the resize handle
+   (margin-left:auto) on the right. */
+.chart-footer {
+    display: flex;
+    align-items: center;
+    min-height: 16px;
+}
+.chart-footer .snr-toggle-bar { padding: 0 2px; }
+
+/* Buttons overlaid on the 3D map, on the fullscreen button's row. The row
+   itself is click-through so the map stays draggable between the buttons. */
+.map-overlay-buttons {
+    position: absolute;
+    top: 8px;
+    left: 46px;            /* right of the 30px fullscreen button at left:8 */
+    right: 48px;           /* clear of the settings gear at top-right */
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    z-index: 40;
+    pointer-events: none;
+}
+.map-overlay-buttons > * { pointer-events: auto; }
+.map-overlay-buttons .loc-source-warn {
+    background: rgba(15, 15, 15, 0.55);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+html.light-theme .map-overlay-buttons .loc-source-warn { background: rgba(255, 255, 255, 0.75); }
+
+/* The settings gear lives inside the map, top-right; its dropdown gets a
+   scroll cap so it works even in a short viewport. */
+.map-overlay-settings {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 60;
+    margin-left: 0;
+}
+.map-overlay-settings .map-settings-panel {
+    max-height: min(70vh, 440px);
+    overflow-y: auto;
 }
 
 .map-settings-btn {
