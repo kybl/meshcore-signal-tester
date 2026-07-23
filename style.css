@@ -829,6 +829,13 @@ html:not(.light-theme) .btn-connect:disabled {
 .chart-zoom-reset:hover { filter: brightness(1.15); }
 
 .chart-resize-handle {
+    /* The handle div itself is the event target: full-width it caught drags
+       anywhere under the panel and caused accidental resizes — so it is only
+       as wide as its content and sits at the right edge. */
+    width: fit-content;
+    margin-left: auto;
+    margin-right: 6px;
+    padding: 0 10px;
     height: 14px;
     cursor: ns-resize;
     display: flex;
@@ -1974,6 +1981,13 @@ html.light-theme .btn-show-all-repeaters.active:hover {
 }
 
 .map-resize-handle {
+    /* The handle div itself is the event target: full-width it caught drags
+       anywhere under the panel and caused accidental resizes — so it is only
+       as wide as its content and sits at the right edge. */
+    width: fit-content;
+    margin-left: auto;
+    margin-right: 6px;
+    padding: 0 10px;
     height: 14px;
     cursor: ns-resize;
     display: flex;
