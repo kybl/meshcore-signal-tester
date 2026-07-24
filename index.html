@@ -61,7 +61,7 @@
         });
     })();
     </script>
-    <script src="native-bridge.js?v=13"></script>
+    <script src="native-bridge.js?v=14"></script>
     <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js?v=1" } }
     </script>
@@ -72,7 +72,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=450">
+    <link rel="modulepreload" href="app.js?v=451">
     <link rel="modulepreload" href="capture-model.js?v=4">
     <link rel="modulepreload" href="chart-cache.js?v=1">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -500,6 +500,13 @@
                        reporter, including failures that break the whole UI:</p>
                     <div id="jsErrorList" class="exit-log-list"></div>
                 </div>
+                <div id="connLogBlock" class="hidden">
+                    <p>Connection events (newest first). A drop's GATT status says WHO cut the
+                       link; "device uptime" right after a connect below ~300 s means the radio
+                       rebooted during the outage — with its bonds and settings wiped, which is
+                       what triggers a fresh PIN pairing dialog.</p>
+                    <div id="connLogList" class="exit-log-list"></div>
+                </div>
             </div>
 
             <div class="help-section-title">About</div>
@@ -518,6 +525,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=450"></script>
+    <script type="module" src="app.js?v=451"></script>
 </body>
 </html>

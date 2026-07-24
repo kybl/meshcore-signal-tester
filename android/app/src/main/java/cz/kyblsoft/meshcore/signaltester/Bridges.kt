@@ -39,6 +39,16 @@ class BleBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun isConnected(deviceId: String): Boolean = activity.ble.isConnected(deviceId)
 
+    /** Android's bond state for the device: 10=NONE, 11=BONDING, 12=BONDED,
+     *  -1 unknown. The connection log compares it around connects — a BONDED
+     *  phone that still gets a pairing dialog means the DEVICE lost its bond
+     *  (e.g. its config filesystem was wiped by a battery-death reset). */
+    @JavascriptInterface
+    fun bondState(deviceId: String): Int = try {
+        val mgr = activity.getSystemService(android.content.Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager
+        mgr.adapter?.getRemoteDevice(deviceId)?.bondState ?: -1
+    } catch (e: Exception) { -1 }
+
     @JavascriptInterface
     fun write(reqId: String, deviceId: String, serviceUuid: String, charUuid: String, base64: String, withResponse: Boolean) {
         activity.ble.write(reqId, serviceUuid, charUuid, base64, withResponse)
