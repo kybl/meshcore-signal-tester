@@ -42,7 +42,10 @@ class BleBridge(private val activity: MainActivity) {
     /** Android's bond state for the device: 10=NONE, 11=BONDING, 12=BONDED,
      *  -1 unknown. The connection log compares it around connects — a BONDED
      *  phone that still gets a pairing dialog means the DEVICE lost its bond
-     *  (e.g. its config filesystem was wiped by a battery-death reset). */
+     *  (e.g. its config filesystem was wiped by a battery-death reset).
+     *  BLUETOOTH_CONNECT is held while connected (declared in the manifest);
+     *  the read is wrapped anyway, so suppress lint like BleManager does. */
+    @android.annotation.SuppressLint("MissingPermission")
     @JavascriptInterface
     fun bondState(deviceId: String): Int = try {
         val mgr = activity.getSystemService(android.content.Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager
