@@ -64,6 +64,16 @@ class ScreenBridge(private val activity: MainActivity) {
         MeshcoreService.updateStatus(activity.applicationContext, text)
     }
 
+    /** Stop the foreground service (and drop its ongoing notification). The web
+     *  app calls this once it has settled into a disconnected state with no
+     *  reconnect pending — there's nothing left to keep the process alive for,
+     *  and a lingering "Disconnected" notification the user can't dismiss is
+     *  just noise. A later connect starts the service again. */
+    @JavascriptInterface
+    fun stopCapture() {
+        MeshcoreService.stop(activity.applicationContext)
+    }
+
     /** The web app's packet-position source. When it geotags packets from the
      *  MeshCore device's own GPS instead of the phone's ("Packet position
      *  from" map setting), the connect flow must not demand the phone's

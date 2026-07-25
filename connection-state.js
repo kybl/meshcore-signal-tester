@@ -77,9 +77,24 @@ export class ConnectionState {
 //   isBack()         — true when a connection is up again (stops the cycle)
 //   onAttemptStart() — UI hook: show "Reconnecting…" (each try, incl. the first)
 //   onGiveUp()       — UI hook: retries exhausted (alarm)
+//   keepGoing()      — optional: while true, never give up — after the fast
+//                      burst keep retrying at a slow steady cadence. Meant for
+//                      the Android app, where a foreground service keeps the
+//                      process alive, so a long link outage (phone power-saving
+//                      dropping BT in the background) recovers on its own once
+//                      the user or the OS lets the radio through again. Absent
+//                      / false → the original give-up-after-MAX_TRIES behaviour
+//                      (a plain browser tab has no background service to lean on).
 export class ReconnectController {
     static MAX_TRIES = 5;
     static FIRST_DELAY_MS = 500;
+    static MAX_BACKOFF_MS = 8000;
+    static PERSIST_INTERVAL_MS = 60000;   // steady retry once past the fast burst (keepGoing)
+    // A frozen connectGatt (Doze, a wedged BLE stack) can hang with no
+    // callback; without this the whole cycle would stall on one attempt and
+    // never retry. The attempt promise is left to settle on its own (isBack()
+    // still catches a late success) — this only unblocks scheduling the next.
+    static ATTEMPT_TIMEOUT_MS = 20000;
 
     #deps;
     #setTimeout;
@@ -121,16 +136,37 @@ export class ReconnectController {
         this.#timer = this.#setTimeout(() => this.#tick(), delay);
     }
 
+    // Run one attempt, but don't let a hung connect block the cycle: resolve
+    // on whichever comes first, the attempt or a timeout.
+    #attemptGuarded() {
+        let timer;
+        const timeout = new Promise(resolve => {
+            timer = this.#setTimeout(() => resolve(), ReconnectController.ATTEMPT_TIMEOUT_MS);
+        });
+        const attempt = Promise.resolve()
+            .then(() => this.#deps.attempt())
+            .catch(e => console.warn('Auto-reconnect attempt failed:', e));
+        return Promise.race([attempt, timeout]).then(() => this.#clearTimeout(timer));
+    }
+
     async #tick() {
         if (!this.#active) return;
         if (this.#deps.isBack()) { this.cancel(); return; }   // already back (manual connect)
         this.#tries++;
         this.#deps.onAttemptStart();
-        try { await this.#deps.attempt(); }
-        catch (e) { console.warn('Auto-reconnect attempt failed:', e); }
+        await this.#attemptGuarded();
         if (!this.#active) return;                            // cancelled meanwhile
         if (this.#deps.isBack()) { this.cancel(); return; }   // success
         if (this.#tries >= ReconnectController.MAX_TRIES) {
+            // Past the fast burst. With a background service keeping the app
+            // alive, keep trying forever at a slow steady pace instead of
+            // giving up — the "reconnect when the phone stops throttling BT"
+            // case. Otherwise (browser) give up and raise the alarm.
+            if (this.#deps.keepGoing?.()) {
+                this.#deps.onAttemptStart();
+                this.#schedule(ReconnectController.PERSIST_INTERVAL_MS);
+                return;
+            }
             this.cancel();
             this.#deps.onGiveUp();
             return;
@@ -138,6 +174,6 @@ export class ReconnectController {
         // A failed attempt left the status at 'Disconnected'; the next tick's
         // onAttemptStart restores 'Reconnecting…'. Exponential backoff, capped.
         this.#deps.onAttemptStart();
-        this.#schedule(Math.min(8000, 2000 * 2 ** (this.#tries - 1)));
+        this.#schedule(Math.min(ReconnectController.MAX_BACKOFF_MS, 2000 * 2 ** (this.#tries - 1)));
     }
 }

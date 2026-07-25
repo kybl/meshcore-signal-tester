@@ -81,7 +81,7 @@ function fakeTimers() {
     };
 }
 
-function harness({ backAfter = Infinity } = {}) {
+function harness({ backAfter = Infinity, keepGoing = false } = {}) {
     const t = fakeTimers();
     const log = { attempts: 0, starts: 0, gaveUp: 0 };
     const rc = new ReconnectController({
@@ -89,6 +89,7 @@ function harness({ backAfter = Infinity } = {}) {
         isBack:         () => log.attempts >= backAfter,
         onAttemptStart: () => { log.starts++; },
         onGiveUp:       () => { log.gaveUp++; },
+        keepGoing:      () => keepGoing,
     }, t.opts);
     return { t, log, rc };
 }
@@ -108,6 +109,27 @@ test('failing attempts: 500 ms first try, capped exponential backoff, give up af
     assert.equal(log.gaveUp, 1);
     assert.equal(rc.active, false);
     assert.equal(t.pending(), 0, 'nothing left scheduled');
+});
+
+test('keepGoing: never gives up — slow steady retry past the fast burst', async () => {
+    const { t, log, rc } = harness({ keepGoing: true });
+    rc.start();
+    const delays = [];
+    for (let i = 0; i < 8; i++) delays.push(await t.fire());
+    // Fast burst (500→8000) then a fixed 60 s cadence, forever, no give-up.
+    assert.deepEqual(delays, [500, 2000, 4000, 8000, 8000, 60000, 60000, 60000]);
+    assert.equal(log.gaveUp, 0, 'keepGoing must not give up');
+    assert.equal(rc.active, true, 'still trying');
+    assert.equal(log.attempts, 8);
+});
+
+test('keepGoing recovers when the link finally returns', async () => {
+    const { t, log, rc } = harness({ keepGoing: true, backAfter: 7 });
+    rc.start();
+    for (let i = 0; i < 7; i++) await t.fire();   // 7th attempt "connects"
+    assert.equal(rc.active, false, 'stopped once back');
+    assert.equal(log.gaveUp, 0);
+    assert.equal(t.pending(), 0);
 });
 
 test('success stops the cycle without the alarm', async () => {

@@ -9,7 +9,7 @@ import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './ti
 import { ContactsDirectory } from './contacts-directory.js?v=1';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
-import { ConnectionState, ReconnectController } from './connection-state.js?v=2';
+import { ConnectionState, ReconnectController } from './connection-state.js?v=3';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
 import { buildCsv, parseCsv } from './csv.js?v=4';
 import { Store } from './storage.js?v=1';
@@ -61,11 +61,18 @@ class MeshCoreApp {
             attempt:        () => this.quickConnect(this._lastConnectedId, { auto: true }),
             isBack:         () => !!this.device,
             onAttemptStart: () => this.updateStatus('Reconnecting…', 'connecting'),
+            // Native Android app only: a foreground service keeps the process
+            // alive, so a long background BT throttle (Honor/iAware, Doze) can
+            // recover on its own — keep retrying instead of giving up. (A total
+            // process kill still stops everything; that's a phone-settings
+            // fight, not something reconnect logic can win.)
+            keepGoing:      () => !!window.__MESHCORE_NATIVE__,
             onGiveUp:       () => {
                 this.updateStatus('Disconnected', 'disconnected');
                 this._connLog({ ev: 'give-up' });
                 this._playDisconnectAlarm();    // gave up — sound + visual alert
                 this._showDisconnectAlarm();
+                this._stopCaptureServiceIfIdle();   // retries exhausted — release the service
             },
         });
         this._serialBtnKind = 'serial';    // which connect button acts as Cancel/Disconnect: 'serial' (USB) or 'wifi'
@@ -1185,7 +1192,7 @@ class MeshCoreApp {
             'discover':
                 'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
             'auto-reconnect':
-                'When the connection to the device drops unexpectedly (out of range, device reset, cable unplugged), automatically retry the last device a few times before raising the disconnect alarm. In the Android app it also retries the moment you switch Bluetooth back on — for example after leaving airplane mode. This option only appears where a silent reconnect is possible: the Android app (Bluetooth, USB or WiFi) or desktop Chrome/Edge. It is hidden for Bluetooth in a mobile browser, because there the browser forces a manual device-picker confirmation on every connection for privacy reasons — so it can never reconnect on its own.',
+                'When the connection to the device drops unexpectedly (out of range, device reset, cable unplugged), automatically retry the last device. In the Android app it keeps retrying (a fast burst, then once a minute) for as long as the background service is alive, and also retries the moment you switch Bluetooth back on or return to the app — so a link the phone dropped while backgrounded recovers on its own. In a browser it tries a few times, then raises the disconnect alarm. This option only appears where a silent reconnect is possible: the Android app (Bluetooth, USB or WiFi) or desktop Chrome/Edge. It is hidden for Bluetooth in a mobile browser, because there the browser forces a manual device-picker confirmation on every connection for privacy reasons — so it can never reconnect on its own.',
         };
 
         const tipEl = document.getElementById('helpTip');
@@ -6080,7 +6087,15 @@ class MeshCoreApp {
     // while the adapter was down. Guards: only with auto-reconnect on, only after
     // a surprise drop (not a manual disconnect), and not while already connected
     // or mid-reconnect.
-    _onBleAdapterOn() {
+    _onBleAdapterOn() { this._maybeReconnect(); }
+
+    // Kick the reconnect cycle if we want to be connected but aren't, and one
+    // isn't already running. Called when Bluetooth comes back on AND when the
+    // app returns to the foreground — coming back to a dropped session (the
+    // phone throttled BT while backgrounded) should re-try immediately instead
+    // of waiting for the next event. All guards live here so both entry points
+    // agree; start() itself is idempotent.
+    _maybeReconnect() {
         if (!this._autoReconnect || !this.conn.lastDropWasSurprise) return;
         if (this.device || this.serialPort || this.reconnect.active) return;
         if (!this._lastConnectedId) return;
@@ -6899,6 +6914,18 @@ class MeshCoreApp {
             if (this._autoReconnect && this._lastConnectedId) this.reconnect.start();
             else this._showDisconnectAlarm();
         }
+        // Settled disconnected with no reconnect running → tear down the
+        // Android foreground service so its ongoing "Disconnected" notification
+        // goes away (the user knows; keeping an un-dismissable notice is just
+        // noise). A reconnect cycle keeps it up — the process must stay alive.
+        this._stopCaptureServiceIfIdle();
+    }
+
+    // Stop the native foreground service when nothing needs it: not connected
+    // and not mid-reconnect. A later connect restarts it. No-op off-Android.
+    _stopCaptureServiceIfIdle() {
+        if (this.device || this.serialPort || this.reconnect.active) return;
+        try { window.AndroidScreen?.stopCapture?.(); } catch (_) {}
     }
 }
 
@@ -6927,6 +6954,9 @@ document.addEventListener('visibilitychange', () => {
         // for the first moments after the wake, so resume can't unleash them.
         monitor?._muteAudioBurst?.();
         monitor?.audioCtx?.resume?.();
+        // Returned to a session the phone silently dropped in the background?
+        // Retry now rather than waiting for the next reconnect tick / BT event.
+        monitor?._maybeReconnect?.();
     } else {
         monitor?.releaseWakeLock();
     }
