@@ -72,6 +72,7 @@ class MeshCoreApp {
                 this._connLog({ ev: 'give-up' });
                 this._playDisconnectAlarm();    // gave up — sound + visual alert
                 this._showDisconnectAlarm();
+                this._stopPairingWatch();
                 this._stopCaptureServiceIfIdle();   // retries exhausted — release the service
             },
         });
@@ -1642,6 +1643,7 @@ class MeshCoreApp {
 
         this._startBatteryPoll();
         this._connLog({ ev: 'connect', tk: 'ble', bond: this._bondBefore });
+        this._stopPairingWatch(); this._hideDisconnectAlarm();
         this._setConnectedDeviceName(this.saveDevice(device));
         // Upgrade the (possibly stale) cached name to the live GAP name if the
         // device was renamed since it was saved — fire-and-forget.
@@ -1897,6 +1899,7 @@ class MeshCoreApp {
         if (this.serialPort !== port) return;
         this._startBatteryPoll();
         this._connLog({ ev: 'connect', tk: this._serialBtnKind === 'wifi' ? 'wifi' : 'serial' });
+        this._stopPairingWatch(); this._hideDisconnectAlarm();
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
         this._setActiveTransportBtn(this._serialBtnKind || 'serial', 'Disconnect', () => this.disconnect());
@@ -6049,11 +6052,51 @@ class MeshCoreApp {
     }
 
     _showDisconnectAlarm() {
+        this._setAlarmText('Device disconnected',
+            'The connection to your MeshCore device was lost unexpectedly. Data collection has stopped.');
         document.getElementById('disconnectAlarm')?.classList.remove('hidden');
+    }
+
+    _setAlarmText(title, msg) {
+        const t = document.querySelector('#disconnectAlarm .disconnect-alarm-title');
+        const m = document.querySelector('#disconnectAlarm .disconnect-alarm-msg');
+        if (t) t.textContent = title;
+        if (m) m.textContent = msg;
     }
 
     _hideDisconnectAlarm() {
         document.getElementById('disconnectAlarm')?.classList.add('hidden');
+    }
+
+    // While auto-reconnect runs, poll Android's bond state: if it enters
+    // BONDING (11) the OS is actively pairing — i.e. the device asked to
+    // re-pair and a PIN dialog is up (or waiting for the screen to unlock).
+    // Surface that clearly instead of the silent "Reconnecting…" spin, because
+    // some devices (seen on nRF52 / TapTap firmware) demand a fresh pairing on
+    // every reconnect and the user must unlock and type the PIN. No-op unless
+    // the native bond-state bridge is present.
+    _startPairingWatch() {
+        if (typeof window.AndroidBle?.bondState !== 'function' || !this._lastConnectedId) return;
+        this._stopPairingWatch();
+        this._pairingWatchTimer = setInterval(() => {
+            if (this.device) { this._stopPairingWatch(); return; }   // connected — done
+            let bond = -1;
+            try { bond = window.AndroidBle.bondState(this._lastConnectedId); } catch (_) {}
+            if (bond === 11) {   // BOND_BONDING
+                this.updateStatus('Pairing…', 'connecting');
+                this._setAlarmText('Pairing required',
+                    'Your MeshCore device is asking to pair again. Unlock the screen — a PIN '
+                    + 'dialog should appear — and enter the pairing PIN to reconnect. (Some '
+                    + 'devices re-pair on every reconnect; that is a device/firmware trait, '
+                    + 'not an app setting.)');
+                document.getElementById('disconnectAlarm')?.classList.remove('hidden');
+            }
+        }, 2000);
+    }
+
+    _stopPairingWatch() {
+        clearInterval(this._pairingWatchTimer);
+        this._pairingWatchTimer = null;
     }
 
     // Whether a silent (no user gesture) reconnect is even possible here, which
@@ -6100,13 +6143,14 @@ class MeshCoreApp {
         if (this.device || this.serialPort || this.reconnect.active) return;
         if (!this._lastConnectedId) return;
         this.reconnect.start();
+        this._startPairingWatch();
     }
 
     // The try/backoff/give-up cycle itself lives in this.reconnect
     // (ReconnectController — see connection-state.js); this is the one-line
     // cancel every manual connect path calls (a user-initiated attempt
     // supersedes the automatic cycle).
-    _cancelAutoReconnect() { this.reconnect.cancel(); }
+    _cancelAutoReconnect() { this.reconnect.cancel(); this._stopPairingWatch(); }
 
     // --- BLE Device Battery ---
 
@@ -6911,7 +6955,7 @@ class MeshCoreApp {
         }
         if (surprise) {
             this._playDisconnectAlarm();   // audible cue on every unexpected drop (if sound on)
-            if (this._autoReconnect && this._lastConnectedId) this.reconnect.start();
+            if (this._autoReconnect && this._lastConnectedId) { this.reconnect.start(); this._startPairingWatch(); }
             else this._showDisconnectAlarm();
         }
         // Settled disconnected with no reconnect running → tear down the
