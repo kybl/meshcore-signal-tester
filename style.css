@@ -2768,37 +2768,43 @@ html.light-theme .theme-toggle-btn:hover {
 /* --- Unexpected-disconnect alarm: subdued red wash + centered modal --- */
 /* Blocking "loading…" overlay shown during a heavy wide-view rebuild
    (Display → All over a large capture). See _refreshWideView. */
+/* A discreet bottom toast, NOT a blocking modal: no backdrop and
+   pointer-events:none, so the rest of the page stays usable while the whole
+   capture is re-paginated in the background. */
 .loading-modal {
     position: fixed;
-    inset: 0;
+    left: 50%;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
     z-index: 10001;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    background: rgba(0, 0, 0, 0.45);
+    max-width: calc(100vw - 32px);
+    pointer-events: none;
 }
 .loading-modal-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     background: var(--bg-box);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 26px 30px;
-    max-width: 380px;
-    text-align: center;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+    border-radius: 10px;
+    padding: 12px 16px;
+    text-align: left;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    opacity: 0.96;
 }
+.loading-modal-text { min-width: 0; }
 .loading-spinner {
-    width: 34px;
-    height: 34px;
-    margin: 0 auto 14px;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
     border: 3px solid var(--border);
     border-top-color: #667eea;
     border-radius: 50%;
     animation: mc-spin 0.8s linear infinite;
 }
 @keyframes mc-spin { to { transform: rotate(360deg); } }
-.loading-modal-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; color: var(--text-primary); }
-.loading-modal-msg { font-size: 13px; color: var(--text-secondary); }
+.loading-modal-title { font-size: 14px; font-weight: 700; margin-bottom: 2px; color: var(--text-primary); }
+.loading-modal-msg { font-size: 12px; color: var(--text-secondary); }
 
 .disconnect-alarm {
     position: fixed;
