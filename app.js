@@ -2336,9 +2336,8 @@ class MeshCoreApp {
     async sendBatteryQuery() {
         if (!this._canSend()) return;
         try { await this._sendFrame(new Uint8Array([0x14])); } catch (e) {}
-        // CMD_GET_STATS(56) rides along — PACKETS(2) feeds the CRC-error
-        // display, CORE(0) the connection log's uptime (see the 0x18 handler).
-        try { await this._sendFrame(new Uint8Array([56, 2])); } catch (e) {}
+        // CMD_GET_STATS(56) type CORE(0) rides along — its reply carries the
+        // device uptime for the connection log (see the 0x18 handler).
         try { await this._sendFrame(new Uint8Array([56, 0])); } catch (e) {}
     }
 
@@ -2772,16 +2771,11 @@ class MeshCoreApp {
             return;
         }
 
-        // RESP_CODE_STATS (0x18, v8+ firmware), [1] = stats type; we only ask
-        // for PACKETS (2): 7× uint32 LE from [2] — recv, sent, sentFlood,
-        // sentDirect, recvFlood, recvDirect, recvErrors (CRC failures since
-        // boot). Older firmware answers the request with ERR, which is simply
-        // never parsed here, so the display stays hidden.
+        // RESP_CODE_STATS (0x18, v8+ firmware), [1] = stats type. Older firmware
+        // answers the request with ERR, simply never parsed here.
         if (pushCode === 0x18) {
             const dv = payload.length >= 4 ? new DataView(payload.buffer, payload.byteOffset) : null;
-            if (payload[1] === 2 && payload.length >= 30) {
-                this._updateCrcStats(dv.getUint32(26, true), dv.getUint32(2, true));
-            } else if (payload[1] === 0 && payload.length >= 11) {
+            if (payload[1] === 0 && payload.length >= 11) {
                 // Type CORE: [2-3] battery mV, [4-7] uptime s — the uptime
                 // betrays a device reboot during an outage (connection log).
                 this._connLogUptime(dv.getUint32(4, true));
@@ -6273,18 +6267,6 @@ class MeshCoreApp {
         document.getElementById('exitLogSection')?.classList.remove('hidden');
     }
 
-    _updateCrcStats(errors, recv) {
-        const el = document.getElementById('crcStatus');
-        if (!el || !this.device) return;
-        const total = recv + errors;
-        const pct = total > 0 ? (errors / total * 100).toFixed(1) : '0';
-        el.textContent = `CRC✗ ${errors}`;
-        el.title = `Receptions the radio dropped for a failed CRC check since its boot: `
-            + `${errors} of ${total} (${pct}%). A gauge of local interference / collisions / `
-            + `weak signals — these frames never reach the app.`;
-        el.classList.remove('hidden');
-    }
-
     // --- Wake Lock ---
 
     async acquireWakeLock() {
@@ -6864,7 +6846,6 @@ class MeshCoreApp {
         }
         // Hide battery immediately — no BLE events can re-show it after this point
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
-        document.getElementById('crcStatus')?.classList.add('hidden');
 
         // stopNotifications BEFORE gatt.disconnect() so Chrome fully releases the notify pipe
         if (txChar) {
@@ -6950,7 +6931,6 @@ class MeshCoreApp {
         document.getElementById('repeaterNotice')?.classList.add('hidden');
         this.device = null; // null before hiding so queued battery events are ignored by guards below
         if (this.batteryEl) this.batteryEl.classList.add('hidden');
-        document.getElementById('crcStatus')?.classList.add('hidden');
         this.updateStatus('Disconnected', 'disconnected');
         this._setConnectedDeviceName('');
         this._setConnectIdle();
