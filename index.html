@@ -24,7 +24,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=461">
+    <link rel="modulepreload" href="app.js?v=462">
     <link rel="modulepreload" href="capture-model.js?v=4">
     <link rel="modulepreload" href="chart-cache.js?v=1">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -386,6 +386,7 @@
 
             <div class="help-section-title">What you can connect to</div>
             <p>The app auto-detects the device — you don't pick a type. A <b>companion radio</b> (Bluetooth, USB, or WiFi in the Android app) pushes every received packet fully decoded, which is the richest source. A <b>repeater</b> (USB only) instead exposes a text CLI the app drives; how much it can report depends on its firmware (see below).</p>
+            <p>Once connected, the green status box shows the device's node name, its battery level, and — matched against a built-in list of the standard MeshCore radio presets (kept up to date from the official online list) — which preset the radio is using (frequency, bandwidth, spreading factor, coding rate).</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -399,7 +400,7 @@
                 <div class="help-dd">Received Signal Strength Indicator — radio power in dBm. Less negative = stronger. −70 dBm: excellent &nbsp;·&nbsp; −120 dBm: very weak.</div>
 
                 <div class="help-dt">Noise floor</div>
-                <div class="help-dd">Background RF noise level, estimated as RSSI − SNR. Shown as the shaded area on the RSSI chart.</div>
+                <div class="help-dd">Background RF noise level. The shaded area on the RSSI chart estimates it per packet as RSSI − SNR; the dashed grey line is the value the connected radio measures directly (read every ~10 s), so it also covers quiet stretches with no packets.</div>
 
             </div>
 
@@ -422,7 +423,8 @@
                 <li><b>Text size</b> — scales the whole interface (Small → Larger) for readability on small or high-DPI screens; remembered across sessions.</li>
                 <li><b>2D graphs dot size</b> — scales the points drawn on the SNR and RSSI charts.</li>
                 <li><b>3D map dot size</b> — set separately in the 3D map's ⚙ menu, alongside the map source, guide lines, and location marker.</li>
-                <li><b>Device location</b> — the 3D map's ⚙ menu can show the connected device's own position (a blue antenna marker), when the companion or repeater reports one. Off by default. A companion shows its current position — its live onboard-GPS fix if it has one, otherwise its configured advert position; a repeater shows its <code>get lat</code>/<code>get lon</code> setting. Nothing appears if the device has no position set. While the marker is shown, a connected <b>companion</b>'s position is re-read about once a second, so one with live GPS tracks your movement; a <b>repeater</b>'s position is static and read once on connect.</li>
+                <li><b>Packet position from</b> — where newly received packets get their map position. <i>This phone / browser</i> (the default) uses this device's own GPS and needs the location permission; <i>MeshCore device</i> instead uses the position the connected radio reports, so no phone location is needed — handy when the radio moves separately from you (on a car roof, a dog's collar…). Already-captured data keeps whatever position it was stored with.</li>
+                <li><b>Device location</b> — the 3D map's ⚙ menu can show the connected device's own position (an upside-down blue cone), when the companion or repeater reports one. Off by default. A companion shows its current position — its live onboard-GPS fix if it has one, otherwise its configured advert position; a repeater shows its <code>get lat</code>/<code>get lon</code> setting. Nothing appears if the device has no position set. While the marker is shown, a connected <b>companion</b>'s position is re-read about once a second, so one with live GPS tracks your movement; a <b>repeater</b>'s position is static and read once on connect.</li>
             </ul>
 
             <div class="help-section-title">Repeater firmware: stock vs. logging build</div>
@@ -436,8 +438,6 @@
             <div class="help-section-title">Why no iOS app?</div>
             <p>This is a hobby project and the author doesn't own an iOS device to build or test on — sorry.</p>
 
-            <!-- Filled by _initExitLog (Android only); stays hidden in browsers
-                 and when the OS reports no process deaths. -->
             <div class="help-section-title">About</div>
             <p>MeshCore Signal Tester was created by <a href="https://alesjanda.cz" target="_blank" rel="noopener">Aleš Janda</a>. If you have feedback, found a bug, or just want to say hi — feel free to reach out at <a href="mailto:ales.janda@kyblsoft.cz">ales.janda@kyblsoft.cz</a>.</p>
             <p>The app was developed with the help of <a href="https://claude.ai/code" target="_blank" rel="noopener">Claude Code</a>.</p>
@@ -462,6 +462,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=461"></script>
+    <script type="module" src="app.js?v=462"></script>
 </body>
 </html>
