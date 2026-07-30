@@ -7,6 +7,68 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
+## [1.3.0] - 2026-08-01
+
+### Added
+
+- **Packet positions can come from the MeshCore device's own GPS** instead of
+  the phone. A new "Packet position from" setting geotags captured packets with
+  the position the connected radio reports — useful when the radio moves
+  separately from you (mounted on a car while you measure from a laptop with no
+  GPS, or on a dog's collar roaming a garden). With the device source selected
+  the phone's location permission isn't required; "Center on me" and the map
+  follow whichever source is chosen, and a "⚠ no position" note appears when the
+  chosen source has no fix.
+- **The connected device's radio preset is shown** in the header — the matching
+  MeshCore regional preset (e.g. "EU/UK (Narrow)") for its frequency /
+  bandwidth / spreading factor / coding rate, or the raw settings when nothing
+  matches. The preset list is refreshed from the official source.
+- **The device's own node name is shown** for USB and WiFi companions and USB
+  repeaters (not just Bluetooth), and it is appended to saved non-Bluetooth
+  devices — e.g. "USB: 1A86:7523 (MyNode)".
+- **Public-channel messages are decrypted and shown**, via a new, much smaller
+  packet decoder.
+- **Trace packets show the per-hop signal (SNR) along the path** in the packet
+  detail.
+- **Suspicious "zero-stuffed" frames are flagged** in the packet table and
+  detail — long runs of leading zero bytes that are not real MeshCore traffic.
+- **The RSSI chart draws the radio's own measured noise floor** as a dashed
+  line, which also covers quiet stretches between packets.
+- **A date is shown next to any time that is not from today**, so long
+  multi-day captures are no longer ambiguous.
+- **A "Loading…" notice** appears while switching the Display window to a wide
+  range rebuilds the view over a large capture.
+
+### Changed
+
+- **Battery level now shows on its own**, without needing the official MeshCore
+  client connected at the same time.
+- **The message filter searches the whole capture history**, not just the
+  currently loaded page.
+- **Auto-reconnect is more persistent on Android** — it keeps retrying (a fast
+  burst, then once a minute) while the background service is alive, retries the
+  moment you return to the app, and shows "Pairing required" if the device asks
+  to pair again. The ongoing notification clears when you disconnect on purpose.
+- **New per-packet sound**: a short wooden "knock" marks a packet with a new
+  hash, then each reception adds the SNR-pitched bell — so one packet heard via
+  five repeaters is one knock plus five notes.
+- **The 3D-map controls moved onto the map itself** (Center on me, Show all
+  repeaters, and the settings gear beside the fullscreen button), the SNR
+  chart's Incoming/Outgoing toggles moved below the chart, and the device's
+  position marker is now a blue cone.
+- **Faster cold start** — the app preloads its whole module graph in parallel.
+- **Updated to target Android 16**, as required by Google Play.
+
+### Fixed
+
+- **Some packets that previously showed a "Path payload too short" (or similar)
+  error now decode correctly** — the decoder's encrypted-envelope handling was
+  corrected.
+- **The packet table no longer jumps back to the selected repeater's column on
+  every incoming packet** once you have scrolled it elsewhere.
+- **Accidental chart/map resizing is less likely** — the resize handle is now
+  only at the right edge instead of spanning the full width.
+
 ## [1.2.3] - 2026-07-10
 
 ### Added
