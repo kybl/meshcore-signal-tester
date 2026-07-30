@@ -5215,11 +5215,12 @@ class MeshCoreApp {
     // Repaginate the table from page 0 when the narrowing (filter or selection)
     // changed. Called from both the filter and the selection paths.
     _repaginateIfNarrowChanged() {
-        if (!this.table.narrowKeyChanged()) return;
-        if (this.model.ready) this._loadTablePage(0, true);
+        if (!this.table.narrowKeyChanged()) return null;
+        if (this.model.ready) return this._loadTablePage(0, true);   // async — callers may await it
         // Pre-ready there is no pager yet, but the live tail still skips
         // narrowed-out rows — re-render so widening brings them back into the DOM.
-        else this._renderMsgTable();
+        this._renderMsgTable();
+        return null;
     }
 
     // Load one table page (TableCache does the disk work), then re-apply the
@@ -5618,8 +5619,18 @@ class MeshCoreApp {
         // feedback; the async reload then re-renders a full narrowed page.
         // skipRepaginate lets a caller (chart-point click → open one packet's
         // detail) own the reload itself, so the two don't race on the same page.
-        if (!skipRepaginate) this._repaginateIfNarrowChanged();
-        this._applyMsgTableSelection(true);   // selection changed → scroll it into view
+        const reload = skipRepaginate ? null : this._repaginateIfNarrowChanged();
+        this._applyMsgTableSelection();   // instant dim/hide feedback on the current page
+        // Scroll to the selected column only after any async reload has rebuilt
+        // the table, so the scroll uses the final column layout (fixes the
+        // "sometimes doesn't scroll" when selecting narrows the table). The
+        // scroll forces a layout read, so run it in a rAF OUTSIDE the reload's
+        // own microtask chain — reading offsetLeft mid-resolution perturbs the
+        // interleaving of a concurrent reload (select→deselect) and can flip
+        // which page commits last.
+        Promise.resolve(reload).then(
+            () => requestAnimationFrame(() => this._scrollSelectedColIntoView()),
+            () => {});
         this._updateCornerNotices();
     }
 
@@ -5752,12 +5763,10 @@ class MeshCoreApp {
         }
     }
 
-    // scrollToSel: bring the selected column into horizontal view. Only true on
-    // an actual selection change — NOT on the per-packet re-render, which also
-    // calls this to keep new rows/cells dimmed & hidden. Scrolling there would
-    // yank the table back to the selected column on every incoming packet,
-    // fighting the user's own horizontal scroll.
-    _applyMsgTableSelection(scrollToSel = false) {
+    // Dims/hides non-selected repeater columns/rows. Called on every per-packet
+    // re-render, so it must NOT scroll — the horizontal scroll-to-selected is a
+    // one-off on selection change (see _scrollSelectedColIntoView), not here.
+    _applyMsgTableSelection() {
         const sel = this.selection.col;
 
         // Repeater column headers: dim non-selected
@@ -5784,20 +5793,26 @@ class MeshCoreApp {
             if (prev) tr.style.display = prev.style.display;
         });
 
-        // Scroll to selected column — only on selection change (see scrollToSel).
-        if (sel && scrollToSel) {
-            const th = document.querySelector(`#msgTableHead th.msg-col-rep[data-col="${CSS.escape(sel)}"]`);
-            const scroll = this.msgTableHead?.closest('.msg-table-scroll');
-            if (th && scroll) {
-                const colLeft  = th.offsetLeft;
-                const colRight = colLeft + th.offsetWidth;
-                const firstColW = scroll.querySelector('th')?.offsetWidth ?? 0;
-                if (colLeft - firstColW < scroll.scrollLeft)
-                    scroll.scrollLeft = colLeft - firstColW;
-                else if (colRight > scroll.scrollLeft + scroll.clientWidth)
-                    scroll.scrollLeft = colRight - scroll.clientWidth;
-            }
-        }
+    }
+
+    // Bring the selected repeater's column into horizontal view. Must run on the
+    // FINAL table DOM: a selection that changes the narrow key triggers an async
+    // _loadTablePage reload which rebuilds the header (column widths/offsets can
+    // shift), so callers scroll only AFTER that reload settles — otherwise the
+    // scroll targets the stale layout and lands in the wrong place (or nowhere).
+    _scrollSelectedColIntoView() {
+        const sel = this.selection.col;
+        if (!sel) return;
+        const th = document.querySelector(`#msgTableHead th.msg-col-rep[data-col="${CSS.escape(sel)}"]`);
+        const scroll = this.msgTableHead?.closest('.msg-table-scroll');
+        if (!th || !scroll) return;
+        const colLeft  = th.offsetLeft;
+        const colRight = colLeft + th.offsetWidth;
+        const firstColW = scroll.querySelector('th')?.offsetWidth ?? 0;
+        if (colLeft - firstColW < scroll.scrollLeft)
+            scroll.scrollLeft = colLeft - firstColW;
+        else if (colRight > scroll.scrollLeft + scroll.clientWidth)
+            scroll.scrollLeft = colRight - scroll.clientWidth;
     }
 
     // --- Signal color ---
