@@ -232,6 +232,12 @@ async function main() {
     const restoredAll = await waitUntil(() => rowCount().then(n => n === fullRows));
     check('Display=1h narrows the table, Display=All restores it',
         narrowed1h && restoredAll, `1h → ${rows1h}/${fullRows} rows, All restored: ${restoredAll}`);
+    // The loading modal exists and must not be stuck open after the rebuild
+    // settles (the small fixture rebuilds under the 250 ms grace, so it never
+    // shows — but a bug leaving it visible would strand the whole UI).
+    const modalOk = await waitUntil(() =>
+        page.$eval('#loadingModal', el => el.classList.contains('hidden')).catch(() => false));
+    check('loading modal is not stuck open after a Display change', modalOk);
     await page.selectOption('#ttlSelect', '3600');     // Auto-remove = 1 h (fires its handler)
     await page.waitForTimeout(600);
     const disabledOpts = await page.$$eval('#hideSelect option', os => os.filter(o => o.disabled).map(o => o.value));

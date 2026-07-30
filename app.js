@@ -560,7 +560,7 @@ class MeshCoreApp {
             this._applyHideSelect();
             hideSelect.addEventListener('change', () => {
                 Store.set('hide', hideSelect.value);
-                this._applyHideSelect();
+                this._applyHideSelect(true);   // user-initiated → show the loading modal if it's slow
             });
         }
         this._updateHideSelectOptions();
@@ -5233,8 +5233,12 @@ class MeshCoreApp {
     // for the current Display window. Called on Display-window change. Pre-ready
     // the caches stay empty and the views render from the RAM tail alone (same
     // code path, no separate branch).
-    async _refreshWideView() {
+    async _refreshWideView(showLoading = false) {
         if (!this.model.ready) return;
+        // Switching to a wide/"All" window over a big capture rebuilds the map,
+        // table and chart caches off disk — slow enough to want a spinner. Only
+        // armed for the user-initiated Display change (showLoading).
+        const doneLoading = showLoading ? this._beginLoadingModal() : () => {};
         this._lastMapView = null;       // new window → start from full extent
         this.mapCache.dropLayers();     // window changed → recompute the base layer
         this.charts.dropLayers();       // window changed → rebuild the bucket cache
@@ -5255,6 +5259,8 @@ class MeshCoreApp {
             this._updateEmptyState();
         } catch (e) {
             console.warn('Wide-view rebuild failed:', e);
+        } finally {
+            doneLoading();
         }
     }
 
@@ -5568,7 +5574,7 @@ class MeshCoreApp {
     }
 
 
-    _applyHideSelect() {
+    _applyHideSelect(showLoading = false) {
         const hideSelect = document.getElementById('hideSelect');
         if (!hideSelect) return;
         this.windows.displayMs = TimeWindows.msFromSelect(hideSelect.value);
@@ -5583,8 +5589,19 @@ class MeshCoreApp {
         this._updateStats();
         // Load (or drop) the downsampled disk overlay for wide / "All" windows,
         // and reclaim RAM promptly if the window shrank below the budget.
-        this._refreshWideView();
+        this._refreshWideView(showLoading);
         this.cleanup();
+    }
+
+    // Show a blocking "loading…" modal, but only if the work hasn't finished
+    // within a short grace period — a fast rebuild shouldn't flash a spinner.
+    // Returns a done() to call when the work settles (clears the pending show
+    // and hides the modal). No-op unless armed.
+    _beginLoadingModal() {
+        const modal = document.getElementById('loadingModal');
+        if (!modal) return () => {};
+        const timer = setTimeout(() => modal.classList.remove('hidden'), 250);
+        return () => { clearTimeout(timer); modal.classList.add('hidden'); };
     }
 
     _updateHideSelectOptions() {
