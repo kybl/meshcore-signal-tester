@@ -72,7 +72,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=457">
+    <link rel="modulepreload" href="app.js?v=458">
     <link rel="modulepreload" href="capture-model.js?v=4">
     <link rel="modulepreload" href="chart-cache.js?v=1">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -487,13 +487,7 @@
             <!-- Filled by _initExitLog (Android only); stays hidden in browsers
                  and when the OS reports no process deaths. -->
             <div id="exitLogSection" class="hidden">
-                <div class="help-section-title">Diagnostics — process restarts</div>
-                <p>Times when the Android system killed this app's processes (newest first),
-                   as reported by the OS. An entry for the main app process with importance
-                   <b>foreground-service</b> means capture was running when it was killed —
-                   that's a data gap. WebView renderer entries are recovered automatically
-                   and usually only cost a reload, not the whole gap.</p>
-                <div id="exitLogList" class="exit-log-list"></div>
+                <div class="help-section-title">Diagnostics</div>
                 <div id="jsErrorBlock" class="hidden">
                     <p>Uncaught JavaScript errors (newest first) — captured by the page-level
                        reporter, including failures that break the whole UI:</p>
@@ -532,6 +526,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=457"></script>
+    <script type="module" src="app.js?v=458"></script>
 </body>
 </html>

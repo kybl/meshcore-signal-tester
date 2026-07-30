@@ -1,8 +1,5 @@
 package cz.kyblsoft.meshcore.signaltester
 
-import android.app.ActivityManager
-import android.app.ApplicationExitInfo
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -81,55 +78,6 @@ class ScreenBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun setWantsPhoneLocation(wants: Boolean) {
         activity.wantsPhoneLocation = wants
-    }
-
-    /** Recent process-death records for this app as a JSON array (API 30+;
-     *  "[]" where unsupported or on any failure). Each entry: ts (epoch ms),
-     *  process (full process name — the main app or a WebView renderer),
-     *  reason (numeric), reasonName, importance (process importance at the
-     *  time of death — 125 = foreground service, i.e. capture was running),
-     *  status (exit status / signal number) and desc (system's free-text
-     *  explanation). The web app merges these into a persistent diagnostics
-     *  log so overnight kills can be attributed instead of guessed at. */
-    @JavascriptInterface
-    fun exitReasons(): String = try {
-        if (Build.VERSION.SDK_INT < 30) "[]" else {
-            val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-            val arr = org.json.JSONArray()
-            for (r in am.getHistoricalProcessExitReasons(activity.packageName, 0, 16)) {
-                arr.put(JSONObject()
-                    .put("ts", r.timestamp)
-                    .put("process", r.processName ?: "")
-                    .put("reason", r.reason)
-                    .put("reasonName", exitReasonName(r.reason))
-                    .put("importance", r.importance)
-                    .put("status", r.status)
-                    .put("desc", r.description ?: ""))
-            }
-            arr.toString()
-        }
-    } catch (e: Exception) {
-        "[]"
-    }
-
-    private fun exitReasonName(reason: Int): String = when (reason) {
-        ApplicationExitInfo.REASON_EXIT_SELF -> "exit-self"
-        ApplicationExitInfo.REASON_SIGNALED -> "signaled"
-        ApplicationExitInfo.REASON_LOW_MEMORY -> "low-memory"
-        ApplicationExitInfo.REASON_CRASH -> "crash"
-        ApplicationExitInfo.REASON_CRASH_NATIVE -> "native-crash"
-        ApplicationExitInfo.REASON_ANR -> "anr"
-        ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "init-failure"
-        ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "permission-change"
-        ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "excessive-resource-usage"
-        ApplicationExitInfo.REASON_USER_REQUESTED -> "user-requested"
-        ApplicationExitInfo.REASON_USER_STOPPED -> "user-stopped"
-        ApplicationExitInfo.REASON_DEPENDENCY_DIED -> "dependency-died"
-        ApplicationExitInfo.REASON_FREEZER -> "freezer"
-        ApplicationExitInfo.REASON_PACKAGE_STATE_CHANGE -> "package-state-change"
-        ApplicationExitInfo.REASON_PACKAGE_UPDATED -> "package-updated"
-        ApplicationExitInfo.REASON_OTHER -> "other"
-        else -> "unknown"
     }
 
     /** Native APK version as JSON {"name":"1.2.0","code":3} so the web UI can
