@@ -5711,7 +5711,7 @@ class MeshCoreApp {
         // skipRepaginate lets a caller (chart-point click → open one packet's
         // detail) own the reload itself, so the two don't race on the same page.
         if (!skipRepaginate) this._repaginateIfNarrowChanged();
-        this._applyMsgTableSelection();
+        this._applyMsgTableSelection(true);   // selection changed → scroll it into view
         this._updateCornerNotices();
     }
 
@@ -5844,7 +5844,12 @@ class MeshCoreApp {
         }
     }
 
-    _applyMsgTableSelection() {
+    // scrollToSel: bring the selected column into horizontal view. Only true on
+    // an actual selection change — NOT on the per-packet re-render, which also
+    // calls this to keep new rows/cells dimmed & hidden. Scrolling there would
+    // yank the table back to the selected column on every incoming packet,
+    // fighting the user's own horizontal scroll.
+    _applyMsgTableSelection(scrollToSel = false) {
         const sel = this.selection.col;
 
         // Repeater column headers: dim non-selected
@@ -5871,8 +5876,8 @@ class MeshCoreApp {
             if (prev) tr.style.display = prev.style.display;
         });
 
-        // Scroll to selected column
-        if (sel) {
+        // Scroll to selected column — only on selection change (see scrollToSel).
+        if (sel && scrollToSel) {
             const th = document.querySelector(`#msgTableHead th.msg-col-rep[data-col="${CSS.escape(sel)}"]`);
             const scroll = this.msgTableHead?.closest('.msg-table-scroll');
             if (th && scroll) {
