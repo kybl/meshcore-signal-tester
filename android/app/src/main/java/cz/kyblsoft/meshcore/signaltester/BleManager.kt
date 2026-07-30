@@ -139,7 +139,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
             closeGatt()
             // Closing the GATT often suppresses the STATE_DISCONNECTED callback,
             // so notify the page directly to settle its disconnect promise.
-            js.bleDisconnected(address, -2)
+            js.bleDisconnected(address)
         }
     }
 
@@ -312,7 +312,7 @@ class BleManager(private val context: Context, private val js: JsApi) {
                         connectReqId = null
                         js.resolve(wasConnecting, false, errJson(BridgeError.NETWORK, "GATT disconnected (status $status)"))
                     } else {
-                        deviceAddress?.let { js.bleDisconnected(it, status) }
+                        deviceAddress?.let { js.bleDisconnected(it) }
                     }
                     clearQueue()
                 }

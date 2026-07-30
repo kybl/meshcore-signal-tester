@@ -1675,15 +1675,6 @@ html.light-theme .loc-source-warn { color: #a97b13; }
 html.light-theme .radio-preset { color: #2e8b46; }
 html.light-theme .radio-preset.radio-preset-custom { color: #a97b13; }
 
-/* Help ▸ Diagnostics: the process-death log (Android only, see _initExitLog) */
-.exit-log-list {
-    font-family: 'SF Mono', Consolas, monospace;
-    font-size: 11px;
-    line-height: 1.5;
-    overflow-x: auto;
-}
-.exit-log-row { white-space: nowrap; }
-.exit-log-when { color: #888; }
 
 .help-dl {
     display: grid;

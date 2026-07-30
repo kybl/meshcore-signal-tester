@@ -69,7 +69,6 @@ class MeshCoreApp {
             keepGoing:      () => !!window.__MESHCORE_NATIVE__,
             onGiveUp:       () => {
                 this.updateStatus('Disconnected', 'disconnected');
-                this._connLog({ ev: 'give-up' });
                 this._playDisconnectAlarm();    // gave up — sound + visual alert
                 this._showDisconnectAlarm();
                 this._stopPairingWatch();
@@ -292,7 +291,6 @@ class MeshCoreApp {
         this._setupControls();
         this._setupFiltersAndNotices();
         this._initHelpSystem();
-        this._initDiagnostics();
         this._refreshRadioPresets();   // async, fire-and-forget (cache + daily re-fetch)
         this._initWifiModal();
         this._initSignalMap();
@@ -1316,31 +1314,6 @@ class MeshCoreApp {
         };
     }
 
-    // --- Diagnostics (Help section) ---
-    // Renders the JS-error log and the connection log. (An Android
-    // process-restart / exit-reason log lived here too; removed for release.)
-    _initDiagnostics() {
-        this._renderJsErrorLog();
-        this._renderConnLog();
-    }
-
-    // Uncaught JS errors recorded by the inline reporter in index.html
-    // (mc_js_errors) — shown under Diagnostics so a device-specific breakage
-    // can be reported even after the red banner was dismissed.
-    _renderJsErrorLog() {
-        const block = document.getElementById('jsErrorBlock');
-        const list = document.getElementById('jsErrorList');
-        if (!block || !list) return;
-        let errs = [];
-        try { errs = JSON.parse(localStorage.getItem('mc_js_errors') ?? '[]'); } catch (_) {}
-        if (!errs.length) return;
-        list.innerHTML = errs.map(e =>
-            `<div class="exit-log-row"><span class="exit-log-when">${this._escHtml(new Date(e.t).toLocaleString())}</span> ${this._escHtml(e.m ?? '')}</div>`
-        ).join('');
-        block.classList.remove('hidden');
-        document.getElementById('exitLogSection')?.classList.remove('hidden');
-    }
-
     // --- Bluetooth connection ---
 
     async connectBluetooth() {
@@ -1523,9 +1496,6 @@ class MeshCoreApp {
     }
 
     async connectToDevice(device) {
-        // Android bond state BEFORE connecting (10 none / 12 bonded) — if the
-        // phone is bonded yet pairing still pops up, the DEVICE lost its bond.
-        try { this._bondBefore = window.AndroidBle?.bondState?.(device.id) ?? null; } catch (_) { this._bondBefore = null; }
         this._setActiveTransportBtn('ble', 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting…', 'connecting');
         this.conn.beginAttempt('ble');   // BLE is always the companion protocol
@@ -1596,7 +1566,6 @@ class MeshCoreApp {
         if (!this.device) return;
 
         this._startBatteryPoll();
-        this._connLog({ ev: 'connect', tk: 'ble', bond: this._bondBefore });
         this._stopPairingWatch(); this._hideDisconnectAlarm();
         this._setConnectedDeviceName(this.saveDevice(device));
         // Upgrade the (possibly stale) cached name to the live GAP name if the
@@ -1852,7 +1821,6 @@ class MeshCoreApp {
         // don't finalise a "Connected" state the live port no longer backs.
         if (this.serialPort !== port) return;
         this._startBatteryPoll();
-        this._connLog({ ev: 'connect', tk: this._serialBtnKind === 'wifi' ? 'wifi' : 'serial' });
         this._stopPairingWatch(); this._hideDisconnectAlarm();
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
@@ -1896,7 +1864,6 @@ class MeshCoreApp {
         // connect-time command burst settles (the CLI serialises writes loosely).
         setTimeout(() => { if (this.conn.mode === 'repeater') this._queryRepeaterLocation(); }, 600);
 
-        this._connLog({ ev: 'connect', tk: 'serial-repeater' });
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (repeater)', 'connected');
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());   // repeaters are USB-only
@@ -2290,9 +2257,6 @@ class MeshCoreApp {
     async sendBatteryQuery() {
         if (!this._canSend()) return;
         try { await this._sendFrame(new Uint8Array([0x14])); } catch (e) {}
-        // CMD_GET_STATS(56) type CORE(0) rides along — its reply carries the
-        // device uptime for the connection log (see the 0x18 handler).
-        try { await this._sendFrame(new Uint8Array([56, 0])); } catch (e) {}
     }
 
     // Refresh the battery reading once a minute while a companion is connected.
@@ -2729,11 +2693,7 @@ class MeshCoreApp {
         // answers the request with ERR, simply never parsed here.
         if (pushCode === 0x18) {
             const dv = payload.length >= 4 ? new DataView(payload.buffer, payload.byteOffset) : null;
-            if (payload[1] === 0 && payload.length >= 11) {
-                // Type CORE: [2-3] battery mV, [4-7] uptime s — the uptime
-                // betrays a device reboot during an outage (connection log).
-                this._connLogUptime(dv.getUint32(4, true));
-            } else if (payload[1] === 1 && payload.length >= 14) {
+            if (payload[1] === 1 && payload.length >= 14) {
                 // Type RADIO: int16 LE noise floor (dBm) at [2] — the radio's
                 // own continuous measurement, unlike the per-packet RSSI−SNR
                 // estimate, so it also covers stretches with no traffic.
@@ -6125,7 +6085,6 @@ class MeshCoreApp {
     // --- BLE Device Battery ---
 
     _updateBleBatteryVoltage(milliVolts) {
-        this._lastBattMv = milliVolts;   // stamped into connection-log drop entries
         if (!this.batteryEl || !this.device) return;
         // LiPo: 3000 mV = 0%, 4200 mV = 100%
         const pct = Math.round(Math.min(100, Math.max(0, (milliVolts - 3000) / 1200 * 100)));
@@ -6151,74 +6110,6 @@ class MeshCoreApp {
         if (this._noiseSamples[0].t < cutoff) {
             this._noiseSamples = this._noiseSamples.filter(s => s.t >= cutoff);
         }
-    }
-
-    // --- Connection log (Help ▸ Diagnostics) ---
-    // Persistent record of connection events, built to attribute the recurring
-    // idle-time drops + re-pairing: WHO dropped the link (GATT status), whether
-    // the phone still held a bond, and whether the device rebooted meanwhile
-    // (uptime from GET_STATS CORE vs. the outage length).
-    _connLog(entry) {
-        try {
-            const log = JSON.parse(localStorage.getItem('mc_conn_log') ?? '[]');
-            log.unshift({ t: Date.now(), ...entry });
-            if (log.length > 80) log.length = 80;
-            localStorage.setItem('mc_conn_log', JSON.stringify(log));
-        } catch (_) {}
-        this._renderConnLog();
-    }
-
-    // Attach the device uptime (arriving asynchronously via GET_STATS CORE) to
-    // the newest 'connect' entry that doesn't have one yet.
-    _connLogUptime(uptimeSecs) {
-        try {
-            const log = JSON.parse(localStorage.getItem('mc_conn_log') ?? '[]');
-            const e = log.find(x => x.ev === 'connect');
-            if (e && e.uptime == null && Date.now() - e.t < 120000) {
-                e.uptime = uptimeSecs;
-                localStorage.setItem('mc_conn_log', JSON.stringify(log));
-                this._renderConnLog();
-            }
-        } catch (_) {}
-    }
-
-    _renderConnLog() {
-        const block = document.getElementById('connLogBlock');
-        const list = document.getElementById('connLogList');
-        if (!block || !list) return;
-        let log = [];
-        try { log = JSON.parse(localStorage.getItem('mc_conn_log') ?? '[]'); } catch (_) {}
-        if (!log.length) return;
-        const GATT = {
-            8: 'link lost — device went silent (reboot / battery dead / out of range)',
-            19: 'device closed the connection',
-            22: 'phone closed the connection (OS power saving?)',
-            133: 'GATT error 133 (stack-level failure)',
-            [-1]: 'Bluetooth adapter off',
-            [-2]: 'disconnect by this app',
-        };
-        const BOND = { 10: 'no bond', 11: 'bonding', 12: 'bonded' };
-        list.innerHTML = log.map(e => {
-            const when = formatWhen(e.t);
-            let msg;
-            if (e.ev === 'drop') {
-                const why = e.status != null ? (GATT[e.status] ?? `GATT status ${e.status}`) : 'no status';
-                msg = `<b>drop</b> (${this._escHtml(e.tk ?? '?')}): ${this._escHtml(why)}`
-                    + (e.batt != null ? `; last battery ${e.batt} mV` : '')
-                    + (e.surprise ? '' : ' <span class="exit-log-when">(expected)</span>');
-            } else if (e.ev === 'connect') {
-                msg = `<b>connect</b> (${this._escHtml(e.tk ?? '?')})`
-                    + (e.bond != null ? `, phone bond: ${this._escHtml(BOND[e.bond] ?? String(e.bond))}` : '')
-                    + (e.uptime != null ? `, device uptime ${e.uptime} s${e.uptime < 300 ? ' ⚠ (rebooted recently)' : ''}` : '');
-            } else if (e.ev === 'give-up') {
-                msg = '<b>auto-reconnect gave up</b> (retries exhausted)';
-            } else {
-                msg = this._escHtml(e.ev ?? '?');
-            }
-            return `<div class="exit-log-row"><span class="exit-log-when">${this._escHtml(when)}</span> ${msg}</div>`;
-        }).join('');
-        block.classList.remove('hidden');
-        document.getElementById('exitLogSection')?.classList.remove('hidden');
     }
 
     // --- Wake Lock ---
@@ -6900,15 +6791,7 @@ class MeshCoreApp {
         // While a reconnect cycle owns the recovery, drop() reports no surprise
         // and leaves the remembered lastDropWasSurprise alone (each failed
         // retry passes through here too — see ConnectionState.drop).
-        const dropStatus = (window.__mcLastBleDrop && Date.now() - window.__mcLastBleDrop.t < 5000)
-            ? window.__mcLastBleDrop.status : null;
-        if (window.__mcLastBleDrop) window.__mcLastBleDrop = null;
-        const droppedKind = this.conn.transportKind;   // captured before drop() clears it
         const surprise = this.conn.drop({ midReconnect: this.reconnect.active });
-        if (droppedKind) {
-            this._connLog({ ev: 'drop', tk: droppedKind, status: dropStatus, surprise,
-                            batt: this._lastBattMv ?? null });
-        }
         if (surprise) {
             this._playDisconnectAlarm();   // audible cue on every unexpected drop (if sound on)
             if (this._autoReconnect && this._lastConnectedId) { this.reconnect.start(); this._startPairingWatch(); }

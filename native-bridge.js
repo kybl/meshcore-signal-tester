@@ -287,12 +287,9 @@
         ch._dispatch('characteristicvaluechanged', { target: ch });
     };
 
-    window.__mcBleDisconnected = function (devId, status) {
+    window.__mcBleDisconnected = function (devId) {
         var d = _devices[devId];
         if (!d) return;
-        // Remembered (not evented): app.js reads it inside onDisconnected to
-        // stamp its connection log with WHO dropped the link.
-        try { window.__mcLastBleDrop = { status: (typeof status === 'number' ? status : null), t: Date.now() }; } catch (_) {}
         // Drop this device's characteristic proxies: they hold the previous
         // session's last notification in .value plus any listeners the page
         // didn't remove. A reconnect re-discovers services and gets FRESH

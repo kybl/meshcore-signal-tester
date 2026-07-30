@@ -44,12 +44,9 @@ class JsApi(webView: WebView) {
         eval("window.__mcBleNotify(${q(deviceId)}, ${q(serviceUuid)}, ${q(charUuid)}, ${q(base64Value)})")
     }
 
-    /** Report that a device's GATT connection dropped. `status` is the GATT
-     *  disconnect status where known (8=link loss, 19=remote terminated,
-     *  22=locally terminated…), -1 adapter off, -2 app-initiated — the web
-     *  app's connection log uses it to attribute WHO dropped the link. */
-    fun bleDisconnected(deviceId: String, status: Int = -1) {
-        eval("window.__mcBleDisconnected(${q(deviceId)}, $status)")
+    /** Report that a device's GATT connection dropped. */
+    fun bleDisconnected(deviceId: String) {
+        eval("window.__mcBleDisconnected(${q(deviceId)})")
     }
 
     /** Report that the Bluetooth adapter was turned back on (e.g. airplane mode
