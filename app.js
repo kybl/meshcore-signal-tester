@@ -5826,7 +5826,11 @@ class MeshCoreApp {
         } else {
             t = 0.5 + 0.5 * Math.max(0, Math.min(1, (pivot - value) / (pivot - redVal)));
         }
-        return `hsl(${120 * (1 - t)}, 85%, 38%)`;
+        // Lightness is theme-aware: 38% reads well on white, but the red/orange/
+        // olive end is muddy on the dark navy panels — lift it to ~58% there so
+        // the SNR/RSSI values in Seen Repeaters (and the packet cells) stay legible.
+        const dark = !document.documentElement.classList.contains('light-theme');
+        return `hsl(${120 * (1 - t)}, ${dark ? 80 : 85}%, ${dark ? 58 : 38}%)`;
     }
 
     // --- Sound ---
