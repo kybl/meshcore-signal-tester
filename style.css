@@ -1891,14 +1891,15 @@ html.light-theme .msg-filter-clear:hover {
     font-size: 12px;
     padding: 3px 10px;
     border-radius: 5px;
-    /* Semi-opaque dark backing + blur so the label stays readable over any map
-       tiles (pale roads, snow, aerial). The old near-transparent white version
-       vanished on light maps. Matches the fullscreen/settings map controls. */
-    border: 1px solid rgba(255,255,255,0.18);
-    background: rgba(16, 32, 48, 0.82);
-    backdrop-filter: blur(4px);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    /* Dark theme default only: the old translucent-white backing vanished as
+       white-on-white over light map tiles. Swap to a genuinely semi-transparent
+       DARK backing and lift the label with a text shadow, so it stays readable
+       without turning the button into a heavy opaque block. The light theme
+       (its translucent-black-on-white version was fine) is restored below. */
+    border: 1px solid rgba(255,255,255,0.28);
+    background: rgba(16, 32, 48, 0.5);
     color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.85);
     cursor: pointer;
     white-space: nowrap;
 }
@@ -1907,29 +1908,29 @@ html.light-theme .msg-filter-clear:hover {
    the blue .active follow state). */
 @media (hover: hover) {
     .btn-show-all-repeaters:hover {
-        background: rgba(16, 32, 48, 0.95);
-        border-color: rgba(255,255,255,0.35);
+        background: rgba(16, 32, 48, 0.66);
+        border-color: rgba(255,255,255,0.45);
     }
     html.light-theme .btn-show-all-repeaters:hover {
-        background: rgba(255, 255, 255, 0.97);
+        background: rgba(0,0,0,0.22);
     }
 }
 html.light-theme .btn-show-all-repeaters {
-    border-color: rgba(0,0,0,0.12);
-    background: rgba(255, 255, 255, 0.85);
+    border-color: rgba(0,0,0,0.35);
+    background: rgba(0,0,0,0.12);
     color: #0f1a2e;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    text-shadow: none;
 }
-/* Pressed / active state (e.g. "Center on me" while follow mode is on): a solid
-   blue with white text (readable in both themes over any tiles) plus the glow
-   ring. Scoped under html.light-theme too so it beats the light base rule. */
+/* Pressed / active state (e.g. "Center on me" while follow mode is on).
+   Scoped under html.light-theme as well so it beats the light-theme base
+   rule's specificity. Text colour is left to the theme default (dark text in
+   light theme, white in dark) — only the blue border/ring marks it pressed. */
 .btn-show-all-repeaters.active,
 .btn-show-all-repeaters.active:hover,
 html.light-theme .btn-show-all-repeaters.active,
 html.light-theme .btn-show-all-repeaters.active:hover {
-    background: rgba(37, 99, 235, 0.92);
+    background: rgba(79, 140, 255, 0.22);
     border-color: #4f8cff;
-    color: #fff;
     box-shadow: 0 0 0 1px #4f8cff, 0 0 8px rgba(79, 140, 255, 0.55);
 }
 
@@ -2402,27 +2403,26 @@ html.light-theme .map-overlay-buttons .map-location-status {
 }
 
 .map-settings-btn {
-    /* Same semi-opaque dark backing as the other map controls (see
-       .btn-show-all-repeaters) so the gear reads over any tiles. */
-    background: rgba(16, 32, 48, 0.82);
-    border: 1px solid rgba(255,255,255,0.18);
+    /* Dark default: semi-transparent dark backing + text shadow like the other
+       map controls (see .btn-show-all-repeaters); light theme restored below. */
+    background: rgba(16, 32, 48, 0.5);
+    border: 1px solid rgba(255,255,255,0.28);
     border-radius: 4px;
     cursor: pointer;
     font-size: 15px;
     padding: 2px 5px;
     color: rgba(255,255,255,0.95);
     line-height: 1;
-    backdrop-filter: blur(4px);
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.85);
 }
-.map-settings-btn:hover { background: rgba(16,32,48,0.95); border-color: rgba(255,255,255,0.35); }
+.map-settings-btn:hover { background: rgba(16,32,48,0.66); border-color: rgba(255,255,255,0.45); }
 html.light-theme .map-settings-btn {
-    background: rgba(255,255,255,0.85);
-    border-color: rgba(0,0,0,0.12);
+    background: rgba(0,0,0,0.12);
+    border-color: rgba(0,0,0,0.35);
     color: #0f1a2e;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+    text-shadow: none;
 }
-html.light-theme .map-settings-btn:hover { background: rgba(255,255,255,0.97); }
+html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-color: rgba(0,0,0,0.6); }
 
 .map-settings-panel {
     position: absolute;
