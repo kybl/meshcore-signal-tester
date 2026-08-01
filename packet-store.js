@@ -54,6 +54,19 @@ export const PS_QUANT_MAX = PS_QMAX;
 export function ps_qx(lon) { return Math.max(0, Math.min(PS_QMAX, Math.round((lon + 180) / 360 * PS_QMAX))); }
 export function ps_qy(lat) { return Math.max(0, Math.min(PS_QMAX, Math.round((lat + 90)  / 180 * PS_QMAX))); }
 
+// Merge two per-hash records for the same hash without regressing either:
+// keep the earliest firstSeen, and the first non-null type/meta (ex wins —
+// it is the older/already-stored side). Exported for tests; used both for
+// intra-batch duplicates and for the disk merge in putHashesMerge.
+export function ps_mergeHashRec(ex, r) {
+    return {
+        hash: r.hash,
+        firstSeen: Math.min(ex.firstSeen ?? Infinity, r.firstSeen ?? Infinity),
+        type: ex.type ?? r.type ?? null,
+        meta: ex.meta ?? r.meta ?? null,
+    };
+}
+
 export function ps_morton(lat, lon) {
     return (ps_part1by1(ps_qx(lon)) | (ps_part1by1(ps_qy(lat)) << 1)) >>> 0;
 }
@@ -235,7 +248,9 @@ export class PacketStore {
      *  rawHex is per-observation: the SAME packet (same hash) received via a
      *  different repeater/path carries different raw bytes (the routing path
      *  field changes), so it must live here, not in the per-hash record.
-     *  `seq` is assigned by the store. Returns the records or [] on failure. */
+     *  Returns the records or [] on failure. (The store assigns each an
+     *  autoIncrement `seq` key internally — it is NOT copied back onto the
+     *  returned objects.) */
     async putObs(records) {
         if (!records || !records.length) return [];
         const ok = await this._write('obs', os => {
@@ -273,18 +288,22 @@ export class PacketStore {
      *  packet to the top of the time-sorted table) and null out its type/meta. */
     async putHashesMerge(records) {
         if (!records || !records.length) return;
+        // Merge intra-batch duplicates in memory FIRST. The per-record get()
+        // below is queued before any put() runs, so it always reads the
+        // pre-transaction state — two records with the same hash in one batch
+        // would each merge against disk only, and the later put would clobber
+        // the earlier record's contribution.
+        const byHash = new Map();
+        for (const r of records) {
+            const ex = byHash.get(r.hash);
+            byHash.set(r.hash, ex ? ps_mergeHashRec(ex, r) : r);
+        }
         await this._write('hashes', os => {
-            for (const r of records) {
+            for (const r of byHash.values()) {
                 const g = os.get(r.hash);
                 g.onsuccess = () => {
                     const ex = g.result;
-                    if (!ex) { os.put(r); return; }
-                    os.put({
-                        hash: r.hash,
-                        firstSeen: Math.min(ex.firstSeen ?? Infinity, r.firstSeen ?? Infinity),
-                        type: ex.type ?? r.type ?? null,
-                        meta: ex.meta ?? r.meta ?? null,
-                    });
+                    os.put(ex ? ps_mergeHashRec(ex, r) : r);
                 };
             }
         });
@@ -656,6 +675,28 @@ export class PacketStore {
                 req.onerror = () => reject(req.error);
             });
         } catch (_) { return []; }
+    }
+
+    /** Iterate every hash record ascending by firstSeen, optionally only
+     *  those first seen at/after `fromTime`. cb may return false to stop.
+     *  Used by the table's message-filter index (one pass over all rows). */
+    async eachHash(fromTime, cb) {
+        if (!this.db) return;
+        try {
+            await new Promise((resolve, reject) => {
+                const tx = this.db.transaction('hashes', 'readonly');
+                const idx = tx.objectStore('hashes').index('firstSeen');
+                const range = Number.isFinite(fromTime) ? IDBKeyRange.lowerBound(fromTime) : null;
+                const req = idx.openCursor(range);
+                req.onsuccess = () => {
+                    const cur = req.result;
+                    if (!cur) { resolve(); return; }
+                    if (cb(cur.value) === false) { resolve(); return; }
+                    cur.continue();
+                };
+                req.onerror = () => reject(req.error);
+            });
+        } catch (_) {}
     }
 
     /** Batched getHash (one readonly transaction), records in input order.

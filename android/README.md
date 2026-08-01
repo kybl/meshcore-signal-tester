@@ -18,6 +18,9 @@ just show the page. Instead:
   over USB-C works just like a Bluetooth one. The library is **vendored** as a
   source module in [`usbSerialForAndroid/`](usbSerialForAndroid/README.md) and
   built from source (no JitPack), so the whole app builds purely from source.
+- **Native WiFi** (`TcpManager.kt`) opens a raw TCP socket to a companion
+  running the WiFi firmware (the same `0x3c`/`0x3e` framing as USB serial) —
+  something a browser can't do, since there is no raw-socket web API.
 - **Native GPS** (`LocationHelper.kt`) streams fixes from the framework
   `LocationManager` (no Google Play Services needed).
 - A **foreground service** (`MeshcoreService.kt`) holds a partial wake lock and
@@ -25,10 +28,10 @@ just show the page. Instead:
   the process — and therefore the BLE/USB/GPS callbacks — running with the
   screen off.
 - The web UI runs in a `WebView` (`MainActivity.kt`). `native-bridge.js` (loaded
-  by the page) polyfills `navigator.bluetooth`, `navigator.serial` and
-  `navigator.geolocation` onto the native interfaces `AndroidBle` /
-  `AndroidSerial` / `AndroidGeo`, so the existing `app.js` and `signal3d.js`
-  run **unchanged**.
+  by the page) polyfills `navigator.bluetooth`, `navigator.serial`, the WiFi
+  TCP link and `navigator.geolocation` onto the native interfaces `AndroidBle` /
+  `AndroidSerial` / `AndroidWifi` / `AndroidGeo`, so the existing `app.js` and
+  `signal3d.js` run **unchanged**.
 
 The web files are bundled into the APK at build time (see `copyWebApp` in
 `app/build.gradle`) and served from `https://appassets.androidplatform.net/…`,
@@ -50,8 +53,8 @@ Or just open the `android/` folder in Android Studio and press Run. The web
 assets are copied from the repo root automatically on every build, so edit the
 web app at the root and rebuild.
 
-> The Gradle wrapper targets Gradle 8.7 / AGP 8.6.1 / Kotlin 1.9.24,
-> `compileSdk`/`targetSdk` 35, `build-tools` 35.0.0, `minSdk` 26.
+> The Gradle wrapper targets Gradle 8.14.3 / AGP 8.9.2 / Kotlin 1.9.24,
+> `compileSdk`/`targetSdk` 36, `build-tools` 36.0.0, `minSdk` 26.
 
 ## Reproducible builds
 

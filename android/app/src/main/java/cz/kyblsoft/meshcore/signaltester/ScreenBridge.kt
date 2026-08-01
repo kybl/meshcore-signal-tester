@@ -61,6 +61,25 @@ class ScreenBridge(private val activity: MainActivity) {
         MeshcoreService.updateStatus(activity.applicationContext, text)
     }
 
+    /** Stop the foreground service (and drop its ongoing notification). The web
+     *  app calls this once it has settled into a disconnected state with no
+     *  reconnect pending — there's nothing left to keep the process alive for,
+     *  and a lingering "Disconnected" notification the user can't dismiss is
+     *  just noise. A later connect starts the service again. */
+    @JavascriptInterface
+    fun stopCapture() {
+        MeshcoreService.stop(activity.applicationContext)
+    }
+
+    /** The web app's packet-position source. When it geotags packets from the
+     *  MeshCore device's own GPS instead of the phone's ("Packet position
+     *  from" map setting), the connect flow must not demand the phone's
+     *  location permission. Called once at startup and on every change. */
+    @JavascriptInterface
+    fun setWantsPhoneLocation(wants: Boolean) {
+        activity.wantsPhoneLocation = wants
+    }
+
     /** Native APK version as JSON {"name":"1.2.0","code":3} so the web UI can
      *  show the real installed build (and its versionCode) instead of the web
      *  app's own version constant. */

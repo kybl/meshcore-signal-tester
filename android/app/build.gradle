@@ -14,15 +14,15 @@ def appVersionName = (project.findProperty("appVersionName")?.toString()?.trim()
 
 android {
     namespace 'cz.kyblsoft.meshcore.signaltester'
-    compileSdk 35
+    compileSdk 36
     // Pin the build-tools version explicitly (reproducible builds) instead of
     // letting AGP pick its default.
-    buildToolsVersion '35.0.0'
+    buildToolsVersion '36.0.0'
 
     defaultConfig {
         applicationId "cz.kyblsoft.meshcore.signaltester"
         minSdk 26
-        targetSdk 35
+        targetSdk 36
         // The version number lives in several places — keep them in sync when
         // bumping (see the full list in app.js next to APP_VERSION):
         //   • app.js APP_VERSION (must match this versionName)
@@ -30,8 +30,8 @@ android {
         //   • fastlane/metadata/android/en-US/changelogs/<versionCode>.txt (new file)
         // versionCode is a separate monotonic integer (Play/IzzyOnDroid reject a
         // non-increasing one) and also names the fastlane changelog file above.
-        versionCode appVersionCode ? appVersionCode.toInteger() : 6
-        versionName appVersionName ?: "1.2.3"   // keep == app.js APP_VERSION
+        versionCode appVersionCode ? appVersionCode.toInteger() : 7
+        versionName appVersionName ?: "1.3.0"   // keep == app.js APP_VERSION
     }
 
     signingConfigs {
@@ -101,19 +101,15 @@ android {
 def webGen = layout.buildDirectory.dir("generated/web").get().asFile
 tasks.register('copyWebApp', Copy) {
     from(rootProject.file("..")) {
+        // Every root-level .js IS an app module (tests/tools live in their own
+        // directories), so include them wholesale. A hand-maintained file list
+        // once silently shipped an APK without a newly added module — the
+        // import then failed and killed the whole page with every button dead.
+        // test/apk-assets.test.js additionally asserts these patterns cover
+        // every file index.html references.
+        include '*.js'
         include 'index.html'
-        include 'app.js'
-        include 'csv.js'
-        include 'storage.js'
-        include 'signal3d.js'
-        include 'packet-store.js'
-        include 'column-key.js'
-        include 'frame.js'
-        include 'geo.js'
-        include 'maplod.js'
-        include 'chart-zoom.js'
         include 'style.css'
-        include 'native-bridge.js'
         include 'logo.svg'
         include 'vendor/**'
     }

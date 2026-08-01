@@ -97,12 +97,40 @@ function sampleCsv() {
             rows.push([t, 'RX_LOG_DATA', (h++).toString(16), s.id, snr, '', s.rssi, '', lat, lon, '', ''].join(','));
         }
     }
-    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0), order: specs.map(s => s.id),
+    // One zero-stuffed frame (20 zero bytes, then a tail): decodes as a
+    // structurally "valid" packet, so only the app-side ⚠ flag marks it.
+    rows.push([new Date(now - 12 * 60 * 1000).toISOString(), 'RX_LOG_DATA', 'feed', 'AAAA01',
+               '3.00', '', -100, '00'.repeat(20) + 'deadbeef', '', '', '', ''].join(','));
+    // One Trace packet (header path = per-hop SNR bytes 0x31/0xFA = 12.25/−1.5 dB):
+    // its detail must render them as dB, not as phantom node hashes.
+    rows.push([new Date(now - 11 * 60 * 1000).toISOString(), 'RX_LOG_DATA', 'trc1', 'AAAA01',
+               '2.00', '', -99, '260231fa112233445566778800aabb', '', '', '', ''].join(','));
+    // 110 old filler rows (all AAAA01, so the column order stays untouched)
+    // push the table past one page — and hide a needle ('xyzzy-…' in the text
+    // column) deep on the LAST page, where only the disk-wide message-filter
+    // index can find it.
+    for (let i = 0; i < 110; i++) {
+        const t = new Date(now - (300 + i * 2) * 60 * 1000).toISOString();
+        rows.push([t, 'RX_LOG_DATA', (0x9000 + i).toString(16), 'AAAA01', '1.00', '', -100, '',
+                   '', '', i === 105 ? 'xyzzy-needle in a haystack' : '', ''].join(','));
+    }
+    return { csv: rows.join('\n'), total: specs.reduce((a, s) => a + s.n, 0) + 2 + 110, order: specs.map(s => s.id),
              contactCount: contacts.length };
 }
 
 // ---- assertions ------------------------------------------------------------
 let failures = 0;
+// Poll until `fn` returns true (async UI flows — narrow-index builds, page
+// reloads — finish at unpredictable times under a loaded headless CPU; fixed
+// sleeps made these checks flaky).
+async function waitUntil(fn, { timeout = 8000, step = 150 } = {}) {
+    const t0 = Date.now();
+    for (;;) {
+        if (await fn()) return true;
+        if (Date.now() - t0 > timeout) return false;
+        await new Promise(r => setTimeout(r, step));
+    }
+}
 function check(name, cond, detail = '') {
     if (cond) { console.log(`  ✓ ${name}`); }
     else { console.log(`  ✗ ${name}${detail ? '  — ' + detail : ''}`); failures++; }
@@ -149,6 +177,11 @@ async function main() {
 
     // 3) Bug-2 guard: columns ranked by first-page presence, NOT by last RSSI.
     const cols = await page.$$eval('#msgTableHead th.msg-col-rep', ths => ths.map(t => t.getAttribute('data-col')));
+    // Zero-stuffed frame flag: the fixture holds one frame starting with 20
+    // zero bytes; it must carry the ⚠ badge in the Received Packets table.
+    check('zero-stuffed frame carries the ⚠ badge',
+        await page.$('#msgTableBody .zs-badge') != null);
+
     check('Received Packets column order = by first-page count',
         JSON.stringify(cols) === JSON.stringify(order),
         `expected ${JSON.stringify(order)}, got ${JSON.stringify(cols)}`);
@@ -167,11 +200,173 @@ async function main() {
         beforeText === 'Show all repeaters' && afterText === 'Hide all repeaters',
         `before "${beforeText}", after "${afterText}"`);
 
+    // 3b2) Selecting a repeater: clicking a column header shows the "Selected"
+    // corner notice and narrows the table to that repeater's rows; clicking it
+    // again deselects. Exercises the selection fan-out end to end.
+    const rowCount = () => page.$$('#msgTableWrap tbody tr:not(.detail-row)').then(r => r.length);
+    const noticeVisible = () => page.$eval('#selNotice', el => !el.classList.contains('hidden'));
+    const fullRows = await rowCount();
+    // Select the LAST column (the least-frequent repeater, CCCC03): the first
+    // one now has more rows than one page, so selecting it wouldn't shrink
+    // the page-capped row count at all.
+    const colHeaders = await page.$$('#msgTableHead th.msg-col-rep[data-col]');
+    const selHeader = colHeaders[colHeaders.length - 1];
+    const selCol = await selHeader.getAttribute('data-col');
+    await selHeader.click();
+    const narrowed = await waitUntil(async () => (await noticeVisible()) && (await rowCount()) < fullRows);
+    const selRows = await rowCount();
+    await page.click(`#msgTableHead th.msg-col-rep[data-col="${selCol}"]`);
+    const restored = await waitUntil(async () => !(await noticeVisible()) && (await rowCount()) === fullRows);
+    check('selecting a repeater shows the notice and narrows the table; reselect clears',
+        narrowed && selRows > 0 && restored,
+        `narrowed ${narrowed} (${selRows}/${fullRows} rows), restored ${restored}`);
+
+    // 3c) Changing the Display and Auto-remove windows exercises the
+    // time-window handlers (select parsing, the Display ≤ Auto-remove option
+    // gating, and the wide-view rebuild). The sample data is 10–130 min old, so
+    // Display=1h shows a strict subset and Display=All restores everything.
+    await page.selectOption('#hideSelect', '3600');    // Display = 1 h
+    const narrowed1h = await waitUntil(async () => { const n = await rowCount(); return n > 0 && n < fullRows; });
+    const rows1h = await rowCount();
+    await page.selectOption('#hideSelect', 'all');     // Display = All
+    const restoredAll = await waitUntil(() => rowCount().then(n => n === fullRows));
+    check('Display=1h narrows the table, Display=All restores it',
+        narrowed1h && restoredAll, `1h → ${rows1h}/${fullRows} rows, All restored: ${restoredAll}`);
+    // The loading modal exists and must not be stuck open after the rebuild
+    // settles (the small fixture rebuilds under the 250 ms grace, so it never
+    // shows — but a bug leaving it visible would strand the whole UI).
+    const modalOk = await waitUntil(() =>
+        page.$eval('#loadingModal', el => el.classList.contains('hidden')).catch(() => false));
+    check('loading modal is not stuck open after a Display change', modalOk);
+    await page.selectOption('#ttlSelect', '3600');     // Auto-remove = 1 h (fires its handler)
+    await page.waitForTimeout(600);
+    const disabledOpts = await page.$$eval('#hideSelect option', os => os.filter(o => o.disabled).map(o => o.value));
+    check('Auto-remove=1h disables longer Display options (3h/12h), keeps All',
+        disabledOpts.includes('10800') && disabledOpts.includes('43200') && !disabledOpts.includes('all'),
+        `disabled: ${JSON.stringify(disabledOpts)}`);
+    await page.selectOption('#ttlSelect', 'Infinity'); // restore
+    await page.waitForTimeout(400);
+
+    // Trace detail: opening the trace row's signal cell must show the header
+    // path as per-hop dB values, not hex "hashes".
+    await page.click('#row-trc1 .sig-snr');
+    const traceDetail = await waitUntil(() =>
+        page.$eval('#detail-trc1 .detail-trace', el => el.textContent.includes('12.25 dB') && el.textContent.includes('-1.5 dB'))
+            .catch(() => false));
+    check('Trace detail shows the header path as per-hop SNR in dB', traceDetail);
+    await page.click('#row-trc1 .sig-snr').catch(() => {});   // close the detail again
+
+    // Disk-wide message filter: the needle row sits on the LAST page (rows
+    // 101+ newest-first); the filter must repaginate over the whole history
+    // to find it — the old page-local filter showed nothing.
+    const visRows = () => page.$$eval('#msgTableBody tr[id^="row-"]',
+        els => els.filter(e => e.style.display !== 'none').length);
+    await page.evaluate(() => {
+        const i = document.getElementById('msgFilter');
+        i.value = 'xyzzy';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const foundNeedle = await waitUntil(async () => (await visRows()) === 1);
+    check('message filter finds a row beyond the loaded page (disk-wide index)',
+        foundNeedle, `visible rows ${await visRows()}`);
+    await page.evaluate(() => {
+        const i = document.getElementById('msgFilter');
+        i.value = '';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await waitUntil(async () => (await visRows()) > 50);
+
     // 4) Clear data empties the table and resets the counter.
     await page.getByText('Clear data', { exact: false }).first().click();
-    await page.waitForTimeout(1500);
-    check('Clear data resets Total RX to 0', (await page.textContent('#totalRx'))?.trim() === '0');
-    check('Clear data removes repeater columns', (await page.$$('#msgTableHead th.msg-col-rep')).length === 0);
+    const rxZero = await waitUntil(async () => (await page.textContent('#totalRx'))?.trim() === '0');
+    check('Clear data resets Total RX to 0', rxZero);
+    const colsGone = await waitUntil(async () =>
+        (await page.$$('#msgTableHead th.msg-col-rep')).length === 0);
+    check('Clear data removes repeater columns', colsGone);
+
+    // 5) Packet-position source: switching to "MeshCore device" persists and a
+    // debug-injected packet still ingests cleanly (its geotag reads the device
+    // position, which is unknown here — must yield null coords, not a crash).
+    await page.evaluate(() => {
+        const s = document.getElementById('locSourceSelect');
+        s.value = 'device';
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const locPersisted = await page.evaluate(() => localStorage.getItem('locSource'));
+    await page.click('button.collapse-btn[data-target="debugBody"]');   // expand the Debug section
+    await page.fill('#debugRepeater', 'AB12CD');
+    await page.click('#debugInject');
+    const injected = await waitUntil(async () => (await page.textContent('#totalRx'))?.trim() === '1');
+    check('packet-position source "MeshCore device" persists and ingests without phone GPS',
+        locPersisted === 'device' && injected, `locSource=${locPersisted}, totalRx=${await page.textContent('#totalRx')}`);
+    // Not collecting (no device connected) → the no-position warning stays hidden.
+    const warnHidden = await page.$eval('#locSourceWarn', el => el.classList.contains('hidden'));
+    check('no-position warning stays hidden while not collecting', warnHidden);
+
+    // End-to-end warning behavior with the device source: collecting + no
+    // device position → warning shows; a position arriving → warning clears.
+    // (_collecting is forced — headless has no real radio to connect.)
+    const setSource = v => page.evaluate(val => {
+        const s = document.getElementById('locSourceSelect');
+        s.value = val;
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+    }, v);
+    await setSource('device');
+    const warnShown = await page.evaluate(() => {
+        const app = window.__mcApp;
+        app._collecting = true;
+        app.signalMap?.setDeviceLocation(null, null);
+        app._updateLocSourceWarning();
+        return !document.getElementById('locSourceWarn').classList.contains('hidden');
+    });
+    const warnCleared = await page.evaluate(() => {
+        const app = window.__mcApp;
+        app.signalMap?.setDeviceLocation(50.08, 14.43);
+        app._updateLocSourceWarning();
+        const hidden = document.getElementById('locSourceWarn').classList.contains('hidden');
+        app.signalMap?.setDeviceLocation(null, null);   // restore
+        app._collecting = false;
+        app._updateLocSourceWarning();
+        return hidden;
+    });
+    await setSource('phone');
+    check('no-position warning: shows while collecting without a device position, clears on a fix',
+        warnShown && warnCleared);
+
+    // "Center on me" is always visible; its "⚠ no position" note reflects the
+    // selected source: shown with no fix (headless has none), hidden once the
+    // device source has a position.
+    const navUi = await page.evaluate(() => {
+        const app = window.__mcApp;
+        const btnVisible = !document.getElementById('centerOnMeBtn').classList.contains('hidden');
+        const noteShown = !document.getElementById('centerNoPos').classList.contains('hidden');
+        app.signalMap?.setPositionSource('device');
+        app.signalMap?.setDeviceLocation(50.08, 14.43);
+        const noteHidden = document.getElementById('centerNoPos').classList.contains('hidden');
+        app.signalMap?.setDeviceLocation(null, null);   // restore
+        app.signalMap?.setPositionSource('phone');
+        return btnVisible && noteShown && noteHidden;
+    });
+    check('Center on me is always visible; its no-position note tracks the selected source', navUi);
+    await page.evaluate(() => {
+        const s = document.getElementById('locSourceSelect');
+        s.value = 'phone';
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // Click every Connect button once. Headless Chromium has no BLE/serial, so
+    // each path ends in an explanatory alert (auto-accepted above) — but the
+    // click must SURVIVE its own code: a browser-only crash in the connect
+    // path (e.g. an extracted window.setTimeout throwing "Illegal invocation"
+    // inside ReconnectController) once made every Connect click do nothing,
+    // while Node unit tests stayed green.
+    const errsBefore = pageErrors.length;
+    for (const id of ['connectBtn', 'connectUsbBtn', 'connectWifiBtn']) {
+        await page.click('#' + id).catch(() => {});
+        await page.waitForTimeout(150);
+    }
+    check('Connect buttons run without page errors',
+        pageErrors.length === errsBefore, pageErrors.slice(errsBefore).join(' | '));
 
     check('no uncaught page errors during the run', pageErrors.length === 0, pageErrors.join(' | '));
 

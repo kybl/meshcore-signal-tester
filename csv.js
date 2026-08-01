@@ -102,7 +102,7 @@ export function buildCsv({ contacts = [], observations = [], sentRows = [] } = {
             'SENTSNR',
             p.col || '',
             '',
-            p.snr.toFixed(2),
+            p.snr?.toFixed(2) ?? '',
             '',
             '',
             p.lat ?? '',
@@ -168,19 +168,29 @@ export function parseCsv(text) {
         const c = parseCsvLine(line);
         const time = new Date(c[iTime]).getTime();
         if (isNaN(time)) continue;
-        const lat = iLat >= 0 && c[iLat] !== '' ? parseFloat(c[iLat]) : null;
-        const lon = iLon >= 0 && c[iLon] !== '' ? parseFloat(c[iLon]) : null;
+        // Numeric cells: empty or unparsable = null, and 0 is a real value.
+        // (The old `parseInt(..) || -100` / `parseFloat(..) || 0` fallbacks
+        // turned an empty RSSI — legitimate for repeater-neighbour and Trace
+        // rows, which have no RSSI — into a fake −100 dBm on every
+        // export→import round trip.)
+        const num = (i, parse) => {
+            if (i < 0 || c[i] == null || c[i] === '') return null;
+            const v = parse(c[i]);
+            return isNaN(v) ? null : v;
+        };
         all.push({
             time,
             type:      iType >= 0 ? c[iType] : '',
             hash:      c[iHash],
             repeater:  c[iRep],
-            rssi:      parseInt(c[iRssi]) || -100,
-            snr:       parseFloat(c[iSnr]) || 0,
+            rssi:      num(iRssi, s => parseInt(s, 10)),
+            snr:       num(iSnr, parseFloat),
             rawHex:    iHex >= 0 ? c[iHex] : '',
-            lat:       lat != null && !isNaN(lat) ? lat : null,
-            lon:       lon != null && !isNaN(lon) ? lon : null,
-            uplinkSnr: iUplinkSnr >= 0 && c[iUplinkSnr] !== '' ? parseFloat(c[iUplinkSnr]) : null,
+            lat:       num(iLat, parseFloat),
+            lon:       num(iLon, parseFloat),
+            // Code-side this value is remoteSnr everywhere; only the CSV
+            // column keeps the historical name uplink_snr (format stability).
+            remoteSnr: num(iUplinkSnr, parseFloat),
             csvText:   iTxt >= 0 ? c[iTxt] : '',
             csvSender: iSnd >= 0 ? c[iSnd] : '',
         });

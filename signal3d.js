@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js?v=1';
 import { colsOverlap } from './column-key.js?v=2';
+import { formatWhen } from './time-windows.js?v=2';
 import { lonLatToTile, tileToLatLon } from './geo.js?v=1';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge
@@ -143,7 +144,12 @@ export class Signal3DMap {
         this.canvas    = opts.canvas;
         this.statusEl  = opts.statusEl;
         this.btnEl     = opts.btnEl;
-        this.centerBtnEl = opts.centerBtnEl;   // "Center on me" — only useful with a fix
+        this.centerBtnEl = opts.centerBtnEl;   // "Center on me" — always visible; targets _navLoc()
+        this.centerNoPosEl = opts.centerNoPosEl;   // "⚠ no position" note next to it
+        // Which position "Center on me"/follow tracks — mirrors the app's
+        // "Packet position from" setting ('phone' | 'device').
+        this._positionSource = 'phone';
+        this._updateNavUi();   // the note is visible from the start when no position is known
         this.emptyEl   = opts.emptyEl;
         this.colorFor  = opts.colorFor  || (() => '#667eea');
         this.displayId = opts.displayId || (col => col);
@@ -565,20 +571,19 @@ export class Signal3DMap {
         this.btnEl.addEventListener('click', () => this.startWatching());
     }
 
-    // Every status message means "location isn't available (yet)". Show the
-    // message where the "Center on me" button normally sits and hide that button
-    // — it only makes sense once we have a fix. _locationReady() does the inverse.
+    // Every status message means "phone location isn't available (yet)".
+    // The "Center on me" button stays visible regardless — it may be tracking
+    // the MeshCore device's position (see setPositionSource), and when its
+    // target is missing the "⚠ no position" note next to it says so.
     _setStatus(text) {
         if (this.statusEl) {
             this.statusEl.textContent = text;
             this.statusEl.classList.remove('hidden');
         }
-        if (this.centerBtnEl) this.centerBtnEl.classList.add('hidden');
     }
 
     _locationReady() {
         if (this.statusEl) this.statusEl.classList.add('hidden');
-        if (this.centerBtnEl) this.centerBtnEl.classList.remove('hidden');
     }
 
     startWatching() {
@@ -615,6 +620,7 @@ export class Signal3DMap {
                 }
                 this._scheduleMapUpdate();
                 this._updateUserMarker();
+                this._updateNavUi();
                 // In follow mode, glide after the user only once their marker
                 // drifts out of the central-third dead zone — small moves don't
                 // nudge the map. Never recentre mid-gesture (it would fight the
@@ -708,6 +714,41 @@ export class Signal3DMap {
         return this._userLoc;
     }
 
+    // The position "Center on me" and follow mode navigate by, per the
+    // selected source. Null/undefined while unknown.
+    _navLoc() {
+        return this._positionSource === 'device' ? this._deviceLoc : this._userLoc;
+    }
+
+    setPositionSource(src) {
+        this._positionSource = src === 'device' ? 'device' : 'phone';
+        this._updateNavUi();
+        // Follow mode continues on the NEW target — recenter if it's off-view.
+        if (this._followUser && !this._userDragging && !this._followTargetInDeadZone()) this.flyToUser(450);
+    }
+
+    // Show/hide the "⚠ no position" note next to "Center on me" and point its
+    // tap-help at the right explanation for the selected source.
+    _updateNavUi() {
+        const el = this.centerNoPosEl;
+        if (!el) return;
+        const missing = !this._navLoc();
+        el.classList.toggle('hidden', !missing);
+        // Only the embedded ? icon opens the tip (consistent with the rest of
+        // the app); it carries the per-source explanation key.
+        if (missing) {
+            el.querySelector('.help-icon')?.setAttribute('data-help',
+                this._positionSource === 'device' ? 'nav-no-pos-device' : 'nav-no-pos-phone');
+        }
+    }
+
+    // The connected MeshCore device's last reported position (see
+    // setDeviceLocation) — read by the app when packet geotagging is set to
+    // "MeshCore device" instead of the phone GPS. Null while unknown.
+    deviceLocation() {
+        return this._deviceLoc;
+    }
+
     // ---- Filter ----
 
     // Pass col => boolean to show only matching repeaters; null to show all.
@@ -716,13 +757,15 @@ export class Signal3DMap {
     // keep the stale col and lose their selection / color sync.
     renameCol(oldCol, newCol) {
         if (oldCol === newCol) return;
-        for (const p of this._rxPoints) {
-            if (p.col === oldCol) p.col = newCol;
-        }
-        // Live sent stars share the col namespace, so migrate them too (but not
-        // _histOutgoingPts — those are rebuilt from disk).
-        for (const p of this._outgoingPts) {
-            if (p.col === oldCol) p.col = newCol;
+        // Migrate the wide-view disk layers too, not just the live arrays: in
+        // hist mode _rebuildDots() renders _histPoints/_histOutgoingPts, so a
+        // stale col there means the wrong colour and a dead highlight until an
+        // unrelated disk refresh happens to rebuild them.
+        for (const arr of [this._rxPoints, this._outgoingPts,
+                           this._histPoints ?? [], this._histOutgoingPts ?? []]) {
+            for (const p of arr) {
+                if (p.col === oldCol) p.col = newCol;
+            }
         }
         if (this._selectedCol === oldCol) {
             this._selectedCol = newCol;
@@ -735,21 +778,17 @@ export class Signal3DMap {
     // a new col to migrate the point to, or null/undefined to leave it.
     splitPoints(oldCol, classifier) {
         let touched = false;
-        for (const p of this._rxPoints) {
-            if (p.col !== oldCol) continue;
-            const target = classifier(p.rawId);
-            if (target && target !== oldCol) {
-                p.col = target;
-                touched = true;
-            }
-        }
-        // Same reassignment for live sent stars (leave _histOutgoingPts alone).
-        for (const p of this._outgoingPts) {
-            if (p.col !== oldCol) continue;
-            const target = classifier(p.rawId);
-            if (target && target !== oldCol) {
-                p.col = target;
-                touched = true;
+        // Same reasoning as renameCol: the wide-view disk layers are the render
+        // source in hist mode, so they must migrate along with the live arrays.
+        for (const arr of [this._rxPoints, this._outgoingPts,
+                           this._histPoints ?? [], this._histOutgoingPts ?? []]) {
+            for (const p of arr) {
+                if (p.col !== oldCol) continue;
+                const target = classifier(p.rawId);
+                if (target && target !== oldCol) {
+                    p.col = target;
+                    touched = true;
+                }
             }
         }
         if (touched) {
@@ -894,10 +933,21 @@ export class Signal3DMap {
         }
         if (best) {
             // camDist lets _onCanvasClick reject emoji icons occluded by this dot.
-            if (this._clickedPoint === best.p) return { newCol: null, clickedPt: null, camDist: best.camDist };
+            // Same-dot toggle by VALUE, not reference: the wide-view arrays are
+            // replaced with fresh objects on every disk push, so a re-click on
+            // the same dot after a refresh never matched by identity and
+            // re-selected instead of deselecting.
+            if (this._samePoint(this._clickedPoint, best.p)) return { newCol: null, clickedPt: null, camDist: best.camDist };
             return { newCol: best.p.col, clickedPt: best.p, camDist: best.camDist };
         }
         return { newCol: null, clickedPt: null, camDist: Infinity };
+    }
+
+    // Same logical point? Compare by value — col + time + position identify a
+    // point (or a cell representative) stably across wide-view array rebuilds.
+    _samePoint(a, b) {
+        return !!a && !!b && a.col === b.col && a.time === b.time
+            && a.lat === b.lat && a.lon === b.lon;
     }
 
     _updateInfoPanel() {
@@ -906,8 +956,15 @@ export class Signal3DMap {
         if (!col || !this._infoPanelFromClick) { this.infoEl.classList.add('hidden'); return; }
         // Consider both received (sphere) and sent (star) points so a repeater
         // we've only ever transmitted to still shows a panel when clicked.
-        const pts = this._rxPoints.filter(p => p.col === col)
-            .concat((this._histOutgoingPts ?? this._outgoingPts).filter(p => p.col === col));
+        // Collision-aware match (colsOverlap), consistent with _isColShown and
+        // _rebuildDots — strict === hid the panel once packets migrated under a
+        // collision key while the selection itself stayed alive.
+        // Read the points from the array actually RENDERED (_rebuildDots): in
+        // wide/"All" mode that is the disk layer, and _rxPoints may be empty
+        // (imported/restored data older than the RAM window) — the panel then
+        // wrongly never appeared for a clicked dot.
+        const pts = (this._histPoints ?? this._rxPoints).filter(p => colsOverlap(p.col, col))
+            .concat((this._histOutgoingPts ?? this._outgoingPts).filter(p => colsOverlap(p.col, col)));
         if (!pts.length) { this.infoEl.classList.add('hidden'); return; }
         const isPseudo = col === 'direct' || col === 'unknown';
         const dotStyle = isPseudo
@@ -921,7 +978,7 @@ export class Signal3DMap {
             : pts.reduce((best, q) => q.time > best.time ? q : best, pts[0]);
         const snrStr  = p.snr  != null ? `${p.snr  >= 0 ? '+' : ''}${p.snr.toFixed(1)} dB`  : null;
         const rssiStr = p.rssi != null ? `${p.rssi} dBm` : null;
-        const timeStr = new Date(p.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const timeStr = formatWhen(p.time);   // dated when not from today
         const sigParts = [snrStr ? `SNR <b>${this._escHtml(snrStr)}</b>` : null,
                           rssiStr ? `RSSI <b>${this._escHtml(rssiStr)}</b>` : null].filter(Boolean);
         const sigHtml = sigParts.length
@@ -1169,11 +1226,17 @@ export class Signal3DMap {
             this._deviceLoc = null;
             if (this._deviceMarker) this._deviceMarker.visible = false;
             this._scheduleMapUpdate();
+            this._updateNavUi();
             return;
         }
         this._deviceLoc = { lat, lon };
         this._updateDeviceMarker();
         this._scheduleMapUpdate();
+        this._updateNavUi();
+        // Follow mode tracking the device: glide after it like the GPS watch
+        // does for the phone (dead zone and drag guards identical).
+        if (this._positionSource === 'device' && this._followUser && !this._userDragging
+            && !this._followTargetInDeadZone()) this.flyToUser(450);
     }
 
     setMapSource(source) {
@@ -1646,8 +1709,9 @@ export class Signal3DMap {
     // toward a theoretical max-SNR dot directly above them, so the view shows the
     // marker plus the upward spire direction. Null until the location is known.
     _followTarget() {
-        if (!this._userLoc) return null;
-        const u = this._latLonToWorld(this._userLoc.lat, this._userLoc.lon);
+        const loc = this._navLoc();
+        if (!loc) return null;
+        const u = this._latLonToWorld(loc.lat, loc.lon);
         if (!u) return null;
         u.y = this._followCenterY();
         return u;
@@ -1656,8 +1720,11 @@ export class Signal3DMap {
     // Recenter the view on the follow target (keeps angle/zoom). Returns false
     // (and shows a status message) when the location is unknown.
     flyToUser(duration = 700) {
-        if (!this._userLoc) {
-            this._setStatus('Location not known yet — tap “Enable location” first.');
+        if (!this._navLoc()) {
+            if (this._positionSource === 'phone') {
+                this._setStatus('Location not known yet — tap “Enable location” first.');
+            }
+            // Device source: the persistent "⚠ no position" note already says why.
             return false;
         }
         if (!this._followTarget()) return false;
@@ -1784,7 +1851,7 @@ export class Signal3DMap {
         // (MIN_HEIGHT·scale.y) and marker. A fixed offset can't do both: at deep
         // zoom the dampened dots/markers are tiny, so a 0.02 overlay would hide
         // them; tying it to scale.y keeps it clear of z-fighting yet under them.
-        if (this._overlayMesh) this._overlayMesh.position.y = this._rxPointsGroup.scale.y * 0.1;
+        if (this._overlayMesh) this._overlayMesh.position.y = this._overlayY();
     }
 
     _updatePerspUniforms() {
@@ -1862,6 +1929,13 @@ export class Signal3DMap {
     // The detail-overlay target (tile rect + cache key) for the current camera
     // view, or null when no overlay is warranted. Recomputed after the fetch to
     // detect a stale view (camera moved during the await).
+    // Overlay height: just above the base plane, below the dots. One source of
+    // truth — set at mesh creation AND re-applied by _updateHeightScale, which
+    // previously each carried their own copy of the 0.1 factor.
+    _overlayY() {
+        return this._rxPointsGroup.scale.y * 0.1;
+    }
+
     _overlayTarget() {
         if (!this._tileBounds || this._mapSource === 'none') return null;
         const camBb = this._cameraViewBbox();
@@ -1917,7 +1991,9 @@ export class Signal3DMap {
             const seLL  = tileToLatLon(ox1 + 1, oy1 + 1, overlayZoom);
             const nwPos = this._latLonToWorld(nwLL.lat, nwLL.lon);
             const sePos = this._latLonToWorld(seLL.lat, seLL.lon);
-            if (!nwPos || !sePos) return;
+            // _tileBounds vanished mid-await — the texture would never be
+            // installed; dispose it like every other bail-out path does.
+            if (!nwPos || !sePos) { texture.dispose(); return; }
 
             const oW  = Math.abs(sePos.x - nwPos.x);
             const oH  = Math.abs(sePos.z - nwPos.z);
@@ -1928,7 +2004,7 @@ export class Signal3DMap {
             const mat  = new THREE.MeshBasicMaterial({ map: texture });
             const mesh = new THREE.Mesh(geo, mat);
             mesh.rotation.x = -Math.PI / 2;
-            mesh.position.set(ocx, this._rxPointsGroup.scale.y * 0.1, ocz);   // just above base, below the dots (kept in sync by _updateHeightScale)
+            mesh.position.set(ocx, this._overlayY(), ocz);
 
             this._removeOverlay();
             this._overlayMesh = mesh;
@@ -1987,8 +2063,13 @@ export class Signal3DMap {
         );
         if (!visible.length) return;
 
-        const litPts = sel ? visible.filter(p => p.col === sel) : visible;
-        const dimPts = sel ? visible.filter(p => p.col !== sel) : [];
+        // Lenient collision-aware match, the SAME one _isColShown uses to keep
+        // the selection alive: a selection of "a" must also light points that
+        // migrated under a collision key "a/b", or the selection survives a
+        // cleanup tick (overlap) while every dot renders dim (strict ===).
+        const selMatch = p => colsOverlap(p.col, sel);
+        const litPts = sel ? visible.filter(selMatch) : visible;
+        const dimPts = sel ? visible.filter(p => !selMatch(p)) : [];
 
         const _col = new THREE.Color();
 
@@ -2032,8 +2113,8 @@ export class Signal3DMap {
             (!this._filterFn || this._filterFn(p.col)) &&
             (!sentCutoff || p.time >= sentCutoff)
         );
-        const sentLit = sel ? sentAll.filter(p => p.col === sel) : sentAll;
-        const sentDim = sel ? sentAll.filter(p => p.col !== sel) : [];
+        const sentLit = sel ? sentAll.filter(selMatch) : sentAll;
+        const sentDim = sel ? sentAll.filter(p => !selMatch(p)) : [];
         this._addDotPoints(sentLit, 1.0,  3.2, this._starTex);
         this._addDotPoints(sentDim, 0.07, 3.2, this._starTex);
 
@@ -2176,7 +2257,7 @@ export class Signal3DMap {
         };
         // localH = each marker's model height; targetPx is its on-screen height.
         if (this._userMarker) scaleFor(this._userMarker, 2.8);
-        if (this._deviceMarker) scaleFor(this._deviceMarker, 3.1);
+        if (this._deviceMarker) scaleFor(this._deviceMarker, 2.8);   // same footprint as the user cone
         for (const g of this._pinGroups) {
             scaleFor(g, 4.0);
         }
@@ -2236,9 +2317,10 @@ export class Signal3DMap {
         this._userMarker.position.set(pos.x, 0, pos.z);  // scale handled by _scaleMarkerToScreen()
     }
 
-    // The connected device's own position — drawn as a blue antenna (mast +
-    // ball), deliberately distinct from the red "my location" cone and from the
-    // repeater pins, so it reads as "this is the radio/repeater I'm talking to".
+    // The connected device's own position — the same cone as the red "my
+    // location" marker but upside down (tip at the ground) and blue, so the
+    // pair reads as related-but-different. (It used to be a mast+ball antenna,
+    // which looked too much like a signal dot on a spire.)
     _updateDeviceMarker() {
         if (!this._deviceLoc || !this._tileBounds) return;
         const pos = this._latLonToWorld(this._deviceLoc.lat, this._deviceLoc.lon);
@@ -2246,18 +2328,14 @@ export class Signal3DMap {
         if (!this._deviceMarker) {
             const COL = 0x2299ff;
             const group = new THREE.Group();
-            const mast = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.18, 0.18, 2.4, 10),
-                new THREE.MeshBasicMaterial({ color: COL })
+            const cone = new THREE.Mesh(
+                new THREE.ConeGeometry(1, 2.8, 14),
+                // Lambert like the user cone, so both shade identically.
+                new THREE.MeshLambertMaterial({ color: COL })
             );
-            mast.position.y = 1.2;
-            group.add(mast);
-            const ball = new THREE.Mesh(
-                new THREE.SphereGeometry(0.5, 16, 12),
-                new THREE.MeshBasicMaterial({ color: COL })
-            );
-            ball.position.y = 2.6;
-            group.add(ball);
+            cone.rotation.z = Math.PI;   // flip: apex points down
+            cone.position.y = 1.4;       // apex touches the ground
+            group.add(cone);
             group.add(this._makeMarkerBase(COL));
             this._markerNoZFight(group);
             this._deviceMarker = group;

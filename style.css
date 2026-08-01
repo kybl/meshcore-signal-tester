@@ -6,27 +6,37 @@
 
 :root {
     color-scheme: dark;
-    --bg-gutter:      #050E18;
-    --bg-content:     #091525;
-    --bg-header:      #0F2236;
-    --bg-box:         #102030;
-    --bg-input:       #0A1A2C;
-    --bg-hover:       rgba(186, 212, 238, 0.12);
-    --bg-detail:      #0C1C2E;
-    --bg-detail-json: #081520;
-    --bg-table-head:  #1A3450;
-    --bg-sig-hover:   #1E3858;
-    --bg-sig-active:  #264468;
-    --bg-col-sel:     #204878;
-    --bg-row-sel:     #162840;
+    /* Neutral slate (GitHub-dark-ish): a near-grey with only a faint cool tint,
+       instead of the old saturated navy. Desaturating the surfaces lets the
+       coloured accents, repeater dots and SNR/RSSI values carry the colour. */
+    --bg-gutter:      #0A0E14;
+    --bg-content:     #0D1117;
+    --bg-header:      #12171F;
+    --bg-box:         #171D26;
+    --bg-input:       #0B0F15;
+    --bg-hover:       rgba(200, 214, 232, 0.10);
+    --bg-detail:      #11161E;
+    --bg-detail-json: #0A0E14;
+    --bg-table-head:  #212832;
+    --bg-sig-hover:   #212832;
+    --bg-sig-active:  #2B333F;
+    /* Selection highlights keep a slight blue tint so "selected" still reads as
+       an accent against the neutral surfaces. */
+    --bg-col-sel:     #24374F;
+    --bg-row-sel:     #182430;
     --bg-row-flash:   rgba(50, 130, 210, 0.45);
     --bg-cell-flash:  rgba(150, 220, 70, 0.35);
     --jh-key:  #c4b5fd; --jh-str:  #6ee7b7; --jh-num:  #93c5fd; --jh-bool: #fbbf24; --jh-null: #8aa0b4;
-    --text-primary:   #E2F0FF;
-    --text-secondary: #9EC8E8;
-    --text-muted:     #5E90AC;
-    --border:         #2A4E6E;
-    --border-light:   #1E3C58;
+    --text-primary:   #E6EDF3;
+    --text-secondary: #A9C2D6;
+    --text-muted:     #8299AE;
+    /* Accent used as FOREGROUND (link/button text, active borders). Brighter
+       than the fill accent (#667eea) so it clears ~7:1 on the dark panels;
+       the solid-fill accent stays #667eea so white-on-accent buttons keep
+       their contrast. Light theme overrides this back to #667eea below. */
+    --accent-fg:      #8EA2FF;
+    --border:         #30363D;
+    --border-light:   #21262D;
     --shadow:         rgba(0,0,0,0.55);
     --btn-primary-bg: #1565C0;
     --btn-primary-border: #1E88E5;
@@ -52,6 +62,7 @@ html.light-theme {
     --text-primary:   #0B1D2E;
     --text-secondary: #264A6A;
     --text-muted:     #506E85;
+    --accent-fg:      #667eea;
     --border:         #9BBAD4;
     --border-light:   #C8DEED;
     --shadow:         rgba(11, 29, 46, 0.15);
@@ -419,7 +430,7 @@ html:not(.light-theme) .btn-connect:disabled {
     -webkit-appearance: none;
     appearance: none;
     background: var(--bg-box);
-    color: #667eea;
+    color: var(--accent-fg);
     border: 1.5px solid var(--border);
     padding: 5px 12px;
     border-radius: 6px;
@@ -829,6 +840,13 @@ html:not(.light-theme) .btn-connect:disabled {
 .chart-zoom-reset:hover { filter: brightness(1.15); }
 
 .chart-resize-handle {
+    /* The handle div itself is the event target: full-width it caught drags
+       anywhere under the panel and caused accidental resizes — so it is only
+       as wide as its content and sits at the right edge. */
+    width: fit-content;
+    margin-left: auto;
+    margin-right: 6px;
+    padding: 0 10px;
     height: 14px;
     cursor: ns-resize;
     display: flex;
@@ -997,7 +1015,7 @@ html:not(.light-theme) .btn-connect:disabled {
 
 .saved-btn {
     background: var(--bg-box);
-    color: #667eea;
+    color: var(--accent-fg);
     border: 1px solid var(--border);
     border-right: none;
     border-radius: 5px 0 0 5px;
@@ -1129,6 +1147,45 @@ html:not(.light-theme) .btn-connect:disabled {
     color: var(--text-muted);
 }
 
+.zs-badge {
+    color: #d97706;
+    margin-right: 3px;
+    cursor: help;
+}
+
+.detail-zs {
+    font-size: 12px;
+    color: var(--text-primary);
+    background: rgba(217, 119, 6, 0.13);
+    border-left: 3px solid #d97706;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+
+.detail-trace {
+    font-size: 12px;
+    color: var(--text-primary);
+    background: rgba(59, 130, 246, 0.12);
+    border-left: 3px solid #3b82f6;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+
+.detail-msg {
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--bg-detail-json);
+    border-left: 3px solid #2e9e5b;
+    padding: 5px 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+
 .detail-json {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 10px;
@@ -1255,7 +1312,7 @@ html:not(.light-theme) .btn-connect:disabled {
 .rep-filter-input.has-value,
 .msg-filter-input.has-value {
     background: var(--bg-input);
-    border-color: #667eea;
+    border-color: var(--accent-fg);
 }
 
 .chart-tooltip {
@@ -1379,7 +1436,7 @@ html.light-theme .batt-icon {
     -webkit-appearance: none;
     appearance: none;
     background: var(--bg-box);
-    color: #667eea;
+    color: var(--accent-fg);
     border: 1.5px solid var(--border);
     border-radius: 6px;
     font-size: 12px;
@@ -1609,6 +1666,27 @@ header .help-icon.active {
     margin: 18px 0 8px;
 }
 
+/* "No position available" warning next to the Packet-position-from setting */
+.loc-source-warn {
+    color: #e0b653;
+    font-size: 11px;
+    margin-left: 5px;
+    white-space: nowrap;
+    cursor: help;
+}
+html.light-theme .loc-source-warn { color: #a97b13; }
+
+/* Connected device's radio preset (header, next to the device name) */
+.radio-preset {
+    font-size: 11px;
+    color: #7bd88f;
+    white-space: nowrap;
+}
+.radio-preset.radio-preset-custom { color: #e0b653; }   /* custom settings — no known preset */
+html.light-theme .radio-preset { color: #2e8b46; }
+html.light-theme .radio-preset.radio-preset-custom { color: #a97b13; }
+
+
 .help-dl {
     display: grid;
     /* Cap the term column so a long term (e.g. a code token) wraps instead of
@@ -1813,9 +1891,15 @@ html.light-theme .msg-filter-clear:hover {
     font-size: 12px;
     padding: 3px 10px;
     border-radius: 5px;
-    border: 1px solid rgba(255,255,255,0.4);
-    background: rgba(255,255,255,0.15);
+    /* Dark theme default only: the old translucent-white backing vanished as
+       white-on-white over light map tiles. Swap to a genuinely semi-transparent
+       DARK backing and lift the label with a text shadow, so it stays readable
+       without turning the button into a heavy opaque block. The light theme
+       (its translucent-black-on-white version was fine) is restored below. */
+    border: 1px solid rgba(255,255,255,0.28);
+    background: rgba(16, 32, 48, 0.5);
     color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.85);
     cursor: pointer;
     white-space: nowrap;
 }
@@ -1824,17 +1908,20 @@ html.light-theme .msg-filter-clear:hover {
    the blue .active follow state). */
 @media (hover: hover) {
     .btn-show-all-repeaters:hover {
-        background: rgba(255,255,255,0.28);
-        border-color: rgba(255,255,255,0.7);
+        background: rgba(16, 32, 48, 0.66);
+        border-color: rgba(255,255,255,0.45);
     }
     html.light-theme .btn-show-all-repeaters:hover {
-        background: rgba(0,0,0,0.22);
+        background: rgba(0,0,0,0.32);
     }
 }
 html.light-theme .btn-show-all-repeaters {
     border-color: rgba(0,0,0,0.35);
-    background: rgba(0,0,0,0.12);
+    /* A touch more opaque than the original 0.12 so it separates a little more
+       from pale tiles, but still clearly translucent. */
+    background: rgba(0,0,0,0.22);
     color: #0f1a2e;
+    text-shadow: none;
 }
 /* Pressed / active state (e.g. "Center on me" while follow mode is on).
    Scoped under html.light-theme as well so it beats the light-theme base
@@ -1895,7 +1982,9 @@ html.light-theme .btn-show-all-repeaters.active:hover {
     min-height: 200px;
     max-height: calc(100vh - 80px);
     border-radius: 8px;
-    overflow: hidden;
+    /* visible, not hidden: the settings dropdown (top-right, inside the map)
+       may be taller than the map — the canvas clips its own corners below */
+    overflow: visible;
     /* Shown while the WebGL canvas is mid-resize (before it repaints). Matches
        the content/table background (and the map's own clear colour, see
        _bgColor in signal3d.js) so there's no flash — dark in the dark theme,
@@ -1905,6 +1994,13 @@ html.light-theme .btn-show-all-repeaters.active:hover {
 }
 
 .map-resize-handle {
+    /* The handle div itself is the event target: full-width it caught drags
+       anywhere under the panel and caused accidental resizes — so it is only
+       as wide as its content and sits at the right edge. */
+    width: fit-content;
+    margin-left: auto;
+    margin-right: 6px;
+    padding: 0 10px;
     height: 14px;
     cursor: ns-resize;
     display: flex;
@@ -1993,6 +2089,7 @@ html.light-theme .map-fullscreen-btn:hover {
     display: block;
     width: 100%;
     height: 100%;
+    border-radius: 8px;
     touch-action: none;
     cursor: grab;
 }
@@ -2250,23 +2347,84 @@ html.light-theme .debug-input-label {
     margin-left: auto;
 }
 
+/* Footer row under each chart: SNR toggles on the left, the resize handle
+   (margin-left:auto) on the right. */
+.chart-footer {
+    display: flex;
+    align-items: center;
+    min-height: 16px;
+}
+.chart-footer .snr-toggle-bar { padding: 0 2px; }
+
+/* Buttons overlaid on the 3D map, on the fullscreen button's row. The row
+   itself is click-through so the map stays draggable between the buttons. */
+.map-overlay-buttons {
+    position: absolute;
+    top: 8px;
+    left: 46px;            /* right of the 30px fullscreen button at left:8 */
+    right: 48px;           /* clear of the settings gear at top-right */
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    z-index: 40;
+    pointer-events: none;
+}
+.map-overlay-buttons > * { pointer-events: auto; }
+.map-overlay-buttons .loc-source-warn {
+    background: rgba(15, 15, 15, 0.55);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+html.light-theme .map-overlay-buttons .loc-source-warn { background: rgba(255, 255, 255, 0.75); }
+.map-overlay-buttons .map-location-status {
+    background: rgba(15, 15, 15, 0.55);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 10px;
+    max-width: 100%;
+}
+html.light-theme .map-overlay-buttons .map-location-status {
+    background: rgba(255, 255, 255, 0.75);
+    color: inherit;
+}
+.map-settings-panel .map-hint { display: block; padding-top: 6px; }
+
+/* The settings gear lives inside the map, top-right; its dropdown gets a
+   scroll cap so it works even in a short viewport. */
+.map-overlay-settings {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 60;
+    margin-left: 0;
+}
+.map-overlay-settings .map-settings-panel {
+    max-height: min(70vh, 440px);
+    overflow-y: auto;
+}
+
 .map-settings-btn {
-    background: rgba(255,255,255,0.15);
-    border: 1px solid rgba(255,255,255,0.45);
+    /* Dark default: semi-transparent dark backing + text shadow like the other
+       map controls (see .btn-show-all-repeaters); light theme restored below. */
+    background: rgba(16, 32, 48, 0.5);
+    border: 1px solid rgba(255,255,255,0.28);
     border-radius: 4px;
     cursor: pointer;
     font-size: 15px;
     padding: 2px 5px;
-    color: rgba(255,255,255,0.9);
+    color: rgba(255,255,255,0.95);
     line-height: 1;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.85);
 }
-.map-settings-btn:hover { background: rgba(255,255,255,0.28); border-color: rgba(255,255,255,0.7); }
+.map-settings-btn:hover { background: rgba(16,32,48,0.66); border-color: rgba(255,255,255,0.45); }
 html.light-theme .map-settings-btn {
-    background: rgba(0,0,0,0.12);
+    background: rgba(0,0,0,0.22);
     border-color: rgba(0,0,0,0.35);
     color: #0f1a2e;
+    text-shadow: none;
 }
-html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-color: rgba(0,0,0,0.6); }
+html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.32); border-color: rgba(0,0,0,0.6); }
 
 .map-settings-panel {
     position: absolute;
@@ -2632,6 +2790,49 @@ html.light-theme .theme-toggle-btn:hover {
 .repeater-notice-close:hover { background: var(--bg-hover); color: var(--text-primary); }
 
 /* --- Unexpected-disconnect alarm: subdued red wash + centered modal --- */
+/* Blocking "loading…" overlay shown during a heavy wide-view rebuild
+   (Display → All over a large capture). See _refreshWideView. */
+/* A discreet bottom toast, NOT a blocking modal: no backdrop and
+   pointer-events:none, so the rest of the page stays usable while the whole
+   capture is re-paginated in the background. */
+.loading-modal {
+    position: fixed;
+    left: 50%;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 10001;
+    max-width: calc(100vw - 32px);
+    pointer-events: none;
+}
+.loading-modal-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    /* Wide, short bar rather than a narrow tall card: a fixed width gives the
+       message room to sit on one or two lines instead of wrapping into five. */
+    width: min(560px, calc(100vw - 24px));
+    background: var(--bg-box);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 16px;
+    text-align: left;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    opacity: 0.96;
+}
+.loading-modal-text { min-width: 0; flex: 1; }
+.loading-spinner {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+    border: 3px solid var(--border);
+    border-top-color: #667eea;
+    border-radius: 50%;
+    animation: mc-spin 0.8s linear infinite;
+}
+@keyframes mc-spin { to { transform: rotate(360deg); } }
+.loading-modal-title { font-size: 14px; font-weight: 700; margin-bottom: 2px; color: var(--text-primary); }
+.loading-modal-msg { font-size: 12px; color: var(--text-secondary); }
+
 .disconnect-alarm {
     position: fixed;
     inset: 0;

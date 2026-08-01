@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=169">
+    <link rel="stylesheet" href="style.css?v=189">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -13,10 +13,41 @@
         else if(_s==="large")document.documentElement.classList.add("ui-large");
         else if(_s==="larger")document.documentElement.classList.add("ui-larger");
     }catch(e){}</script>
-    <script src="native-bridge.js?v=12"></script>
+    <script src="native-bridge.js?v=15"></script>
     <script type="importmap">
     { "imports": { "three": "./vendor/three.module.js?v=1" } }
     </script>
+    <!-- Preload the whole module graph so the browser fetches everything in
+         parallel with the HTML, instead of discovering imports level by level
+         (the module waterfall costs ~2 extra round-trips on a cold cache).
+         Each href must match its import specifier EXACTLY, ?v= included — a
+         mismatch silently downloads the file twice. The list is kept in sync
+         by test/modulepreload.test.js (run `node --test` after changing any
+         import or ?v= cache buster). -->
+    <link rel="modulepreload" href="app.js?v=467">
+    <link rel="modulepreload" href="capture-model.js?v=4">
+    <link rel="modulepreload" href="chart-cache.js?v=1">
+    <link rel="modulepreload" href="chart-zoom.js?v=1">
+    <link rel="modulepreload" href="column-key.js?v=2">
+    <link rel="modulepreload" href="column-model.js?v=2">
+    <link rel="modulepreload" href="connection-state.js?v=3">
+    <link rel="modulepreload" href="contacts-directory.js?v=1">
+    <link rel="modulepreload" href="csv.js?v=4">
+    <link rel="modulepreload" href="frame.js?v=1">
+    <link rel="modulepreload" href="geo.js?v=1">
+    <link rel="modulepreload" href="map-cache.js?v=2">
+    <link rel="modulepreload" href="maplod.js?v=4">
+    <link rel="modulepreload" href="packet-store.js?v=24">
+    <link rel="modulepreload" href="radio-presets.js?v=3">
+    <link rel="modulepreload" href="selection-model.js?v=1">
+    <link rel="modulepreload" href="signal3d.js?v=162">
+    <link rel="modulepreload" href="storage.js?v=1">
+    <link rel="modulepreload" href="table-cache.js?v=3">
+    <link rel="modulepreload" href="time-windows.js?v=2">
+    <link rel="modulepreload" href="vendor/meshcore-decoder.js?v=6">
+    <link rel="modulepreload" href="vendor/three.module.js?v=1">
+    <link rel="modulepreload" href="vendor/controls/MapControls.js?v=1">
+    <link rel="modulepreload" href="vendor/controls/OrbitControls.js?v=1">
 </head>
 <body>
     <header>
@@ -34,10 +65,11 @@
                 <button id="pauseBtn" class="btn-pause" disabled>▶ Resume</button>
                 <button id="disconnectBtn" class="btn-pause btn-disconnect">Disconnect</button>
                 <span id="connectedDeviceName" class="connected-device-name"></span>
+                <span id="radioPreset" class="radio-preset hidden"></span>
                 <label id="autoReconnectWrap" class="auto-reconnect-toggle"><input type="checkbox" id="autoReconnectChk"> Auto-reconnect<span class="help-icon" data-help="auto-reconnect">i</span></label>
+                <span id="batteryStatus" class="battery-status hidden"></span>
                 <div id="savedDevices" class="saved-devices hidden"></div>
             </div>
-            <span id="batteryStatus" class="battery-status hidden"></span>
         </div>
             <div class="header-row header-row-tools">
                 <button id="importCsvBtn" class="btn-pause" title="Import one or more CSV files">Import CSV</button>
@@ -51,6 +83,7 @@
                 <label class="ttl-header-label">Display<select id="hideSelect" class="ttl-header-select"><option value="30">30 s</option><option value="60">1 min</option><option value="120">2 min</option><option value="300">5 min</option><option value="900" selected>15 min</option><option value="3600">1 h</option><option value="10800">3 h</option><option value="43200">12 h</option><option value="all">All</option></select><span class="help-icon" data-help="display">?</span></label>
                 <label class="ttl-header-label">Text size<select id="uiScaleSelect" class="ttl-header-select"><option value="small" style="font-size:10px">Small</option><option value="normal" selected style="font-size:13px">Normal</option><option value="large" style="font-size:17px">Large</option><option value="larger" style="font-size:24px">Larger</option></select></label>
                 <label class="size-label">2D graphs dot size<input type="range" id="dotSizeInput" class="size-range" min="0.3" max="2.5" step="0.1" value="1"><span id="dotSizeVal" class="size-val">1</span></label>
+                <label class="ttl-header-label">Packet position from<select id="locSourceSelect" class="ttl-header-select"><option value="phone">This phone / browser</option><option value="device">MeshCore device</option></select><span class="help-icon" data-help="loc-source">?</span><span id="locSourceWarn" class="loc-source-warn hidden">⚠ no position<span class="help-icon">?</span></span></label>
                 <label class="sound-toggle"><input type="checkbox" id="keepScreenChk" checked> Keep screen on<span class="help-icon" data-help="keepscreen">?</span></label>
             </div>
             <div class="header-stats-row">
@@ -140,13 +173,17 @@
                 </div>
                 <div class="section-body" id="snrChartBody">
                     <div class="section-body-inner">
-                        <div class="snr-toggle-bar">
-                            <label class="snr-toggle-label"><input type="checkbox" id="snrShowIncoming" checked> Incoming ●</label>
-                            <label class="snr-toggle-label"><input type="checkbox" id="snrShowOutgoing" checked> Outgoing ★</label>
-                        </div>
                         <div class="chart-box">
                             <div class="chart-svg-wrap">
                                 <svg id="snrChart" class="rssi-chart"></svg>
+                            </div>
+                            <!-- Footer row: toggles left, resize handle (attached
+                                 by _attachResizeHandle) right. -->
+                            <div class="chart-footer">
+                                <div class="snr-toggle-bar">
+                                    <label class="snr-toggle-label"><input type="checkbox" id="snrShowIncoming" checked> Incoming ●</label>
+                                    <label class="snr-toggle-label"><input type="checkbox" id="snrShowOutgoing" checked> Outgoing ★</label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -163,6 +200,7 @@
                         <div class="chart-svg-wrap">
                             <svg id="rssiChart" class="rssi-chart"></svg>
                         </div>
+                        <div class="chart-footer"></div>
                     </div>
                 </div>
             </div>
@@ -174,13 +212,18 @@
                 </div>
                 <div class="section-body" id="mapBody">
                     <div class="map-inner">
-                        <div class="map-controls">
-                            <button id="enableLocationBtn" class="btn-primary">Enable location</button>
-                            <button id="centerOnMeBtn" class="btn-show-all-repeaters hidden" title="Move the camera to my current location">📍 Center on me</button>
-                            <span id="locationStatus" class="map-location-status">Location not enabled.</span>
-                            <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
-                            <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
-                            <div class="map-settings-wrap">
+                        <div class="map-container">
+                            <canvas id="mapCanvas" class="map-canvas"></canvas>
+                            <div id="mapEmpty" class="map-empty">Allow location and capture some packets to populate the 3D map.</div>
+                            <div id="mapInfo" class="map-info hidden"></div>
+                            <button id="mapFullscreenBtn" class="map-fullscreen-btn" title="Fullscreen">⛶</button>
+                            <div class="map-overlay-buttons">
+                                <button id="centerOnMeBtn" class="btn-show-all-repeaters" title="Center the map on the selected position source (phone or MeshCore device) and follow it">📍 Center on me</button><span id="centerNoPos" class="loc-source-warn hidden">⚠ no position<span class="help-icon">?</span></span>
+                                <button id="showAllRepeatersBtn" class="btn-show-all-repeaters">Show all repeaters</button>
+                                <button id="enableLocationBtn" class="btn-primary">Enable location</button>
+                                <span id="locationStatus" class="map-location-status">Location not enabled.</span>
+                            </div>
+                            <div class="map-settings-wrap map-overlay-settings">
                                 <button id="mapSettingsBtn" class="map-settings-btn" title="Map settings">⚙</button>
                                 <div id="mapSettingsPanel" class="map-settings-panel hidden">
                                     <label class="map-source-label">Map:
@@ -222,14 +265,9 @@
                                     <label class="map-setting-toggle"><input type="checkbox" id="showLinesChk" checked> Guide lines</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showMarkerChk" checked> My location</label>
                                     <label class="map-setting-toggle"><input type="checkbox" id="showDeviceChk"> Device location<span class="help-icon" data-help="device-location">?</span></label>
+                                    <span class="map-hint">Drag to pan · scroll/pinch to zoom · two-finger twist to tilt/rotate</span>
                                 </div>
                             </div>
-                        </div>
-                        <div class="map-container">
-                            <canvas id="mapCanvas" class="map-canvas"></canvas>
-                            <div id="mapEmpty" class="map-empty">Allow location and capture some packets to populate the 3D map.</div>
-                            <div id="mapInfo" class="map-info hidden"></div>
-                            <button id="mapFullscreenBtn" class="map-fullscreen-btn" title="Fullscreen">⛶</button>
                         </div>
                     </div>
                 </div>
@@ -348,6 +386,7 @@
 
             <div class="help-section-title">What you can connect to</div>
             <p>The app auto-detects the device — you don't pick a type. A <b>companion radio</b> (Bluetooth, USB, or WiFi in the Android app) pushes every received packet fully decoded, which is the richest source. A <b>repeater</b> (USB only) instead exposes a text CLI the app drives; how much it can report depends on its firmware (see below).</p>
+            <p>Once connected, the green status box shows the device's node name, its battery level, and — matched against a built-in list of the standard MeshCore radio presets (kept up to date from the official online list) — which preset the radio is using (frequency, bandwidth, spreading factor, coding rate).</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -361,7 +400,7 @@
                 <div class="help-dd">Received Signal Strength Indicator — radio power in dBm. Less negative = stronger. −70 dBm: excellent &nbsp;·&nbsp; −120 dBm: very weak.</div>
 
                 <div class="help-dt">Noise floor</div>
-                <div class="help-dd">Background RF noise level, estimated as RSSI − SNR. Shown as the shaded area on the RSSI chart.</div>
+                <div class="help-dd">Background RF noise level. The shaded area on the RSSI chart estimates it per packet as RSSI − SNR; the dashed grey line is the value the connected radio measures directly (read every ~10 s), so it also covers quiet stretches with no packets.</div>
 
             </div>
 
@@ -384,7 +423,8 @@
                 <li><b>Text size</b> — scales the whole interface (Small → Larger) for readability on small or high-DPI screens; remembered across sessions.</li>
                 <li><b>2D graphs dot size</b> — scales the points drawn on the SNR and RSSI charts.</li>
                 <li><b>3D map dot size</b> — set separately in the 3D map's ⚙ menu, alongside the map source, guide lines, and location marker.</li>
-                <li><b>Device location</b> — the 3D map's ⚙ menu can show the connected device's own position (a blue antenna marker), when the companion or repeater reports one. Off by default. A companion shows its current position — its live onboard-GPS fix if it has one, otherwise its configured advert position; a repeater shows its <code>get lat</code>/<code>get lon</code> setting. Nothing appears if the device has no position set. While the marker is shown, a connected <b>companion</b>'s position is re-read about once a second, so one with live GPS tracks your movement; a <b>repeater</b>'s position is static and read once on connect.</li>
+                <li><b>Packet position from</b> — where newly received packets get their map position. <i>This phone / browser</i> (the default) uses this device's own GPS and needs the location permission; <i>MeshCore device</i> instead uses the position the connected radio reports, so no phone location is needed — handy when the radio moves separately from you (on a car roof, a dog's collar…). Already-captured data keeps whatever position it was stored with.</li>
+                <li><b>Device location</b> — the 3D map's ⚙ menu can show the connected device's own position (an upside-down blue cone), when the companion or repeater reports one. Off by default. A companion shows its current position — its live onboard-GPS fix if it has one, otherwise its configured advert position; a repeater shows its <code>get lat</code>/<code>get lon</code> setting. Nothing appears if the device has no position set. While the marker is shown, a connected <b>companion</b>'s position is re-read about once a second, so one with live GPS tracks your movement; a <b>repeater</b>'s position is static and read once on connect.</li>
             </ul>
 
             <div class="help-section-title">Repeater firmware: stock vs. logging build</div>
@@ -405,6 +445,16 @@
         </div>
     </div>
 
+    <div id="loadingModal" class="loading-modal hidden" role="status" aria-live="polite">
+        <div class="loading-modal-box">
+            <div class="loading-spinner"></div>
+            <div class="loading-modal-text">
+                <div class="loading-modal-title">Loading data…</div>
+                <div class="loading-modal-msg">Rebuilding the view over the whole capture. This can take a while.</div>
+            </div>
+        </div>
+    </div>
+
     <div id="disconnectAlarm" class="disconnect-alarm hidden">
         <div class="disconnect-alarm-box">
             <div class="disconnect-alarm-icon">⚠️</div>
@@ -414,6 +464,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=401"></script>
+    <script type="module" src="app.js?v=467"></script>
 </body>
 </html>

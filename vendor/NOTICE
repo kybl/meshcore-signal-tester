@@ -6,7 +6,17 @@ three.js (three.module.js, controls/OrbitControls.js, controls/MapControls.js)
   Copyright 2010-2023 Three.js Authors
   MIT License — https://github.com/mrdoob/three.js/blob/dev/LICENSE
 
-@michaelhart/meshcore-decoder (meshcore-decoder.js)
-  https://github.com/michaelhart/meshcore-decoder
-  Copyright Michael Hart
+@michaelhart/meshcore-decoder (meshcore-decoder.js) — bundled build of a fork
+  Fork: https://github.com/kybl/meshcore-decoder (branch "patched")
+  Upstream: https://github.com/michaelhart/meshcore-decoder (v0.3.0)
+  Copyright Michael Hart and contributors
   MIT License — https://github.com/michaelhart/meshcore-decoder/blob/main/LICENSE
+  Local changes: crypto-js and orlp/ed25519 WASM replaced with @noble/hashes +
+  @noble/ciphers + @noble/ed25519; added GroupData/Multipart/RawCustom decoders,
+  firmware 1.16.0 6-byte ACK handling, built-in public-channel decryption, and
+  corrected Path payload decoding (encrypted envelope per docs/payloads.md —
+  upstream misparsed the ciphertext as a plaintext path).
+  Rebuild: npx esbuild src/browser.ts --bundle --minify --format=esm --platform=browser
+
+  Bundled dependencies (all MIT, Paul Miller):
+    @noble/hashes, @noble/ciphers, @noble/ed25519 — https://github.com/paulmillr

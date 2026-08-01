@@ -39,6 +39,19 @@ class BleBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun isConnected(deviceId: String): Boolean = activity.ble.isConnected(deviceId)
 
+    /** Android's bond state for the device: 10=NONE, 11=BONDING, 12=BONDED,
+     *  -1 unknown. The connection log compares it around connects — a BONDED
+     *  phone that still gets a pairing dialog means the DEVICE lost its bond
+     *  (e.g. its config filesystem was wiped by a battery-death reset).
+     *  BLUETOOTH_CONNECT is held while connected (declared in the manifest);
+     *  the read is wrapped anyway, so suppress lint like BleManager does. */
+    @android.annotation.SuppressLint("MissingPermission")
+    @JavascriptInterface
+    fun bondState(deviceId: String): Int = try {
+        val mgr = activity.getSystemService(android.content.Context.BLUETOOTH_SERVICE) as android.bluetooth.BluetoothManager
+        mgr.adapter?.getRemoteDevice(deviceId)?.bondState ?: -1
+    } catch (e: Exception) { -1 }
+
     @JavascriptInterface
     fun write(reqId: String, deviceId: String, serviceUuid: String, charUuid: String, base64: String, withResponse: Boolean) {
         activity.ble.write(reqId, serviceUuid, charUuid, base64, withResponse)
@@ -81,8 +94,8 @@ class SerialBridge(private val activity: MainActivity) {
     fun open(reqId: String, portId: String, baudRate: Int) {
         activity.checkBatteryOptimization()
         activity.main.post {
-            // USB doesn't need Bluetooth permissions; location is still requested
-            // so GPS for the map works and the foreground service can start. But
+            // USB doesn't need Bluetooth permissions; location is requested only
+            // while packets are geotagged from the phone GPS (wantsPhoneLocation).
             // USB works without location, so a location denial must still connect
             // (just without GPS) rather than hang or reject.
             activity.ensureConnectPermissions(
@@ -117,8 +130,8 @@ class WifiBridge(private val activity: MainActivity) {
     fun open(reqId: String, host: String, port: Int) {
         activity.checkBatteryOptimization()
         activity.main.post {
-            // TCP needs no Bluetooth permission; location is still requested (as
-            // for USB) so the GPS map works and the foreground service can start.
+            // TCP needs no Bluetooth permission; location is requested only while
+            // packets are geotagged from the phone GPS (wantsPhoneLocation).
             // TCP works without location, so a denial must still connect.
             activity.ensureConnectPermissions(
                 includeBluetooth = false,

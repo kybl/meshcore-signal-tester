@@ -107,11 +107,28 @@ test('observations round-trip through build → parse', () => {
     assert.equal(rows[1].lon, null);
 });
 
-test('a missing rssi round-trips to the documented -100 default', () => {
+test('missing rssi/snr round-trip as null, and 0 is a real value', () => {
+    // Repeater-neighbour and Trace rows have no RSSI; a fabricated −100
+    // default used to appear on every export→import round trip.
     const obs = [{ time: Date.UTC(2026, 0, 1), type: 'X', hash: 'H', rawId: 'AA',
-                   snr: 1, rssi: null, rawHex: '', lat: null, lon: null }];
+                   snr: 1, rssi: null, rawHex: '', lat: null, lon: null },
+                 { time: Date.UTC(2026, 0, 1) + 1000, type: 'X', hash: 'H2', rawId: 'AA',
+                   snr: 0, rssi: 0, rawHex: '', lat: null, lon: null }];
     const { rows } = parseCsv(buildCsv({ observations: obs }));
-    assert.equal(rows[0].rssi, -100);
+    assert.equal(rows[0].rssi, null, 'empty rssi stays null');
+    assert.equal(rows[1].snr, 0, 'a real 0 survives');
+    assert.equal(rows[1].rssi, 0, 'a real 0 survives');
+});
+
+test('a sent row with a null snr does not abort the export', () => {
+    const csv = buildCsv({
+        observations: [{ time: Date.UTC(2026, 0, 1), type: 'X', hash: 'H', rawId: 'AA', snr: 1, rssi: -90 }],
+        sentRows: [{ time: Date.UTC(2026, 0, 1), snr: null, col: 'AA', label: 'x' }],
+    });
+    const { rows, sentRows } = parseCsv(csv);
+    assert.equal(rows.length, 1, 'the observation still exported');
+    assert.equal(sentRows.length, 1);
+    assert.equal(sentRows[0].remoteSnr, null);
 });
 
 test('contacts round-trip through the "# CONTACT," comment lines', () => {
@@ -139,9 +156,9 @@ test('sentRows are separated from observation rows on parse', () => {
     assert.equal(rows.length, 1);
     assert.equal(sentRows.length, 1);
     assert.equal(sentRows[0].repeater, '5E9F');
-    // Sent SNR is written to the uplink_snr column (the importer reads
-    // uplinkSnr ?? snr), so the plain snr column is empty (0) here.
-    assert.equal(sentRows[0].uplinkSnr, 4.25);
+    // Sent SNR is written to the uplink_snr column (parsed back as remoteSnr;
+    // the importer reads remoteSnr ?? snr), so the plain snr column is empty (0) here.
+    assert.equal(sentRows[0].remoteSnr, 4.25);
     assert.equal(sentRows[0].csvText, 'Repeater 1');   // label lands in the text column
 });
 

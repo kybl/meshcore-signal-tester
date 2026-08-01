@@ -8,8 +8,13 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- Bluetooth LE (Android 12+) -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- Bluetooth LE (Android 12+). neverForLocation: we never derive location
+         from BLE scans (GPS has its own permission), which lets scanning work
+         WITHOUT the location permission — needed for the "MeshCore device"
+         packet-position source, where phone location isn't requested at all. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Bluetooth LE (Android 11 and below) -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
@@ -22,6 +27,13 @@
          policy review. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Normal (install-time) permission that keeps the connectedDevice FGS
+         type eligible even when neither Bluetooth nor location permissions are
+         held — e.g. a WiFi/TCP capture with packet positions sourced from the
+         MeshCore device. Without an eligible prerequisite, startForeground
+         with that type is rejected on Android 14+. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <!-- Foreground service that keeps BLE + GPS alive while the screen is off -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
