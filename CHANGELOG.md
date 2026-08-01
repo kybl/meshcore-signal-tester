@@ -61,7 +61,7 @@
   position marker is now a blue cone.
 - **The dark theme is easier to read** — a neutral slate background instead of
   the old navy, with a brighter accent, clearer panel separation and brighter
-  SNR/RSSI values, so the colour comes from the data rather than the background.
+  SNR/RSSI values, so the color comes from the data rather than the background.
   The light theme is unchanged.
 - **Faster cold start** — the app preloads its whole module graph in parallel.
 - **Updated to target Android 16**, as required by Google Play.
@@ -278,10 +278,10 @@
 ### Changed
 
 - **Tidier header** — the connect/disconnect buttons and the status are grouped
-  into one colour-coded box (red when disconnected, green when connected).
+  into one color-coded box (red when disconnected, green when connected).
 - **Sound is easier to notice** — when the beep-on-each-packet sound is turned
   on, its control turns yellow so you can see at a glance that it's on.
-- **Clearer repeater colours** — brighter and easier to tell apart.
+- **Clearer repeater colors** — brighter and easier to tell apart.
 
 ### Fixed
 
