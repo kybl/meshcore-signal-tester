@@ -6,32 +6,37 @@
 
 :root {
     color-scheme: dark;
-    --bg-gutter:      #050E18;
-    --bg-content:     #091525;
-    --bg-header:      #0F2236;
-    --bg-box:         #14263A;
-    --bg-input:       #0A1A2C;
-    --bg-hover:       rgba(186, 212, 238, 0.12);
-    --bg-detail:      #0C1C2E;
-    --bg-detail-json: #081520;
-    --bg-table-head:  #1A3450;
-    --bg-sig-hover:   #1E3858;
-    --bg-sig-active:  #264468;
-    --bg-col-sel:     #204878;
-    --bg-row-sel:     #162840;
+    /* Neutral slate (GitHub-dark-ish): a near-grey with only a faint cool tint,
+       instead of the old saturated navy. Desaturating the surfaces lets the
+       coloured accents, repeater dots and SNR/RSSI values carry the colour. */
+    --bg-gutter:      #0A0E14;
+    --bg-content:     #0D1117;
+    --bg-header:      #12171F;
+    --bg-box:         #171D26;
+    --bg-input:       #0B0F15;
+    --bg-hover:       rgba(200, 214, 232, 0.10);
+    --bg-detail:      #11161E;
+    --bg-detail-json: #0A0E14;
+    --bg-table-head:  #212832;
+    --bg-sig-hover:   #212832;
+    --bg-sig-active:  #2B333F;
+    /* Selection highlights keep a slight blue tint so "selected" still reads as
+       an accent against the neutral surfaces. */
+    --bg-col-sel:     #24374F;
+    --bg-row-sel:     #182430;
     --bg-row-flash:   rgba(50, 130, 210, 0.45);
     --bg-cell-flash:  rgba(150, 220, 70, 0.35);
     --jh-key:  #c4b5fd; --jh-str:  #6ee7b7; --jh-num:  #93c5fd; --jh-bool: #fbbf24; --jh-null: #8aa0b4;
-    --text-primary:   #E2F0FF;
-    --text-secondary: #9EC8E8;
-    --text-muted:     #7EA8C6;
+    --text-primary:   #E6EDF3;
+    --text-secondary: #A9C2D6;
+    --text-muted:     #8299AE;
     /* Accent used as FOREGROUND (link/button text, active borders). Brighter
        than the fill accent (#667eea) so it clears ~7:1 on the dark panels;
        the solid-fill accent stays #667eea so white-on-accent buttons keep
        their contrast. Light theme overrides this back to #667eea below. */
     --accent-fg:      #8EA2FF;
-    --border:         #365A7C;
-    --border-light:   #24466A;
+    --border:         #30363D;
+    --border-light:   #21262D;
     --shadow:         rgba(0,0,0,0.55);
     --btn-primary-bg: #1565C0;
     --btn-primary-border: #1E88E5;
