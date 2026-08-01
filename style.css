@@ -2808,15 +2808,18 @@ html.light-theme .theme-toggle-btn:hover {
     display: flex;
     align-items: center;
     gap: 12px;
+    /* Wide, short bar rather than a narrow tall card: a fixed width gives the
+       message room to sit on one or two lines instead of wrapping into five. */
+    width: min(560px, calc(100vw - 24px));
     background: var(--bg-box);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 12px 16px;
+    padding: 10px 16px;
     text-align: left;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
     opacity: 0.96;
 }
-.loading-modal-text { min-width: 0; }
+.loading-modal-text { min-width: 0; flex: 1; }
 .loading-spinner {
     width: 22px;
     height: 22px;
