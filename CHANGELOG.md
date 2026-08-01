@@ -36,8 +36,9 @@
   line, which also covers quiet stretches between packets.
 - **A date is shown next to any time that is not from today**, so long
   multi-day captures are no longer ambiguous.
-- **A "Loading…" notice** appears while switching the Display window to a wide
-  range rebuilds the view over a large capture.
+- **A non-blocking "Loading…" notice** appears at the bottom of the screen
+  while switching the Display window to a wide range — or importing a large
+  CSV — rebuilds the view over a big capture; the page stays usable meanwhile.
 
 ### Changed
 
@@ -56,6 +57,10 @@
   repeaters, and the settings gear beside the fullscreen button), the SNR
   chart's Incoming/Outgoing toggles moved below the chart, and the device's
   position marker is now a blue cone.
+- **The dark theme is easier to read** — a neutral slate background instead of
+  the old navy, with a brighter accent, clearer panel separation and brighter
+  SNR/RSSI values, so the colour comes from the data rather than the background.
+  The light theme is unchanged.
 - **Faster cold start** — the app preloads its whole module graph in parallel.
 - **Updated to target Android 16**, as required by Google Play.
 

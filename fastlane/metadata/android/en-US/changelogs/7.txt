@@ -5,7 +5,7 @@ Version 1.3.0
 - Public-channel messages are decrypted; Trace packets show per-hop SNR; suspicious "zero-stuffed" frames are flagged.
 - RSSI chart draws the radio's measured noise floor; dates are shown next to times that aren't from today.
 - More persistent auto-reconnect on Android, with a "Pairing required" prompt; new per-packet knock-then-tone sound.
-- 3D-map controls moved onto the map; various layout tweaks.
+- 3D-map controls moved onto the map; the dark theme is easier to read; various layout tweaks.
 
 Fixed: packets that showed a "Path payload too short" error now decode; the packet table no longer scrolls back to the selected column on every packet; accidental chart/map resizing is less likely.
 
