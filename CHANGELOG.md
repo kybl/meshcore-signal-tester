@@ -27,7 +27,9 @@
   repeaters (not just Bluetooth), and it is appended to saved non-Bluetooth
   devices — e.g. "USB: 1A86:7523 (MyNode)".
 - **Public-channel messages are decrypted and shown**, via a new, much smaller
-  packet decoder.
+  packet decoder — a patched fork of `@michaelhart/meshcore-decoder`, maintained
+  at [github.com/kybl/meshcore-decoder](https://github.com/kybl/meshcore-decoder/tree/patched)
+  (branch `patched`).
 - **Trace packets show the per-hop signal (SNR) along the path** in the packet
   detail.
 - **Suspicious "zero-stuffed" frames are flagged** in the packet table and
