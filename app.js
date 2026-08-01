@@ -6574,9 +6574,12 @@ class MeshCoreApp {
 
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.
+        // Arm the loading toast: this rebuild is the same slow whole-capture
+        // re-pagination as a Display-window change, and lags just as much on a
+        // large import.
         if (this.model.ready) {
             await this.model.flush();
-            await this._refreshWideView();
+            await this._refreshWideView(true);
         }
 
         this._sortColumns();
