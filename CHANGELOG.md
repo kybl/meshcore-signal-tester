@@ -37,8 +37,9 @@
 - **A date is shown next to any time that is not from today**, so long
   multi-day captures are no longer ambiguous.
 - **A non-blocking "Loading…" notice** appears at the bottom of the screen
-  while switching the Display window to a wide range — or importing a large
-  CSV — rebuilds the view over a big capture; the page stays usable meanwhile.
+  while rebuilding the view over a big capture — switching the Display window
+  to a wide range, importing a large CSV, or resuming a large saved session;
+  the page stays usable meanwhile.
 
 ### Changed
 

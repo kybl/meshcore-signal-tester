@@ -5054,26 +5054,38 @@ class MeshCoreApp {
         try {
             this.contacts.restore(await this.model.getKV('contacts'));
         } catch (_) {}
-        await this._replayWindow();
-        // Not collecting on startup: freeze the chart at the newest stored point
-        // (+1 s) so restored history fills the view instead of being squashed
-        // against the left edge while the right edge tracks the wall clock. Use the
-        // newest time on DISK — _lastDataTime only reflects the recent RAM replay
-        // window, and restored data can be far older than that. Set before the
-        // first render and the wide-view rebuild so both use this window.
-        if (!this._collecting) {
-            try {
-                const span = await this.model.obsSpan(-Infinity, Infinity);
-                if (span) this.windows.frozenAt = span.max + 1000;
-            } catch (_) {}
+        // Resuming a data-bearing session (the "Load previously captured data?"
+        // prompt, or a silent crash-recover) replays the recent window and
+        // rebuilds every view off disk — slow for a big capture. Show the same
+        // non-blocking loading toast as a CSV import so the resume doesn't look
+        // frozen. Gated on totalRxCount > 0, which is only set when the opened DB
+        // actually holds data (0 on a fresh start, so nothing flashes there); the
+        // toast also has its own 250 ms arm delay for small captures.
+        const doneLoading = this.totalRxCount > 0 ? this._beginLoadingModal() : () => {};
+        try {
+            await this._replayWindow();
+            // Not collecting on startup: freeze the chart at the newest stored point
+            // (+1 s) so restored history fills the view instead of being squashed
+            // against the left edge while the right edge tracks the wall clock. Use the
+            // newest time on DISK — _lastDataTime only reflects the recent RAM replay
+            // window, and restored data can be far older than that. Set before the
+            // first render and the wide-view rebuild so both use this window.
+            if (!this._collecting) {
+                try {
+                    const span = await this.model.obsSpan(-Infinity, Infinity);
+                    if (span) this.windows.frozenAt = span.max + 1000;
+                } catch (_) {}
+            }
+            this._scheduleChartRender();
+            this._renderMsgTable();
+            this._renderRepTable();
+            this._updateStats();
+            this._updateMapPins();   // contacts restored above ⇒ show repeater markers
+            await this._refreshWideView();
+            this._updateEmptyState();
+        } finally {
+            doneLoading();
         }
-        this._scheduleChartRender();
-        this._renderMsgTable();
-        this._renderRepTable();
-        this._updateStats();
-        this._updateMapPins();   // contacts restored above ⇒ show repeater markers
-        this._refreshWideView();
-        this._updateEmptyState();
         // No periodic wide-view tick: charts, map and table page 0 are all kept
         // current in RAM (bucket/cell upserts + the live row tail); writes flush
         // themselves via the model's debounced flush. Disk is only read on view changes.
