@@ -1912,12 +1912,14 @@ html.light-theme .msg-filter-clear:hover {
         border-color: rgba(255,255,255,0.45);
     }
     html.light-theme .btn-show-all-repeaters:hover {
-        background: rgba(0,0,0,0.22);
+        background: rgba(0,0,0,0.32);
     }
 }
 html.light-theme .btn-show-all-repeaters {
     border-color: rgba(0,0,0,0.35);
-    background: rgba(0,0,0,0.12);
+    /* A touch more opaque than the original 0.12 so it separates a little more
+       from pale tiles, but still clearly translucent. */
+    background: rgba(0,0,0,0.22);
     color: #0f1a2e;
     text-shadow: none;
 }
@@ -2417,12 +2419,12 @@ html.light-theme .map-overlay-buttons .map-location-status {
 }
 .map-settings-btn:hover { background: rgba(16,32,48,0.66); border-color: rgba(255,255,255,0.45); }
 html.light-theme .map-settings-btn {
-    background: rgba(0,0,0,0.12);
+    background: rgba(0,0,0,0.22);
     border-color: rgba(0,0,0,0.35);
     color: #0f1a2e;
     text-shadow: none;
 }
-html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.22); border-color: rgba(0,0,0,0.6); }
+html.light-theme .map-settings-btn:hover { background: rgba(0,0,0,0.32); border-color: rgba(0,0,0,0.6); }
 
 .map-settings-panel {
     position: absolute;
