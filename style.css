@@ -9,7 +9,7 @@
     --bg-gutter:      #050E18;
     --bg-content:     #091525;
     --bg-header:      #0F2236;
-    --bg-box:         #102030;
+    --bg-box:         #14263A;
     --bg-input:       #0A1A2C;
     --bg-hover:       rgba(186, 212, 238, 0.12);
     --bg-detail:      #0C1C2E;
@@ -24,9 +24,14 @@
     --jh-key:  #c4b5fd; --jh-str:  #6ee7b7; --jh-num:  #93c5fd; --jh-bool: #fbbf24; --jh-null: #8aa0b4;
     --text-primary:   #E2F0FF;
     --text-secondary: #9EC8E8;
-    --text-muted:     #5E90AC;
-    --border:         #2A4E6E;
-    --border-light:   #1E3C58;
+    --text-muted:     #7EA8C6;
+    /* Accent used as FOREGROUND (link/button text, active borders). Brighter
+       than the fill accent (#667eea) so it clears ~7:1 on the dark panels;
+       the solid-fill accent stays #667eea so white-on-accent buttons keep
+       their contrast. Light theme overrides this back to #667eea below. */
+    --accent-fg:      #8EA2FF;
+    --border:         #365A7C;
+    --border-light:   #24466A;
     --shadow:         rgba(0,0,0,0.55);
     --btn-primary-bg: #1565C0;
     --btn-primary-border: #1E88E5;
@@ -52,6 +57,7 @@ html.light-theme {
     --text-primary:   #0B1D2E;
     --text-secondary: #264A6A;
     --text-muted:     #506E85;
+    --accent-fg:      #667eea;
     --border:         #9BBAD4;
     --border-light:   #C8DEED;
     --shadow:         rgba(11, 29, 46, 0.15);
@@ -419,7 +425,7 @@ html:not(.light-theme) .btn-connect:disabled {
     -webkit-appearance: none;
     appearance: none;
     background: var(--bg-box);
-    color: #667eea;
+    color: var(--accent-fg);
     border: 1.5px solid var(--border);
     padding: 5px 12px;
     border-radius: 6px;
@@ -1004,7 +1010,7 @@ html:not(.light-theme) .btn-connect:disabled {
 
 .saved-btn {
     background: var(--bg-box);
-    color: #667eea;
+    color: var(--accent-fg);
     border: 1px solid var(--border);
     border-right: none;
     border-radius: 5px 0 0 5px;
@@ -1301,7 +1307,7 @@ html:not(.light-theme) .btn-connect:disabled {
 .rep-filter-input.has-value,
 .msg-filter-input.has-value {
     background: var(--bg-input);
-    border-color: #667eea;
+    border-color: var(--accent-fg);
 }
 
 .chart-tooltip {
@@ -1425,7 +1431,7 @@ html.light-theme .batt-icon {
     -webkit-appearance: none;
     appearance: none;
     background: var(--bg-box);
-    color: #667eea;
+    color: var(--accent-fg);
     border: 1.5px solid var(--border);
     border-radius: 6px;
     font-size: 12px;
