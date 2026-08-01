@@ -6271,6 +6271,25 @@ class MeshCoreApp {
         const useDisk = this.model.ready;
         if (this.model.recentSize === 0 && !useDisk) return;
 
+        // Building the CSV for a big capture (reading every observation off
+        // disk, then serialising) can take several seconds before the save
+        // dialog even appears — flip the button to "Exporting…" so the click
+        // doesn't feel dead. Yield once so the new label actually paints before
+        // the synchronous build blocks the main thread. try/finally restores it
+        // across every exit (SAF picker, save-picker, cancel, fallback, throw).
+        const btn = this.exportCsvBtn;
+        const prevText = btn?.textContent;
+        const prevDisabled = btn?.disabled ?? false;
+        if (btn) { btn.textContent = 'Exporting…'; btn.disabled = true; }
+        await new Promise(r => setTimeout(r, 0));
+        try {
+            await this._buildAndSaveCsv(useDisk);
+        } finally {
+            if (btn) { btn.textContent = prevText; btn.disabled = prevDisabled; }
+        }
+    }
+
+    async _buildAndSaveCsv(useDisk) {
         // Flush any buffered writes so the export reflects everything captured.
         if (useDisk) await this.model.flush();
 
