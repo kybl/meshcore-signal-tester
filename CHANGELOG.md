@@ -7,6 +7,15 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
+## [1.3.1] - 2026-08-11
+
+### Changed
+
+- **The online radio-preset list is now consulted only when the connected
+  radio reports settings the built-in table doesn't recognise** (and then at
+  most once a day). Previously the app refreshed the list up to once a day on
+  every start — now most installs never make that network request at all.
+
 ## [1.3.0] - 2026-08-01
 
 ### Added

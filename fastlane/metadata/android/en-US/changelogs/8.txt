@@ -1,0 +1,3 @@
+Version 1.3.1
+
+- The online radio-preset list is now fetched only when the connected radio reports settings the built-in table doesn't know — most installs never make that network request at all.

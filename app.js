@@ -31,7 +31,7 @@ import * as ChartZoom from './chart-zoom.js?v=1';
 // Custom channel keys can be added the same way: MeshCoreDecoder.addChannelKey(hexKey).
 MeshCoreDecoder.addChannelKey(MeshCoreDecoder.PUBLIC_CHANNEL_KEY);
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
 // burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow

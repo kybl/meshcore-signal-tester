@@ -30,8 +30,8 @@ android {
         //   • fastlane/metadata/android/en-US/changelogs/<versionCode>.txt (new file)
         // versionCode is a separate monotonic integer (Play/IzzyOnDroid reject a
         // non-increasing one) and also names the fastlane changelog file above.
-        versionCode appVersionCode ? appVersionCode.toInteger() : 7
-        versionName appVersionName ?: "1.3.0"   // keep == app.js APP_VERSION
+        versionCode appVersionCode ? appVersionCode.toInteger() : 8
+        versionName appVersionName ?: "1.3.1"   // keep == app.js APP_VERSION
     }
 
     signingConfigs {
