@@ -291,7 +291,7 @@ class MeshCoreApp {
         this._setupControls();
         this._setupFiltersAndNotices();
         this._initHelpSystem();
-        this._refreshRadioPresets();   // async, fire-and-forget (cache + daily re-fetch)
+        this._loadCachedPresets();     // cache only — network happens on a preset miss
         this._initWifiModal();
         this._initSignalMap();
         this._initDebug();
@@ -2805,16 +2805,28 @@ class MeshCoreApp {
         this._updateDeviceLocationRefresh();
     }
 
-    // Keep the preset table fresh: adopt the cached copy immediately, then at
-    // most once a day re-fetch the official list (the same API the MeshCore
-    // app and config.meshcore.io load from). Failures are silent — the cache
-    // and, beneath it, the baked-in table in radio-presets.js keep working
-    // offline. On an update, re-run the current config through the matcher so
-    // an already-shown preset name reflects the new table.
-    async _refreshRadioPresets() {
+    // Adopt a previously fetched preset table at startup — no network here.
+    // Beneath the cache, the baked-in table in radio-presets.js keeps working
+    // offline; the online list (the same API the MeshCore app and
+    // config.meshcore.io load from) is consulted only by _fetchPresetsOnMiss.
+    _loadCachedPresets() {
         const cached = Store.json('radioPresets', null);
         if (cached?.list) setActivePresets(cached.list);
-        if (cached && Date.now() - (cached.at || 0) < 24 * 3600 * 1000) return;
+    }
+
+    // Refresh the preset table from the official config API — called ONLY when
+    // a connected radio reports settings the active table doesn't recognise
+    // (fetch-on-miss). Most radios match the built-in/cached table, so most
+    // installs never make this request at all (keeps the app friendly to
+    // offline/F-Droid use); a genuinely new community preset is picked up the
+    // first time a radio using it connects. At most one attempt per app session
+    // AND per 24 h (persisted, success or not), so a dead API isn't hammered.
+    async _fetchPresetsOnMiss() {
+        if (this._presetFetchStarted) return;
+        const cached = Store.json('radioPresets', null);
+        if (cached && Date.now() - (cached.tryAt || cached.at || 0) < 24 * 3600 * 1000) return;
+        this._presetFetchStarted = true;
+        Store.set('radioPresets', JSON.stringify({ ...(cached || {}), tryAt: Date.now() }));
         try {
             const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
                 ? AbortSignal.timeout(10000) : undefined;   // older WebViews lack .timeout
@@ -2822,8 +2834,10 @@ class MeshCoreApp {
             if (!res.ok) return;
             const list = parseApiPresets(await res.json());
             if (!list) return;
-            Store.set('radioPresets', JSON.stringify({ at: Date.now(), list }));
+            Store.set('radioPresets', JSON.stringify({ at: Date.now(), tryAt: Date.now(), list }));
             setActivePresets(list);
+            // Re-run the remembered config through the matcher — the whole point
+            // of the fetch was that it didn't match the old table.
             const cfg = this._radioConfig;
             if (cfg) { this._radioConfig = null; this._setRadioConfig(cfg); }
         } catch (_) { /* offline / API down — fallback table stays active */ }
@@ -2843,6 +2857,10 @@ class MeshCoreApp {
         if (!cfg) { el.classList.add('hidden'); el.textContent = ''; return; }
         const raw = formatRadioConfig(cfg);
         const titles = matchRadioPreset(cfg);
+        // Unknown settings → maybe the community preset list gained an entry
+        // since this build/cache; consult the online list (guarded, at most
+        // once a day). On success it re-runs this method with the new table.
+        if (!titles.length) this._fetchPresetsOnMiss();
         el.textContent = titles.length ? `📻 ${titles.join(' / ')}` : `📻 ${raw}`;
         el.title = titles.length
             ? `Radio preset: ${titles.join(' / ')} (${raw})`
