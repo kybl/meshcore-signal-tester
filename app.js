@@ -649,6 +649,14 @@ class MeshCoreApp {
                 Store.set('theme', isLight ? 'light' : 'dark');
                 this._renderCharts();
                 this.signalMap?.applyTheme();
+                // The SNR/RSSI cell colours are INLINE styles baked by
+                // _signalColor at render time with the then-current theme's
+                // lightness — nothing re-resolves them on a theme flip, so
+                // without a re-render the old theme's colours sit on the new
+                // background (dark-theme values are ~1.3:1 on white; found by
+                // the F-Droid on-device review). Rebuild both tables.
+                this._renderRepTable();
+                this._renderMsgTable();
             });
         }
 

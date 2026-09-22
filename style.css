@@ -6,6 +6,16 @@
 
 :root {
     color-scheme: dark;
+    /* Safe-area insets. In a browser env() supplies them directly; the Android
+       app instead pushes the real system-bar/cutout values into these variables
+       as inline styles from native code (MainActivity's insets listener),
+       because Android's WebView resolves env(safe-area-inset-*) to 0 and the
+       header then renders under the status bar. Always pad with var(--inset-*),
+       never with env() directly. */
+    --inset-top:    env(safe-area-inset-top, 0px);
+    --inset-right:  env(safe-area-inset-right, 0px);
+    --inset-bottom: env(safe-area-inset-bottom, 0px);
+    --inset-left:   env(safe-area-inset-left, 0px);
     /* Neutral slate (GitHub-dark-ish): a near-grey with only a faint cool tint,
        instead of the old saturated navy. Desaturating the surfaces lets the
        coloured accents, repeater dots and SNR/RSSI values carry the colour. */
@@ -89,8 +99,8 @@ body {
        browsers and in portrait, so this is a no-op there). Top/bottom safe-area
        is handled on the header and footer so their backgrounds can still bleed
        under the bars. */
-    padding-left: env(safe-area-inset-left, 0px);
-    padding-right: env(safe-area-inset-right, 0px);
+    padding-left: var(--inset-left);
+    padding-right: var(--inset-right);
     color: var(--text-primary);
     transform-origin: top left;
     transition: transform 0.25s ease, width 0.25s ease;
@@ -130,7 +140,7 @@ html.ui-larger body {
     padding: 14px 16px 20px;
     /* Keep the footer text above the navigation bar while its background bleeds
        under it (edge-to-edge). No-op where env() is 0. */
-    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(20px + var(--inset-bottom));
     font-size: 12px;
     color: var(--text-muted);
 }
@@ -163,7 +173,7 @@ header {
        hidden and the page still scrolls to the very top, while the header's
        background bleeds up under the (transparent) status bar. No-op in browsers
        where env() is 0. */
-    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+    padding-top: calc(8px + var(--inset-top));
     margin-bottom: 0;
     display: flex;
     flex-direction: column;
@@ -1546,8 +1556,8 @@ header .help-icon.active {
     /* Top-aligned modal: keep the box clear of the status/navigation bars in
        edge-to-edge (env() is 0 on web). */
     padding: 16px;
-    padding-top: calc(16px + env(safe-area-inset-top, 0px));
-    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    padding-top: calc(16px + var(--inset-top));
+    padding-bottom: calc(16px + var(--inset-bottom));
     overflow: hidden;
     box-sizing: border-box;
 }
@@ -1617,7 +1627,7 @@ header .help-icon.active {
        includes the area under the status/navigation bars, so without this the
        modal overflows under the nav bar and its bottom can't be scrolled into
        view. env() is 0 on web, so the browser behaviour is unchanged. */
-    max-height: calc(100vh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100vh - 32px - var(--inset-top) - var(--inset-bottom));
     overflow-y: auto;
     box-sizing: border-box;
 }
@@ -2477,8 +2487,8 @@ td.col-dim { opacity: 0.25; }
        longer inherits the body font — set it explicitly. */
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     /* Clear the status bar / side cutout in edge-to-edge (env() is 0 on web). */
-    top: calc(16px + env(safe-area-inset-top, 0px));
-    right: calc(16px + env(safe-area-inset-right, 0px));
+    top: calc(16px + var(--inset-top));
+    right: calc(16px + var(--inset-right));
     z-index: 200;
     background: var(--bg-box);
     border: 1px solid var(--border);
@@ -2519,7 +2529,7 @@ td.col-dim { opacity: 0.25; }
     /* AFTER the shorthand (which would otherwise reset it): keep the bar's text
        clear of the status bar in edge-to-edge, its background still bleeding
        under it. env() is 0 on the web, so this is a no-op there. */
-    padding-top: calc(9px + env(safe-area-inset-top, 0px));
+    padding-top: calc(9px + var(--inset-top));
     box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
 }
 .notice-topbar .corner-notice-line1 { color: #fff; font-weight: 700; }
@@ -2540,7 +2550,7 @@ td.col-dim { opacity: 0.25; }
 /* "Show more" stats flow horizontally in the bar instead of stacking */
 .notice-topbar .cn-stats { flex-direction: row; flex-wrap: wrap; gap: 2px 14px; }
 /* Keep the selection corner box clear of the bar when both are visible */
-.notice-topbar:not(.hidden) ~ #selNotice { top: calc(60px + env(safe-area-inset-top, 0px)); }
+.notice-topbar:not(.hidden) ~ #selNotice { top: calc(60px + var(--inset-top)); }
 
 .corner-notice-line1 {
     display: flex;
@@ -2798,7 +2808,7 @@ html.light-theme .theme-toggle-btn:hover {
 .loading-modal {
     position: fixed;
     left: 50%;
-    bottom: max(20px, env(safe-area-inset-bottom));
+    bottom: max(20px, var(--inset-bottom));
     transform: translateX(-50%);
     z-index: 10001;
     max-width: calc(100vw - 32px);

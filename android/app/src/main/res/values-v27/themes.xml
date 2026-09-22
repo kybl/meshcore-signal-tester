@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 27+: same theme as values/themes.xml plus the display-cutout mode
+     (the attribute doesn't exist on API 26). Keep both files in sync. -->
+<resources>
+    <style name="Theme.MeshCore" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/brand_dark</item>
+        <item name="android:statusBarColor">@color/brand_dark</item>
+        <item name="android:navigationBarColor">@color/brand_dark</item>
+        <!-- Edge-to-edge: draw into a display cutout's area too; the insets
+             listener in MainActivity keeps the page content clear of it.
+             Without this, notched devices letterbox the page in landscape. -->
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

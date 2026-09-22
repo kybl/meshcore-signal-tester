@@ -68,13 +68,21 @@ class MainActivity : AppCompatActivity() {
         private set
 
     private lateinit var webView: WebView
-    // Holds the WebView and carries the system-bar / cutout insets as padding
-    // (padding a WebView directly is unreliable — it leaves content under the
-    // bars and can make the page wider than the viewport). The WebView fills
-    // this container, so insetting the container resizes the WebView itself.
+    // Holds the WebView, which fills it edge-to-edge; the system-bar / cutout
+    // insets are NOT applied as padding here — they're pushed into the page as
+    // CSS variables instead (see the insets listener in onCreate).
     private lateinit var rootContainer: FrameLayout
     lateinit var jsApi: JsApi
         private set
+
+    // Latest window insets as a JS snippet setting --inset-* CSS variables.
+    // Kept so it can be re-applied after every page (re)load — the inline
+    // styles it sets live in the DOM and vanish with it.
+    private var insetsJs: String? = null
+
+    private fun pushInsetsToPage() {
+        insetsJs?.let { webView.evaluateJavascript(it, null) }
+    }
 
     private val appUrl = "https://appassets.androidplatform.net/assets/www/index.html"
 
@@ -233,11 +241,14 @@ class MainActivity : AppCompatActivity() {
         // True edge-to-edge: the WebView fills the whole window, including behind
         // the (transparent) status and navigation bars. We deliberately do NOT pad
         // the container with the system-bar insets — instead the web app pads its
-        // own content with CSS env(safe-area-inset-*) (the page sets
-        // viewport-fit=cover). Not consuming the insets here is exactly what makes
-        // those CSS insets non-zero, so the page background bleeds under the bars
-        // while its content (header, footer) stays clear of them. Status-bar icon
-        // colour is driven from the web theme via ScreenBridge.setLightSystemBars.
+        // own content so the page background bleeds under the bars while its
+        // content (header, footer) stays clear of them. The page CANNOT rely on
+        // CSS env(safe-area-inset-*) for that: Android's WebView resolves those
+        // to 0 (observed on WebView 118 during F-Droid review — the header
+        // rendered under the clock). So the real inset values are pushed into
+        // the page as CSS variables from the insets listener below, and the
+        // stylesheet reads var(--inset-*) with env() as the browser fallback.
+        // Status-bar icon colour is driven via ScreenBridge.setLightSystemBars.
         rootContainer = FrameLayout(this)
         rootContainer.addView(
             webView,
@@ -251,6 +262,23 @@ class MainActivity : AppCompatActivity() {
         // transparent in edge-to-edge — but this keeps older versions consistent).
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        // Feed the system-bar + cutout insets to the page as CSS variables (see
+        // the comment above). Re-fires on rotation and when immersive fullscreen
+        // hides the bars (insets collapse to 0 → page fills the whole screen).
+        // Not consumed, so a WebView whose env() DOES work stays consistent too.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val d = resources.displayMetrics.density
+            fun cssPx(px: Int) = kotlin.math.ceil(px / d).toInt()
+            insetsJs = "document.documentElement.style.setProperty('--inset-top','${cssPx(bars.top)}px');" +
+                "document.documentElement.style.setProperty('--inset-right','${cssPx(bars.right)}px');" +
+                "document.documentElement.style.setProperty('--inset-bottom','${cssPx(bars.bottom)}px');" +
+                "document.documentElement.style.setProperty('--inset-left','${cssPx(bars.left)}px');"
+            pushInsetsToPage()
+            insets
+        }
         setContentView(rootContainer)
 
         jsApi = JsApi(webView)
@@ -317,6 +345,14 @@ class MainActivity : AppCompatActivity() {
                 return assetLoader.shouldInterceptRequest(request.url)
             }
 
+            // The --inset-* CSS variables are inline DOM state — re-apply them
+            // after every (re)load, or the header sits under the status bar
+            // again until the next insets change.
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                pushInsetsToPage()
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url
                 if (url.host == "appassets.androidplatform.net") return false
@@ -377,6 +413,39 @@ class MainActivity : AppCompatActivity() {
                     .setMessage(message)
                     .setView(input)
                     .setPositiveButton("OK") { _, _ -> result.confirm(input.text.toString()) }
+                    .setNegativeButton("Cancel") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }
+                    .show()
+                return true
+            }
+
+            // alert()/confirm() without a handler render as a bare WebView dialog
+            // headed 'The page at "https://appassets.androidplatform.net" says:',
+            // which reads like something is broken. Native dialogs instead, same
+            // pattern as onJsPrompt above.
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult
+            ): Boolean {
+                AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setPositiveButton("OK") { _, _ -> result.confirm() }
+                    .setOnCancelListener { result.confirm() }   // dismiss == acknowledged
+                    .show()
+                return true
+            }
+
+            override fun onJsConfirm(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult
+            ): Boolean {
+                AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setPositiveButton("OK") { _, _ -> result.confirm() }
                     .setNegativeButton("Cancel") { _, _ -> result.cancel() }
                     .setOnCancelListener { result.cancel() }
                     .show()
