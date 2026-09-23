@@ -176,6 +176,61 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await ctx.close();
 }
 
+// ---- RX sound recovers from a stuck AudioContext -----------------------------
+// Android can leave the context 'running' with a frozen clock for good; the
+// beeps (and the disconnect alarm) used to stay silent until an app restart.
+{
+    const ctx = await browser.newContext();
+    await ctx.addInitScript(() => {
+        window.__audio = { made: [], freeze: false, startSuspended: false };
+        class FakeParam { setValueAtTime() {} exponentialRampToValueAtTime() {} cancelScheduledValues() {} set value(v) {} }
+        class FakeNode { constructor() { this.gain = new FakeParam(); this.frequency = new FakeParam(); this.Q = new FakeParam(); } connect() {} }
+        class FakeCtx {
+            constructor() {
+                this.id = window.__audio.made.length; this.started = 0; this.frozenAt = null;
+                this.state = window.__audio.startSuspended ? 'suspended' : 'running';
+                this.destination = new FakeNode(); window.__audio.made.push(this);
+            }
+            get currentTime() {
+                const t = performance.now() / 1000;
+                if (window.__audio.freeze) { this.frozenAt ??= t; return this.frozenAt; }
+                return t;
+            }
+            resume() { return Promise.resolve(); }   // no-op, like a stuck context
+            close() { this.state = 'closed'; return Promise.resolve(); }
+            createGain() { return new FakeNode(); }
+            createBiquadFilter() { return new FakeNode(); }
+            createOscillator() { const n = new FakeNode(); n.start = () => { this.started++; }; n.stop = () => {}; return n; }
+        }
+        window.AudioContext = FakeCtx;
+    });
+    const { page, errors } = await openPage(ctx, base);
+    const beep = () => page.evaluate(() => window.__mcApp._playRxSound(3, true));
+    const st = () => page.evaluate(() => window.__audio.made.map(c => ({ id: c.id, state: c.state, started: c.started })));
+    await page.evaluate(() => { const s = document.getElementById('soundSelect'); s.value = 'short'; });
+    await beep(); await page.waitForTimeout(300); await beep();
+    let a = await st();
+    check('beeps play on a healthy context', a.length === 1 && a[0].started > 0, JSON.stringify(a));
+    await page.evaluate(() => { window.__audio.freeze = true; });
+    await beep();                                   // clock sampled (frozen from here on)
+    await page.waitForTimeout(2300);
+    await beep();                                   // >2 s frozen → stall
+    await page.evaluate(() => { window.__audio.freeze = false; });
+    a = await st();
+    check('a frozen context is replaced and the beep plays on a fresh one',
+        a.length === 2 && a[0].state === 'closed' && a[1].started > 0, JSON.stringify(a));
+    await page.waitForTimeout(300); await beep();
+    a = await st();
+    check('…and later beeps keep playing on it', a.length === 2 && a[1].started >= 12, JSON.stringify(a));
+    // A context that never ran (autoplay-blocked / still starting) is not churned.
+    await page.evaluate(() => { window.__mcApp._dropAudioContext(); window.__audio.startSuspended = true; });
+    await beep(); await beep(); await beep();
+    a = await st();
+    check('a never-started context is not replaced over and over', a.length === 3 && a[2].state === 'suspended', JSON.stringify(a));
+    check('no page errors (sound)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);

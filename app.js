@@ -5968,12 +5968,11 @@ class MeshCoreApp {
 
     // --- Sound ---
 
-    _playRxSound(snr, isNewHash = false) {
+    _playRxSound(snr, isNewHash = false, retried = false) {
         const mode = this.soundSelect?.value ?? 'off';
         // 'disconnect' = alarm on drop only, no per-packet beep (see _playDisconnectAlarm).
         if (mode === 'off' || mode === 'disconnect') return;
-        if (!this.audioCtx) this.audioCtx = new AudioContext();
-        const ctx = this.audioCtx;
+        const ctx = this._audioContext();
         // Only schedule when the context is actually RUNNING — not merely when the
         // page is visible. Backgrounding doesn't suspend audio right away, so beeps
         // keep playing for a while (which is fine); gating on document.hidden would
@@ -5982,7 +5981,10 @@ class MeshCoreApp {
         // resumes — and all the ones queued while suspended would blast at once on
         // return. So while it isn't running, ask it to resume for next time and skip
         // this beep. (Only sound is gated; capture is unaffected.)
-        if (ctx.state !== 'running') { ctx.resume?.(); return; }
+        if (ctx.state !== 'running') {
+            if (this._audioStuck() && !retried) this._playRxSound(snr, isNewHash, true);
+            return;
+        }
         const now = ctx.currentTime;
 
         // Deep sleep (Doze) can stall the audio renderer while state still
@@ -5997,9 +5999,11 @@ class MeshCoreApp {
             this._audioAnchor = { audio: now, wall };   // clock is moving
         } else if (wall - this._audioAnchor.wall > 2000) {
             this._audioStalled = true;
-            ctx.resume?.();
+            if (this._audioStuck() && !retried) this._playRxSound(snr, isNewHash, true);
             return;
         }
+        this._audioStuckSince = 0;   // playing normally again
+        this._audioCtxRan = true;
 
         // Master gain — the mute point for _muteAudioBurst (the disconnect
         // alarm bypasses it on purpose; it must never be swallowed).
@@ -6084,6 +6088,44 @@ class MeshCoreApp {
         bell(baseFreq * Math.pow(2, (snr ?? 0) / 10), isNewHash ? onset : 0, ring, 1.0);
     }
 
+    // The shared AudioContext, created on first use.
+    _audioContext() {
+        if (!this.audioCtx) { this.audioCtx = new AudioContext(); this._audioCtxRan = false; }
+        return this.audioCtx;
+    }
+
+    // Called when a beep can't play (context not running, or its clock
+    // frozen). In the background that's the OS suspending audio (Doze etc.):
+    // ask for a resume and skip the beep — scheduling onto the frozen clock
+    // would burst out on wake. In the FOREGROUND, though, Android can leave
+    // the context stuck for good (audio output re-routed, audio focus lost,
+    // after a long Doze): state says 'running' yet currentTime never moves,
+    // resume() is a no-op on a running context, and every later beep — and
+    // the disconnect alarm — was dropped until the app restarted. So when
+    // visible, discard it and report true: the caller retries once on a fresh
+    // context (closing the old one also drops any beeps queued on its frozen
+    // clock, so they can't burst out later).
+    _audioStuck() {
+        const ctx = this.audioCtx;
+        if (!ctx) return false;
+        // Only a context that has played before is replaced: a fresh one may
+        // still be starting up, or be held by the browser's autoplay policy
+        // until a tap — replacing it would just churn new contexts.
+        if (!document.hidden && this._audioCtxRan) { this._dropAudioContext(); return true; }
+        ctx.resume?.()?.catch?.(() => {});
+        if (!this._audioStuckSince) this._audioStuckSince = performance.now();
+        return false;
+    }
+
+    _dropAudioContext() {
+        try { this.audioCtx?.close?.()?.catch?.(() => {}); } catch (_) {}
+        this.audioCtx = null;
+        this._audioMaster = null;
+        this._audioAnchor = null;
+        this._audioStalled = false;
+        this._audioStuckSince = 0;
+    }
+
     // Belt to the stall detector's braces: when a stall WAS detected (some
     // beeps may have piled onto the frozen clock before the detector engaged),
     // mute the RX-sound master for the first 2 s after the renderer wakes, so
@@ -6109,9 +6151,11 @@ class MeshCoreApp {
         const mode = this.soundSelect?.value ?? 'off';
         if (mode === 'off') return;
         try {
-            if (!this.audioCtx) this.audioCtx = new AudioContext();
-            const ctx = this.audioCtx;
-            if (ctx.state === 'suspended') ctx.resume();
+            // The alarm must not be swallowed by a context the RX beeps already
+            // found stuck — start from a fresh one then (see _audioStuck).
+            if (this._audioStuckSince) this._dropAudioContext();
+            const ctx = this._audioContext();
+            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
             const now = ctx.currentTime;
             const freqs = [880, 440, 880, 440, 880, 440];
             const dur = 0.16, gap = 0.08;   // gap between tones → "interrupted"
@@ -7066,7 +7110,7 @@ document.addEventListener('visibilitychange', () => {
         // the frozen-clock detector engaged — _muteAudioBurst silences those
         // for the first moments after the wake, so resume can't unleash them.
         monitor?._muteAudioBurst?.();
-        monitor?.audioCtx?.resume?.();
+        monitor?.audioCtx?.resume?.()?.catch?.(() => {});
         // Returned to a session the phone silently dropped in the background?
         // Retry now rather than waiting for the next reconnect tick / BT event.
         monitor?._maybeReconnect?.();
