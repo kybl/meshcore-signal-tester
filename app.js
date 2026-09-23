@@ -6746,11 +6746,24 @@ class MeshCoreApp {
         // rebuild below: charts.rebuildBase buckets over [from, frozen-now], so if
         // the freeze still held an older value the most recent imported points
         // would be truncated from the base layer and only reappear on a zoom.
-        // Never rewind an already-newer frozen clock: importing an OLDER archive
-        // into a session that holds newer paused/restored data must not truncate
-        // that newer data out of the base layer (which buckets up to frozen-now).
+        // Freeze at the NEWEST data in the session — this import or anything
+        // already there — never beyond it: importing an OLDER archive into a
+        // session that holds newer data must not truncate that newer data out of
+        // the base layer, but the freeze must not sit at the page-load time
+        // either (the constructor's default), or a finite Display window drops
+        // the whole import. Same rule as a resumed session (_initStore).
         const lastTime = rows.length ? rows.reduce((m, r) => Math.max(m, r.time), 0) : 0;
-        if (!this._collecting && lastTime) this.windows.frozenAt = Math.max(this.windows.frozenAt ?? 0, lastTime + 1_000);
+        if (!this._collecting && lastTime) {
+            let newest = Math.max(lastTime, this._lastDataTime || 0);
+            if (this.model.ready) {
+                await this.model.flush();
+                try {
+                    const span = await this.model.obsSpan(-Infinity, Infinity);
+                    if (span) newest = Math.max(newest, span.max);
+                } catch (_) {}
+            }
+            this.windows.frozenAt = newest + 1_000;
+        }
 
         // Persist the import to disk and rebuild the downsampled "All" overlay,
         // so imported (historical) data survives the RAM-window prune and shows.

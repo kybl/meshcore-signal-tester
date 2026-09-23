@@ -25,7 +25,14 @@ an agent/local tool, not a shipped artifact.
 cd tools/browser-check
 npm i                 # installs playwright-core (no browser download)
 node check.mjs
+node fixes-check.mjs  # targeted checks for specific past bugs (see below)
 ```
+
+`fixes-check.mjs` pins behaviour fixed in 1.3.2 that needs a real page: script
+in an imported CSV never executes, truncated rows are skipped and reported, a
+duplicated tab gets its own session while a plain reload keeps its own,
+yesterday's data stays visible with a 1 h Display window (import and resume),
+discover rows keep their type, and a theme flip recolours the SNR/RSSI cells.
 
 Chromium is auto-detected from `PLAYWRIGHT_BROWSERS_PATH` or `/opt/pw-browsers`
 (the pre-provisioned build). The script starts its own static server, so no
