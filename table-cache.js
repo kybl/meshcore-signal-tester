@@ -16,6 +16,13 @@
 // (CaptureModel) supplies both storage sides. Unit-testable with stubs — see
 // test/table-cache.test.js.
 
+// Put `entry` under `key` unless a stronger-RSSI observation already sits
+// there — the table keeps the strongest reception per (packet, column).
+function keepStrongest(repeaters, key, entry) {
+    const cur = repeaters.get(key);
+    if (!cur || (entry.rssi != null && (cur.rssi == null || entry.rssi > cur.rssi))) repeaters.set(key, entry);
+}
+
 export class TableCache {
     #model;
     #deps;                       // { resolveCol, narrowFn, narrowKey, displayCutoff }
@@ -157,6 +164,47 @@ export class TableCache {
     // and the rebuilt caches can't leave a gap (overlap is safe — rows dedupe
     // by hash in the render merge).
     rewindCacheAt(t) { if (t < this.#cacheAt) this.#cacheAt = t; }
+
+    // The page snapshot's column keys were resolved when the page loaded. When
+    // the column model renames a column (a longer id promotes "5E" → "5E9F")
+    // or splits one (a collision label appears), re-key the snapshot the same
+    // way the app re-keys its RAM window — otherwise the stale key renders as
+    // a second column for the same repeater until the next page load.
+    renameColumn(oldKey, newKey) {
+        for (const d of this.#pageData.values()) {
+            const e = d.repeaters.get(oldKey);
+            if (!e) continue;
+            d.repeaters.delete(oldKey);
+            keepStrongest(d.repeaters, newKey, e);
+        }
+        this.#rekeyCounts(oldKey, newKey);
+    }
+
+    splitColumn(existingCol, collisionKey, movesToCollision) {
+        let moved = false;
+        for (const d of this.#pageData.values()) {
+            const e = d.repeaters.get(existingCol);
+            if (!e || !movesToCollision(e.rawId)) continue;
+            d.repeaters.delete(existingCol);
+            keepStrongest(d.repeaters, collisionKey, e);
+            moved = true;
+        }
+        if (moved && this.#page === 0) this.#recountFirstPage();
+    }
+
+    #rekeyCounts(oldKey, newKey) {
+        if (this.#page === 0) { this.#recountFirstPage(); return; }
+        const c = this.#firstPageColCounts.get(oldKey);
+        if (c == null) return;
+        this.#firstPageColCounts.delete(oldKey);
+        this.#firstPageColCounts.set(newKey, (this.#firstPageColCounts.get(newKey) ?? 0) + c);
+    }
+
+    #recountFirstPage() {
+        const counts = new Map();
+        for (const d of this.#pageData.values()) for (const col of d.repeaters.keys()) counts.set(col, (counts.get(col) ?? 0) + 1);
+        this.#firstPageColCounts = counts;
+    }
 
     // ---- disk loads ----------------------------------------------------------
 

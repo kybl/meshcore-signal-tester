@@ -1,8 +1,8 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=6';
-import { Signal3DMap } from './signal3d.js?v=164';
+import { Signal3DMap } from './signal3d.js?v=165';
 import { CaptureModel } from './capture-model.js?v=5';
-import { TableCache } from './table-cache.js?v=3';
+import { TableCache } from './table-cache.js?v=4';
 import { ChartCache } from './chart-cache.js?v=2';
 import { MapCache } from './map-cache.js?v=3';
 import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './time-windows.js?v=3';
@@ -3006,7 +3006,11 @@ class MeshCoreApp {
 
         // Each DSC response → new row in Received Packets; always use current time so order is correct.
         // Column = the responding node's pub key prefix so all its DSC responses share one column.
-        const dscHash = 'DSC:' + (++this._dscSeq);
+        // Unique across sessions: the counter restarts at 0 on every launch and
+        // clear, so a plain 'DSC:<n>' collided with the DSC:1… rows of a resumed
+        // or imported session — the disk merge kept the OLD row's time and meta,
+        // and the new node's name / key were lost.
+        const dscHash = 'DSC:' + Date.now().toString(36) + '-' + (++this._dscSeq);
         const rawHex = Array.from(payload).map(b => b.toString(16).padStart(2, '0')).join('');
         this._ingestPacket(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null, { remoteSnr, ...this._myLocation() });
     }
@@ -3197,6 +3201,10 @@ class MeshCoreApp {
             }
         }
 
+        // The loaded table page (disk snapshot) — same rule.
+        this.table.splitColumn(existingCol, collisionKey, rawId =>
+            (rawId ? this.idPrecision(rawId) : existingPrec) < existingPrec);
+
         // chartPoints: per packet
         for (const p of this.chartPoints) {
             if (p.col !== existingCol) continue;
@@ -3230,11 +3238,15 @@ class MeshCoreApp {
     // ColumnModel rename hook: retag the views that key data by column.
     _onColumnRename(oldKey, newKey) {
         for (const data of this.model.recentValues()) {
-            if (data.repeaters.has(oldKey)) {
-                data.repeaters.set(newKey, data.repeaters.get(oldKey));
-                data.repeaters.delete(oldKey);
-            }
+            const e = data.repeaters.get(oldKey);
+            if (!e) continue;
+            data.repeaters.delete(oldKey);
+            // Both keys on one packet → keep the strongest reception, the
+            // table's per-(packet, column) invariant.
+            const cur = data.repeaters.get(newKey);
+            if (!cur || (e.rssi != null && (cur.rssi == null || e.rssi > cur.rssi))) data.repeaters.set(newKey, e);
         }
+        this.table.renameColumn(oldKey, newKey);
         for (const p of this.chartPoints) {
             if (p.col === oldKey) p.col = newKey;
         }
@@ -3832,7 +3844,9 @@ class MeshCoreApp {
         // Disk-paged rows carry packet:null (the decoded form isn't stored — see
         // packet-store.js) — reconstruct it from the raw bytes on demand and
         // cache it on the entry so re-renders of an open detail don't re-decode.
-        if (!pkt && hex) {
+        // (Not for discover responses: their hex is a companion frame, not a
+        // LoRa packet, and "decodes" into a bogus Direct/Ack.)
+        if (!pkt && hex && !String(hash).startsWith('DSC:')) {
             try { pkt = MeshCoreDecoder.decode(hex); } catch (_) { pkt = null; }
             if (pkt) { if (repEntry) repEntry.packet = pkt; else data.packet = pkt; }
         }
@@ -6414,6 +6428,9 @@ class MeshCoreApp {
         if (useDisk) await this.model.flush();
 
         const msgFilter = this._msgFilter.toLowerCase().trim();
+        // An export narrowed by the message or repeater filter leaves the rest of
+        // the capture unsaved — it must not disarm the "unsaved packets" guard.
+        const filteredExport = !!msgFilter || this.selection.filterActive;
 
         // One row per (hash, repeater) observation, sorted chronologically.
         // Source the full history from disk when available; otherwise the RAM
@@ -6495,7 +6512,7 @@ class MeshCoreApp {
         // Fire-and-forget (no result callback), so treat delegation as the save.
         if (window.AndroidFiles?.saveCsvWithPicker) {
             window.AndroidFiles.saveCsvWithPicker(suggestedName, csv);
-            this._unsavedRxCount = 0;
+            if (!filteredExport) this._unsavedRxCount = 0;
             return;
         }
 
@@ -6508,7 +6525,7 @@ class MeshCoreApp {
                 const writable = await fh.createWritable();
                 await writable.write(csv);
                 await writable.close();
-                this._unsavedRxCount = 0;
+                if (!filteredExport) this._unsavedRxCount = 0;
                 return;
             } catch (e) {
                 if (e.name === 'AbortError') return; // user cancelled — keep the guard armed
@@ -6524,7 +6541,7 @@ class MeshCoreApp {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        this._unsavedRxCount = 0;
+        if (!filteredExport) this._unsavedRxCount = 0;
     }
 
     // Back-compat single-file entry point.
@@ -6659,7 +6676,12 @@ class MeshCoreApp {
             existingKeys.add(dedupeKey);
             let packet = null;
             let meta = {};
-            if (row.rawHex) {
+            // A discover response's raw_hex is the whole companion frame (0x8E…),
+            // not a LoRa packet: decoding it "succeeded" for a large share of
+            // frames (header 0x8E parses as Direct/Ack) and relabelled the row
+            // "Direct Ack" with a nonsense detail. Keep such rows as exported.
+            const isDiscoverRow = row.hash.startsWith('DSC:') || /\bDSC$/.test(row.type || '');
+            if (row.rawHex && !isDiscoverRow) {
                 try {
                     const decoded = MeshCoreDecoder.decode(row.rawHex);
                     if (decoded.isValid) {

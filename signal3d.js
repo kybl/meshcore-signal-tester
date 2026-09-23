@@ -676,8 +676,18 @@ export class Signal3DMap {
             reject = accuracy > GPS_MAX_ACC || residual > 0.5 * GPS_MAX_ACCEL * dt * dt + 2 * (accuracy || 0) + GPS_BASE_TOL;
         } else {
             // From rest: a plausible move is bounded by acceleration; anything more
-            // (beyond jitter noise) is a spike.
-            reject = accuracy > GPS_MAX_ACC || step > 0.5 * GPS_MAX_ACCEL * dt * dt + noise + GPS_BASE_TOL;
+            // (beyond jitter noise) is a spike...
+            const fromRestOk = step <= 0.5 * GPS_MAX_ACCEL * dt * dt + noise + GPS_BASE_TOL;
+            // ...unless the step matches the velocity we already estimated. At
+            // motorway/train speed (≳125 km/h at 1 Hz) every step exceeds the
+            // from-rest bound, and the forced accept below resets the streak, so
+            // without this the filter never reached "moving" and accepted only
+            // one fix in five, forever (packets geotagged up to ~200 m off).
+            // Accepting a velocity-consistent step lets the streak build; a
+            // one-off spike still doesn't match the velocity and is held.
+            const velOk = Math.hypot(vel.x, vel.y) > GPS_MIN_SPEED &&
+                Math.hypot(nx - vel.x * dt, ny - vel.y * dt) <= 0.5 * GPS_MAX_ACCEL * dt * dt + 2 * (accuracy || 0) + GPS_BASE_TOL;
+            reject = accuracy > GPS_MAX_ACC || !(fromRestOk || velOk);
         }
 
         if (reject && this._gpsReject < GPS_MAX_REJECT) {
