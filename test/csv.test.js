@@ -243,3 +243,14 @@ test('parseCsv: non-hex raw_hex is dropped; contacts with non-hex keys are ignor
     assert.deepEqual(r.contacts.map(c => c.name), ['Good']);
     assert.equal(r.rows[0].rawHex, '');
 });
+
+test("parseCsv: the debug simulator's synthetic raw_hex round-trips", () => {
+    const text = [
+        HDR,
+        '2024-01-01T00:00:00Z,T,abcd,5E,1,,-90,debug-18f3a2b4c5d-9a8b7c6d5e,,,,',
+        '2024-01-01T00:00:01Z,T,abce,5E,1,,-90,debug-<x>,,,,',
+    ].join('\n');
+    const r = parseCsv(text);
+    assert.equal(r.rows[0].rawHex, 'debug-18f3a2b4c5d-9a8b7c6d5e');
+    assert.equal(r.rows[1].rawHex, '');
+});

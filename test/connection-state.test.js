@@ -201,3 +201,48 @@ test('attempt that succeeds before the timeout never triggers the abort hook', a
     assert.equal(aborted, 0);
     assert.equal(t.pending(), 0, 'the attempt timeout was cleared');
 });
+
+test('slow attempt that reports progress (pairing) is given more time, not aborted', async () => {
+    const t = fakeTimers();
+    let back = false, aborted = 0, resolveAttempt;
+    const rc = new ReconnectController({
+        attempt:            () => new Promise(r => { resolveAttempt = r; }),
+        isBack:             () => back,
+        onAttemptStart:     () => {},
+        onGiveUp:           () => {},
+        onAttemptTimeout:   () => { aborted++; },
+        attemptProgressing: () => true,           // e.g. bondState === BONDING
+    }, t.opts);
+    rc.start();
+    const tick = t.fire();                         // attempt starts
+    await new Promise(r => setImmediate(r));
+    await t.fire();                                // 20 s: still pairing → keep waiting
+    await new Promise(r => setImmediate(r));
+    assert.equal(aborted, 0);
+    assert.equal(t.pending(), 1, 'a second wait window is armed');
+    back = true; resolveAttempt();                 // user typed the PIN → connected
+    await tick;
+    assert.equal(aborted, 0);
+    assert.equal(rc.active, false, 'success ends the cycle');
+});
+
+test('progressing attempt is still aborted after MAX_ATTEMPT_WAIT_MS', async () => {
+    const t = fakeTimers();
+    let aborted = 0;
+    const rc = new ReconnectController({
+        attempt:            () => new Promise(() => {}),
+        isBack:             () => false,
+        onAttemptStart:     () => {},
+        onGiveUp:           () => {},
+        onAttemptTimeout:   () => { aborted++; },
+        attemptProgressing: () => true,
+        keepGoing:          () => true,
+    }, t.opts);
+    rc.start();
+    const tick = t.fire();
+    const windows = ReconnectController.MAX_ATTEMPT_WAIT_MS / ReconnectController.ATTEMPT_TIMEOUT_MS;
+    for (let i = 0; i < windows; i++) { await new Promise(r => setImmediate(r)); await t.fire(); }
+    await tick;
+    assert.equal(aborted, 1);
+    assert.equal(rc.active, true);
+});

@@ -9,9 +9,9 @@ import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './ti
 import { ContactsDirectory } from './contacts-directory.js?v=2';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=3';
-import { ConnectionState, ReconnectController } from './connection-state.js?v=4';
+import { ConnectionState, ReconnectController } from './connection-state.js?v=5';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
-import { buildCsv, parseCsv } from './csv.js?v=5';
+import { buildCsv, parseCsv } from './csv.js?v=6';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=2';
@@ -65,6 +65,7 @@ class MeshCoreApp {
             // cycle for good (status stuck on "Connecting…", no more retries).
             isBack:         () => this.conn.established,
             onAttemptTimeout: () => this._abortHungAttempt(),
+            attemptProgressing: () => this._attemptProgressing(),
             onAttemptStart: () => this.updateStatus('Reconnecting…', 'connecting'),
             // Native Android app only: a foreground service keeps the process
             // alive, so a long background BT throttle (Honor/iAware, Doze) can
@@ -5174,19 +5175,21 @@ class MeshCoreApp {
         // toast also has its own 250 ms arm delay for small captures.
         const doneLoading = this.totalRxCount > 0 ? this._beginLoadingModal() : () => {};
         try {
-            await this._replayWindow();
             // Not collecting on startup: freeze the chart at the newest stored point
             // (+1 s) so restored history fills the view instead of being squashed
             // against the left edge while the right edge tracks the wall clock. Use the
             // newest time on DISK — _lastDataTime only reflects the recent RAM replay
             // window, and restored data can be far older than that. Set before the
-            // first render and the wide-view rebuild so both use this window.
+            // replay (its RAM window is measured from this clock, so an old
+            // session isn't replayed empty), the first render and the wide-view
+            // rebuild so all of them use this window.
             if (!this._collecting) {
                 try {
                     const span = await this.model.obsSpan(-Infinity, Infinity);
                     if (span) this.windows.frozenAt = span.max + 1000;
                 } catch (_) {}
             }
+            await this._replayWindow();
             this._scheduleChartRender();
             this._renderMsgTable();
             this._renderRepTable();
@@ -5207,7 +5210,9 @@ class MeshCoreApp {
     // reconstruct identically. Used on startup and after a renderer-crash reload.
     async _replayWindow() {
         const w = this.windows.ramWindowMs(this.model.ready);
-        const from = isFinite(w) ? Date.now() - w : -Infinity;
+        // Measured from the chart clock: while frozen (a resumed old session),
+        // the RAM window must end at the newest data, not at the wall clock.
+        const from = isFinite(w) ? this.windows.now() - w : -Infinity;
         const obsList = [];
         await this.model.eachObs(from, Infinity, r => { obsList.push(r); });
         if (obsList.length) {
@@ -5387,12 +5392,17 @@ class MeshCoreApp {
     }
 
     cleanup() {
-        const now = Date.now();
+        // Disk retention runs on the wall clock (it deletes real history); the
+        // RAM window follows the chart clock, so a frozen (paused / imported /
+        // resumed) session doesn't expire its RAM set — Seen Repeaters, Active
+        // and the repeater table would go empty while the charts still show it.
+        const wallNow = Date.now();
+        const now = this.windows.now();
         // RAM is bounded by the render budget (and never exceeds retention).
         // Disk keeps full history when Auto-remove is "Never"; when it is finite,
         // history is truly deleted from disk too.
         if (isFinite(this.windows.retentionMs) && this.model.ready) {
-            this.model.pruneOlderThan(now - this.windows.retentionMs)
+            this.model.pruneOlderThan(wallNow - this.windows.retentionMs)
                 .then(n => this._afterDiskPrune(n));
         }
         // Safety net: if the wide/All chart cache went missing (a failed rebuild)
@@ -5427,7 +5437,7 @@ class MeshCoreApp {
         }
 
         setTimeout(() => {
-            const cutoff = Date.now() - lifetime;
+            const cutoff = this.windows.now() - lifetime;
             for (const hash of toRemove) {
                 const data = this.model.recentGet(hash);
                 if (data && data.lastSeen <= cutoff) this.model.recentDelete(hash);
@@ -6151,7 +6161,10 @@ class MeshCoreApp {
         if (typeof window.AndroidBle?.bondState !== 'function' || !this._lastConnectedId) return;
         this._stopPairingWatch();
         this._pairingWatchTimer = setInterval(() => {
-            if (this.device) { this._stopPairingWatch(); return; }   // connected — done
+            // Connected — done. (Not `this.device`: that is set as soon as an
+            // attempt starts, which ended the watch before it could ever see
+            // the bonding that attempt triggers.)
+            if (this.conn.established) { this._stopPairingWatch(); return; }
             let bond = -1;
             try { bond = window.AndroidBle.bondState(this._lastConnectedId); } catch (_) {}
             if (bond === 11) {   // BOND_BONDING
@@ -6223,6 +6236,15 @@ class MeshCoreApp {
     // settle to the disconnected state through the normal path — mid-reconnect
     // that raises no alarm (see ConnectionState.drop) — so the next attempt
     // starts clean instead of colliding with the stale handle.
+    // A slow reconnect that is still alive — must not be aborted: the phone is
+    // bonding (the user may be unlocking the screen to type the pairing PIN),
+    // or the GATT link is up and service discovery / setup is running.
+    _attemptProgressing() {
+        let bonding = false;
+        try { bonding = window.AndroidBle?.bondState?.(this._lastConnectedId) === 11; } catch (_) {}   // BOND_BONDING
+        return bonding || !!this.device?.gatt?.connected;
+    }
+
     _abortHungAttempt() {
         if (this.conn.established) return;
         try { if (this.device?.gatt) this.device.gatt.disconnect(); } catch (_) {}

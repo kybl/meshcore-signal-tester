@@ -111,6 +111,14 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     check('yesterday\'s data with Display = 1 h is shown (not purged by the wall clock)', n === 20, `rows=${n}`);
     const pts = await page.evaluate(() => window.__mcApp.charts.renderPoints().length);
     check('…and the chart has points', pts > 0, `points=${pts}`);
+    // The periodic cleanup must measure the RAM window from the frozen chart
+    // clock too, or it expires yesterday's packets and the stats go empty.
+    await page.evaluate(() => window.__mcApp.cleanup());
+    await page.waitForTimeout(800);
+    const st = await page.evaluate(() => ({ ram: window.__mcApp.model.recentSize,
+        active: document.getElementById('activeHashes').textContent,
+        reps: document.getElementById('totalRepeaters').textContent }));
+    check('cleanup() keeps the frozen session\'s RAM set and stats', st.ram === 20 && st.active === '20' && st.reps === '1', JSON.stringify(st));
     check('no page errors (frozen window)', errors.length === 0, errors.join(' | '));
     await ctx.close();
 }
@@ -130,6 +138,10 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     const n = await page.$$eval('#msgTableBody tr[id^="row-"]', t => t.length);
     const disp = await page.$eval('#hideSelect', e => e.value);
     check('resumed yesterday\'s session with Display = 1 h shows its data', n === 20, `rows=${n}, display=${disp}`);
+    const st = await page.evaluate(() => ({ ram: window.__mcApp.model.recentSize,
+        active: document.getElementById('activeHashes').textContent,
+        reps: document.getElementById('totalRepeaters').textContent }));
+    check('…with its RAM window replayed (stats not empty)', st.ram === 20 && st.active === '20' && st.reps === '1', JSON.stringify(st));
     await ctx.close();
 }
 

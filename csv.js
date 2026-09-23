@@ -21,7 +21,9 @@ export const CSV_HEADER = [
 const HASH_RE = /^[A-Za-z0-9:_-]{1,128}$/;
 const REPEATER_RE = /^(?:[0-9A-Fa-f]{1,64}(?:\/[0-9A-Fa-f]{1,64})*|direct|unknown)$/;
 const HEX_KEY_RE = /^[0-9A-Fa-f]{2,64}$/;
-const HEX_RE = /^[0-9A-Fa-f]*$/;
+// raw_hex: packet bytes as hex, or the debug simulator's synthetic
+// 'debug-<hex time>-<hex random>' marker (exported as-is, so it round-trips).
+const HEX_RE = /^(?:[0-9A-Fa-f]*|debug-[0-9a-f-]{1,64})$/;
 
 // Quote a field only when it contains a delimiter, quote or newline (RFC 4180).
 export function escapeCsvValue(v) {

@@ -79,6 +79,8 @@ export class ConnectionState {
 //   onGiveUp()       — UI hook: retries exhausted (alarm)
 //   onAttemptTimeout() — optional: an attempt hit ATTEMPT_TIMEOUT_MS without
 //                      a connection; abort whatever it left half-open
+//   attemptProgressing() — optional: true while a slow attempt is still alive
+//                      (e.g. pairing) — keep waiting, up to MAX_ATTEMPT_WAIT_MS
 //   keepGoing()      — optional: while true, never give up — after the fast
 //                      burst keep retrying at a slow steady cadence. Meant for
 //                      the Android app, where a foreground service keeps the
@@ -94,9 +96,12 @@ export class ReconnectController {
     static PERSIST_INTERVAL_MS = 60000;   // steady retry once past the fast burst (keepGoing)
     // A frozen connectGatt (Doze, a wedged BLE stack) can hang with no
     // callback; without this the whole cycle would stall on one attempt and
-    // never retry. The attempt promise is left to settle on its own (isBack()
-    // still catches a late success) — this only unblocks scheduling the next.
+    // never retry. On timeout the app aborts the half-open attempt
+    // (onAttemptTimeout) — unless it reports progress (attemptProgressing,
+    // e.g. waiting for the user's pairing PIN), which buys more time.
     static ATTEMPT_TIMEOUT_MS = 20000;
+    // Upper bound for an attempt that keeps reporting progress (pairing).
+    static MAX_ATTEMPT_WAIT_MS = 120000;
 
     #deps;
     #setTimeout;
@@ -140,24 +145,31 @@ export class ReconnectController {
 
     // Run one attempt, but don't let a hung connect block the cycle: resolve
     // on whichever comes first, the attempt or a timeout.
-    #attemptGuarded() {
-        let timer;
-        const TIMED_OUT = Symbol('timeout');
-        const timeout = new Promise(resolve => {
-            timer = this.#setTimeout(() => resolve(TIMED_OUT), ReconnectController.ATTEMPT_TIMEOUT_MS);
-        });
+    async #attemptGuarded() {
+        const DONE = Symbol('done'), TIMED_OUT = Symbol('timeout');
         const attempt = Promise.resolve()
             .then(() => this.#deps.attempt())
-            .catch(e => console.warn('Auto-reconnect attempt failed:', e));
-        return Promise.race([attempt, timeout]).then(winner => {
+            .catch(e => console.warn('Auto-reconnect attempt failed:', e))
+            .then(() => DONE);
+        for (let waited = 0; ;) {
+            let timer;
+            const timeout = new Promise(resolve => {
+                timer = this.#setTimeout(() => resolve(TIMED_OUT), ReconnectController.ATTEMPT_TIMEOUT_MS);
+            });
+            const winner = await Promise.race([attempt, timeout]);
             this.#clearTimeout(timer);
+            if (winner !== TIMED_OUT || !this.#active || this.#deps.isBack()) return;
+            waited += ReconnectController.ATTEMPT_TIMEOUT_MS;
+            // Slow but alive (the link is up and the phone shows a pairing PIN
+            // dialog, or discovery is still running): give it another window —
+            // aborting would tear down the very pairing the user is typing into.
+            if (waited < ReconnectController.MAX_ATTEMPT_WAIT_MS && this.#deps.attemptProgressing?.()) continue;
             // The attempt hung. Let the app tear down its half-open transport
             // (a pending connectGatt still holds the device handle): otherwise
             // the next attempt collides with it and nothing ever retries.
-            if (winner === TIMED_OUT && this.#active && !this.#deps.isBack()) {
-                try { this.#deps.onAttemptTimeout?.(); } catch (e) { console.warn('onAttemptTimeout:', e); }
-            }
-        });
+            try { this.#deps.onAttemptTimeout?.(); } catch (e) { console.warn('onAttemptTimeout:', e); }
+            return;
+        }
     }
 
     async #tick() {

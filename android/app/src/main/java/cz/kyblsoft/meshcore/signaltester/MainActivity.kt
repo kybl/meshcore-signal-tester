@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
     // location permission. Written from a WebView binder thread, read on main.
     @Volatile var wantsPhoneLocation: Boolean = true
 
-    private var _onPermsResult: (() -> Unit)? = null
+    private var _onPermsResult: ((Map<String, Boolean>) -> Unit)? = null
 
     // The connect-flow permission prompt. The decision (connect or fail, start
     // the service, start GPS) is made by ensureConnectPermissions from the
@@ -127,9 +127,10 @@ class MainActivity : AppCompatActivity() {
     // notifications) fail a Bluetooth connect.
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) {
-        _onPermsResult?.invoke()
+    ) { result ->
+        val cb = _onPermsResult
         _onPermsResult = null
+        cb?.invoke(result)
     }
 
     // The map's "Enable location" button. Separate from requestPerms (the
@@ -614,8 +615,16 @@ class MainActivity : AppCompatActivity() {
             proceed()   // required ones are all held (else they'd be in toAsk)
             return
         }
-        _onPermsResult = {
-            toAsk.forEach { markPermissionAsked(it) }
+        // A second request launched while the first dialog is still up must not
+        // orphan the first caller (its JS connect() would never settle): chain
+        // both — each decides from the permissions actually held afterwards.
+        val previous = _onPermsResult
+        _onPermsResult = { result ->
+            previous?.invoke(result)
+            // Mark only what the system actually answered: an empty result
+            // (request cancelled, e.g. by a configuration change) or a
+            // superseded request must not burn the one-time ask.
+            toAsk.filter { it in result }.forEach { markPermissionAsked(it) }
             val stillMissing = missing(required)
             if (stillMissing.isEmpty()) {
                 proceed()
