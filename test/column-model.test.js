@@ -163,3 +163,19 @@ test('colorSeed is deterministic in the display id and survives re-ask', () => {
     assert.equal(m.colorSeed('AB12'), s1, 'recomputed identically after eviction');
     assert.notEqual(m.colorSeed('CD34'), s1);
 });
+
+test('noteObservation: an older observation (CSV import) never rewinds lastSeen / last SNR / last RSSI', () => {
+    const { m } = make();
+    m.resolve('5E');
+    m.noteObservation('5E', '5E', 2_000, 7, -80);        // live, a minute ago
+    m.noteObservation('5E', '5E', 1_000, -3, -115);      // imported, yesterday
+    const s = m.stats('5E');
+    assert.equal(s.lastSeen, 2_000);
+    assert.equal(s.lastSnr, 7);
+    assert.equal(s.lastRssi, -80);
+    assert.equal(s.count, 2, 'still counted');
+    assert.equal(s.maxSnr, 7);
+    m.noteObservation('5E', '5E', 3_000, null, -70);     // newer, no SNR → keep last non-null SNR
+    assert.equal(m.stats('5E').lastSnr, 7);
+    assert.equal(m.stats('5E').lastRssi, -70);
+});

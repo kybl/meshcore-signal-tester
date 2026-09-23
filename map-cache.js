@@ -24,7 +24,7 @@ import * as MapLod from './maplod.js?v=4';
 
 export class MapCache {
     #model;
-    #deps;               // { resolveCol, displayLifetime, displayCutoff, lastView, pushPoints, pushSentPoints }
+    #deps;               // { resolveCol, displayCutoff, lastView, pushPoints, pushSentPoints }
     #targetDots;
     #base = null;        // full-extent layer {cells: Map, cell, at}
     #detail = null;      // finer layer for the zoomed-in bbox {cells, cell, bbox}
@@ -132,8 +132,8 @@ export class MapCache {
         // some later event (app switch) fires a fresh, uncontested refresh.
         // Stamp each call; only the latest one commits its result.
         const myReq = ++this.#req;
-        const lifetime = this.#deps.displayLifetime();
-        const from = isFinite(lifetime) ? Date.now() - lifetime : -Infinity;
+        // Same cutoff as every other view (follows the frozen chart clock); 0 = All.
+        const from = this.#deps.displayCutoff() || -Infinity;
         const TARGET_DOTS = this.#targetDots;
         // sqrt(area / target) spreads ~TARGET_DOTS cells across the extent.
         const cellFor = (minLat, maxLat, minLon, maxLon) => {

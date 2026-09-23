@@ -1,14 +1,14 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=6';
-import { Signal3DMap } from './signal3d.js?v=163';
-import { CaptureModel } from './capture-model.js?v=4';
+import { Signal3DMap } from './signal3d.js?v=164';
+import { CaptureModel } from './capture-model.js?v=5';
 import { TableCache } from './table-cache.js?v=3';
-import { ChartCache } from './chart-cache.js?v=1';
-import { MapCache } from './map-cache.js?v=2';
-import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './time-windows.js?v=2';
+import { ChartCache } from './chart-cache.js?v=2';
+import { MapCache } from './map-cache.js?v=3';
+import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './time-windows.js?v=3';
 import { ContactsDirectory } from './contacts-directory.js?v=2';
 import { SelectionModel } from './selection-model.js?v=1';
-import { ColumnModel } from './column-model.js?v=2';
+import { ColumnModel } from './column-model.js?v=3';
 import { ConnectionState, ReconnectController } from './connection-state.js?v=4';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
 import { buildCsv, parseCsv } from './csv.js?v=5';
@@ -222,7 +222,6 @@ class MeshCoreApp {
         this.mapCache = new MapCache(this.model, {
             targetDots:      2500,   // dot budget for the map grid layers
             resolveCol:      id => this._resolveColReadonly(id),
-            displayLifetime: () => this.windows.displayMs,
             displayCutoff:   () => this.windows.displayCutoff(),
             lastView:        () => this._lastMapView,
             pushPoints:      pts => this.signalMap?.setHistoricalPoints?.(pts),
@@ -3363,7 +3362,7 @@ class MeshCoreApp {
             // Skipping it made Total RX disagree with what was stored and a
             // re-export come out smaller than the file just imported; the
             // strongest-RSSI merge below keeps the representative correct.
-            data.lastSeen = now;
+            if (now > data.lastSeen) data.lastSeen = now;   // an imported older row must not rewind it
             // Keep the strongest-RSSI observation per (packet, repeater), matching
             // the disk grid/page representative so the table cell reads the same
             // value in every Display window.
@@ -4951,6 +4950,12 @@ class MeshCoreApp {
         // session is continued silently (nothing to lose).
         let cur = null;
         try { cur = sessionStorage.getItem('mc_tab'); } catch (_) {}
+        // "Duplicate tab" copies sessionStorage, so the copy sees the ORIGINAL
+        // tab's session id here. Continuing it would share one database between
+        // two live captures, and declining the prompt below deleted it out from
+        // under the running original. A live owner answers the ping; a plain
+        // reload's previous document is gone and can't, so reloads are unaffected.
+        if (cur && await this._sessionLiveElsewhere(cur)) cur = null;
         if (cur) {
             const e = this._readReg()[cur];
             if (e && e.count > 0) {
@@ -5016,6 +5021,41 @@ class MeshCoreApp {
         try { navigator.locks?.request?.('mc-tab-' + this._tabId, () => new Promise(() => {})); } catch (_) {}
     }
 
+    // Is session `id` currently open in another live tab? Asks over a
+    // BroadcastChannel and waits briefly for that tab to answer (see
+    // _answerSessionPings). Only a live document can answer — unlike a Web Lock,
+    // which a just-reloaded page's predecessor may still appear to hold.
+    async _sessionLiveElsewhere(id) {
+        if (typeof BroadcastChannel === 'undefined') return false;
+        let ch;
+        try {
+            ch = new BroadcastChannel('mc-session');
+            const nonce = Math.random().toString(36).slice(2);
+            return await new Promise(resolve => {
+                const t = setTimeout(() => resolve(false), 300);
+                ch.onmessage = e => {
+                    if (e.data?.type === 'here' && e.data.nonce === nonce) { clearTimeout(t); resolve(true); }
+                };
+                ch.postMessage({ type: 'who', id, nonce });
+            });
+        } catch (_) {
+            return false;
+        } finally {
+            try { ch?.close(); } catch (_) {}
+        }
+    }
+
+    _answerSessionPings() {
+        if (typeof BroadcastChannel === 'undefined' || this._sessionChan) return;
+        try {
+            this._sessionChan = new BroadcastChannel('mc-session');
+            this._sessionChan.onmessage = e => {
+                if (e.data?.type === 'who' && e.data.id === this._tabId)
+                    this._sessionChan.postMessage({ type: 'here', id: this._tabId, nonce: e.data.nonce });
+            };
+        } catch (_) {}
+    }
+
     _readReg() { try { return JSON.parse(localStorage.getItem('mc_db_reg') || '{}'); } catch (_) { return {}; } }
     _writeReg(reg) { try { localStorage.setItem('mc_db_reg', JSON.stringify(reg)); } catch (_) {} }
 
@@ -5038,8 +5078,18 @@ class MeshCoreApp {
         } catch (_) {}
     }
 
+    // The page is being hidden or unloaded — Android may now freeze or kill the
+    // WebView without further notice. Write the capture buffers and the session
+    // registry (the resume prompt keys off its packet count) right away instead
+    // of on the next flush/heartbeat timer.
+    _persistOnHide() {
+        try { this.model.persistNow(); } catch (_) {}
+        this._dbHeartbeat();
+    }
+
     _startDbHeartbeat() {
         this._holdTabLock();   // let other tabs see this session is alive (throttle-proof)
+        this._answerSessionPings();
         this._dbHeartbeat();
         setInterval(() => this._dbHeartbeat(), 15000);   // runs for the app's lifetime
     }
@@ -6965,5 +7015,8 @@ document.addEventListener('visibilitychange', () => {
         monitor?._maybeReconnect?.();
     } else {
         monitor?.releaseWakeLock();
+        monitor?._persistOnHide?.();
     }
 });
+// Leaving the page (close, reload, bfcache): same write-now as going hidden.
+window.addEventListener('pagehide', () => monitor?._persistOnHide?.());

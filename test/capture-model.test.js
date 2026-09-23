@@ -137,3 +137,18 @@ test('quota callback is forwarded from the store', async () => {
     store.onQuotaExceeded();   // the store fires its hook
     assert.equal(hits, 1);
 });
+
+test('persistNow writes buffered data (and totals) immediately, without waiting for the flush timer', async () => {
+    const store = stubStore();
+    const m = new CaptureModel({ store, flushMs: 60_000 });
+    m.totalsProvider = () => ({ totalRxCount: 3 });
+    await m.open('db');
+    m.bufferObservation({ time: 1, hash: 'h', rawId: '5E' }, { hash: 'h', firstSeen: 1 });
+    assert.equal(store.calls.filter(c => c[0] === 'putObs').length, 0, 'still buffered');
+    m.persistNow();
+    assert.equal(store.calls.filter(c => c[0] === 'putObs').length, 1, 'written synchronously');
+    assert.equal(store.calls.filter(c => c[0] === 'putHashesMerge').length, 1);
+    assert.ok(store.calls.some(c => c[0] === 'setKV' && c[1] === 'totals'));
+    m.persistNow();
+    assert.equal(store.calls.filter(c => c[0] === 'putObs').length, 1, 'nothing left to write the second time');
+});

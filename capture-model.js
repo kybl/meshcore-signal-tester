@@ -104,16 +104,34 @@ export class CaptureModel {
                 if (!this.#dead && (this.#obsBuf.length || this.#sentBuf.length || this.#hashBuf.length)) this.#scheduleFlush();
                 return;
             }
-            const obs  = this.#obsBuf;  this.#obsBuf  = [];
-            const sent = this.#sentBuf; this.#sentBuf = [];
-            const hs   = this.#hashBuf; this.#hashBuf = [];
-            if (hs.length)   this.#store.putHashesMerge(hs);   // before obs: readers join obs → hashes; merge keeps disk firstSeen/type/meta
-            if (obs.length)  this.#store.putObs(obs);
-            if (sent.length) this.#store.putSent(sent);
-            if (obs.length || sent.length || hs.length) this.#dataVer++;
-            const totals = this.totalsProvider?.();
-            if (totals) this.#store.setKV('totals', totals);
+            this.#writeBuffers();
         }, this.#flushMs);
+    }
+
+    // Hand every buffered record to the store, starting all the IndexedDB
+    // transactions synchronously (no await between them).
+    #writeBuffers() {
+        const obs  = this.#obsBuf;  this.#obsBuf  = [];
+        const sent = this.#sentBuf; this.#sentBuf = [];
+        const hs   = this.#hashBuf; this.#hashBuf = [];
+        if (hs.length)   this.#store.putHashesMerge(hs);   // before obs: readers join obs → hashes; merge keeps disk firstSeen/type/meta
+        if (obs.length)  this.#store.putObs(obs);
+        if (sent.length) this.#store.putSent(sent);
+        if (obs.length || sent.length || hs.length) this.#dataVer++;
+        const totals = this.totalsProvider?.();
+        if (totals) this.#store.setKV('totals', totals);
+    }
+
+    // Write everything buffered NOW, without awaiting — for the page being
+    // hidden or unloaded (pagehide / visibilitychange→hidden). The buffers
+    // otherwise sit for up to flushMs (longer under background timer
+    // throttling), and an OS kill of the backgrounded WebView lost them. A
+    // flush() that awaits between stores could be frozen after its first
+    // write; transactions started synchronously here still commit.
+    persistNow() {
+        if (!this.#ready || this.#dead) return;
+        if (this.#flushTimer) { clearTimeout(this.#flushTimer); this.#flushTimer = null; }
+        this.#writeBuffers();
     }
 
     // Flush buffered writes to disk immediately (so a following query sees the

@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { MapControls } from './vendor/controls/MapControls.js?v=1';
 import { colsOverlap } from './column-key.js?v=2';
-import { formatWhen } from './time-windows.js?v=2';
+import { formatWhen } from './time-windows.js?v=3';
 import { lonLatToTile, tileToLatLon } from './geo.js?v=1';
 
 const PLANE_SIZE     = 100;   // world units, longest plane edge

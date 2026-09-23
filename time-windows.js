@@ -47,8 +47,12 @@ export class TimeWindows {
     now() { return this.#frozenAt ?? Date.now(); }
 
     // Display-window cutoff. 0 (falsy) = unbounded — callers use `if (cutoff)`.
+    // Measured from the chart clock (now()), not the wall clock: while frozen
+    // (paused, or a resumed/imported session) the axis ends at frozenAt, so a
+    // wall-clock cutoff purged exactly the data the axis shows — reopening a
+    // session the next day with Display = 1 h gave an empty chart and tables.
     displayCutoff() {
-        return isFinite(this.#displayMs) ? Date.now() - this.#displayMs : 0;
+        return isFinite(this.#displayMs) ? this.now() - this.#displayMs : 0;
     }
 
     // The Display ≤ Auto-remove invariant: is a Display span of `ms` allowed
