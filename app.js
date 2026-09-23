@@ -1,6 +1,6 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=6';
-import { Signal3DMap } from './signal3d.js?v=162';
+import { Signal3DMap } from './signal3d.js?v=163';
 import { CaptureModel } from './capture-model.js?v=4';
 import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
@@ -11,7 +11,7 @@ import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
 import { ConnectionState, ReconnectController } from './connection-state.js?v=3';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
-import { buildCsv, parseCsv } from './csv.js?v=4';
+import { buildCsv, parseCsv } from './csv.js?v=5';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=1';
@@ -3080,8 +3080,11 @@ class MeshCoreApp {
         });
     }
 
+    // Safe for both text content and quoted attribute values (the result is
+    // also interpolated into title="…" / data-*="…").
     _escHtml(s) {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
     _hashPayload(str) {
@@ -3618,7 +3621,7 @@ class MeshCoreApp {
         const repHeaders = visibleCols.map(r => {
             const cName = this.contacts.nameForCol(r);
             const nameTag = cName ? `<br><span class="col-contact-name">${this._escHtml(cName)}</span>` : '';
-            return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this.displayId(r)}${nameTag}</th>`;
+            return `<th colspan="2" class="msg-col-rep" data-col="${this._escHtml(r)}"><span class="rl-dot" style="${this._repDotStyle(r)}"></span>${this._escHtml(this.displayId(r))}${nameTag}</th>`;
         }).join('');
         const subHeaders = visibleCols.map(() =>
             `<th class="msg-sub-snr">SNR</th><th class="msg-sub-rssi">RSSI</th>`
@@ -5608,7 +5611,7 @@ class MeshCoreApp {
             const cName = this.contacts.nameForCol(repeater);
             const nameTag = cName ? `<span class="rl-name">${this._escHtml(cName)}</span>` : '';
             return `<tr data-col="${this._escHtml(repeater)}"${rowCls ? ` class="${rowCls}"` : ''}>
-                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="${this._repDotStyle(repeater)}"></span>${this.displayId(repeater)}${nameTag}</td>
+                <td class="rl-id rl-id-clickable"><span class="rl-dot" style="${this._repDotStyle(repeater)}"></span>${this._escHtml(this.displayId(repeater))}${nameTag}</td>
                 <td class="rl-num">${d.count}</td>
                 <td class="rl-num" style="color:${msc}">${this._fmtSnr(d.maxSnr)}</td>
                 <td class="rl-num" style="color:${lsc}">${this._fmtSnr(d.lastSnr)}</td>
@@ -6463,6 +6466,7 @@ class MeshCoreApp {
         // check are collected and reported once at the end.
         const parsedFiles = [];
         const badFormat = [];
+        let skippedRows = 0;
         for (const file of files) {
             let text;
             try { text = await file.text(); }
@@ -6479,6 +6483,7 @@ class MeshCoreApp {
 
             if (!parsed.ok) { if (parsed.error === 'format') badFormat.push(file.name); continue; }
             parsedFiles.push({ rows: parsed.rows, sentRows: parsed.sentRows });
+            skippedRows += parsed.skipped || 0;
         }
 
         this._updateContactsCount();
@@ -6486,6 +6491,8 @@ class MeshCoreApp {
 
         if (badFormat.length)
             alert(`Unrecognised CSV format — expected columns: time, hash, repeater.\nSkipped: ${badFormat.join(', ')}`);
+        if (skippedRows)
+            alert(`${skippedRows} malformed row(s) were skipped (truncated, or with an invalid hash / repeater id).`);
 
         // Merge rows from all files into one batch.
         const rows = parsedFiles.flatMap(f => f.rows);
@@ -6503,6 +6510,21 @@ class MeshCoreApp {
 
         await new Promise(r => setTimeout(r, 0)); // yield to let the browser repaint
 
+        // try/finally: any throw mid-import used to leave the button disabled as
+        // "Importing…" and the status tinted until a reload.
+        try {
+            await this._applyCsvImport(rows, sentSnrRows);
+        } finally {
+            if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
+            this.statusEl?.classList.remove('importing');
+            if (this.statusTextEl && prevStatus != null) this.statusTextEl.textContent = prevStatus;
+        }
+    }
+
+    // The import proper, after parsing and the UI "importing" state is set up.
+    // Returning early (e.g. the user declines the merge prompt) is fine — the
+    // caller restores the UI.
+    async _applyCsvImport(rows, sentSnrRows) {
         // Count what's actually stored, not just the small RAM window. The recent window
         // only holds the recent in-memory window (often a few dozen hashes), while
         // the disk may hold many thousands — so reporting its size here showed
@@ -6515,10 +6537,6 @@ class MeshCoreApp {
         }
         if (existingCount > 0) {
             if (!confirm(`There are already ${existingCount} packet(s) loaded. Packets from the CSV will be added; existing entries are kept unchanged. Continue?`)) {
-                // Cancelled: restore the button/status that were set above.
-                if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
-                this.statusEl?.classList.remove('importing');
-                if (this.statusTextEl && prevStatus != null) this.statusTextEl.textContent = prevStatus;
                 return;
             }
         }
@@ -6658,10 +6676,6 @@ class MeshCoreApp {
         // the periodic heartbeat might not have run yet).
         this._dbHeartbeat();
         requestAnimationFrame(() => this._checkTableOverflow(true));
-
-        if (importBtn) { importBtn.textContent = prevBtnText; importBtn.disabled = false; }
-        this.statusEl?.classList.remove('importing');
-        if (this.statusTextEl && prevStatus != null) this.statusTextEl.textContent = prevStatus;
     }
 
     updateStatus(text, className) {
