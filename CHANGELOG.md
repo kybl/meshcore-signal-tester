@@ -7,6 +7,52 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
+## [1.3.2] - 2026-09-23
+
+### Fixed
+
+- **Android: the header no longer sits under the status bar** (the WebView
+  reports zero safe-area insets; the real insets are now passed to the page),
+  and notched phones no longer letterbox in landscape.
+- **SNR/RSSI cell colors follow a theme switch** instead of keeping the
+  previous theme's (barely readable) colors.
+- **Android: alerts and confirmations are native dialogs** instead of bare
+  WebView pop-ups headed by an internal URL.
+- **Auto-reconnect no longer hangs**: a connection attempt that never answers
+  is aborted and retried, while a reconnect waiting for the Bluetooth pairing
+  PIN is given time; the reconnect also counts as successful only once the
+  device is fully set up.
+- **Android: a declined notification or phone-location permission no longer
+  blocks a Bluetooth connection**; each optional permission is asked at most
+  once.
+- **CSV import is safe with untrusted files**: script injection through
+  imported values is closed, malformed or truncated rows are skipped and
+  reported instead of stalling the import, and the Import button always
+  recovers.
+- **The capture is saved when the app goes to the background** or the tab is
+  closed, instead of losing the last few seconds of packets.
+- **A duplicated browser tab gets its own session** instead of sharing (and
+  overwriting) the original tab's capture.
+- **Old or imported sessions display correctly with a short Display window**
+  (e.g. yesterday's capture with Display = 1 h): table, charts, map and stats
+  are measured from the newest data, not from the wall clock.
+- **Device position for USB and WiFi companions** is refreshed like for
+  Bluetooth.
+- **Contact sync is tracked per device**, so switching between radios no
+  longer skips contacts.
+- **GPS positions at high speed** (motorway, train) are no longer held back to
+  one fix in five.
+- Discover responses keep their identity across sessions and are no longer
+  mis-decoded as Acks; a renamed repeater column no longer shows twice; a
+  filtered export no longer clears the "unsaved packets" warning; packets
+  arriving out of order no longer move a repeater's "last seen" backwards;
+  corrupted serial frames resynchronise faster; a race while rebuilding the
+  wide chart view no longer drops points.
+- Android: the background service no longer restarts itself after the app is
+  killed, never loses its location type, survives more configuration changes
+  (font size, display density, keyboard), and a crash in fullscreen video no
+  longer leaves the app stuck in immersive mode.
+
 ## [1.3.1] - 2026-08-11
 
 ### Changed

@@ -1,0 +1,8 @@
+Version 1.3.2
+
+- Header no longer hidden under the status bar; signal colors follow a theme switch; native dialogs.
+- More reliable auto-reconnect (no hung attempts; waits for the pairing PIN).
+- A declined notification/location permission no longer blocks Bluetooth.
+- Safer CSV import; capture is saved when the app goes to the background.
+- Old/imported sessions show correctly with a short Display window.
+- Better GPS positions at high speed, and many smaller fixes.
