@@ -136,10 +136,16 @@ class BleManager(private val context: Context, private val js: JsApi) {
 
     fun disconnect(address: String) {
         if (address == deviceAddress) {
+            // A connect still in flight (e.g. a connectGatt that never called
+            // back, aborted by the page's reconnect timeout) must have its
+            // connect() promise settled too, or it stays pending forever.
+            val req = connectReqId
+            connectReqId = null
             closeGatt()
             // Closing the GATT often suppresses the STATE_DISCONNECTED callback,
             // so notify the page directly to settle its disconnect promise.
-            js.bleDisconnected(address)
+            if (req != null) js.resolve(req, false, errJson(BridgeError.NETWORK, "Connection aborted"))
+            else js.bleDisconnected(address)
         }
     }
 

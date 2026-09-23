@@ -86,3 +86,21 @@ test('payload is a copy, independent of the source buffer', () => {
     src[3] = 0xff;   // mutate the original payload byte
     assert.deepEqual([...frames[0].payload], [5, 6]);   // extracted copy unaffected
 });
+
+test('a header with an impossible length is skipped, not waited on (no 64 KB stall)', () => {
+    // 0x3e 0xff 0xff looks like a 65535-byte frame; the real frames behind it
+    // must still come out right away.
+    const good = [...frame(FRAME_IN, [1, 2]), ...frame(FRAME_IN, [3]), ...frame(FRAME_IN, [4, 5, 6])];
+    const { frames, rest } = extractFrames(new Uint8Array([0x3e, 0xff, 0xff, ...good]));
+    assert.deepEqual(frames.map(f => [...f.payload]), [[1, 2], [3], [4, 5, 6]]);
+    assert.equal(rest.length, 0);
+});
+
+test('a genuine max-size frame split across chunks is still reassembled', () => {
+    const payload = Array.from({ length: 172 }, (_, i) => i & 0xff);
+    const all = frame(FRAME_IN, payload);
+    const first = extractFrames(new Uint8Array(all.slice(0, 50)));
+    assert.equal(first.frames.length, 0);
+    const second = extractFrames(new Uint8Array([...first.rest, ...all.slice(50)]));
+    assert.deepEqual([...second.frames[0].payload], payload);
+});

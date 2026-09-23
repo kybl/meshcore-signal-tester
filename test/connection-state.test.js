@@ -161,3 +161,43 @@ test('cancel clears the pending timer; start while active is a no-op', async () 
     assert.equal(t.pending(), 0, 'backoff timer cleared');
     assert.equal(log.attempts, 1);
 });
+
+test('hung attempt: the timeout aborts it and the cycle keeps retrying', async () => {
+    const t = fakeTimers();
+    const log = { attempts: 0, aborted: 0 };
+    const rc = new ReconnectController({
+        // A connectGatt that never calls back: the handle exists, the promise never settles.
+        attempt:          () => { log.attempts++; return new Promise(() => {}); },
+        isBack:           () => false,          // a half-open handle is NOT "back"
+        onAttemptStart:   () => {},
+        onGiveUp:         () => {},
+        onAttemptTimeout: () => { log.aborted++; },
+        keepGoing:        () => true,
+    }, t.opts);
+    rc.start();
+    const tick = t.fire();                              // try 1 starts and hangs
+    await new Promise(r => setImmediate(r));
+    assert.equal(t.pending(), 1, 'only the attempt timeout is pending');
+    assert.equal(await t.fire(), ReconnectController.ATTEMPT_TIMEOUT_MS);
+    await tick;
+    assert.equal(log.aborted, 1, 'the half-open attempt was torn down');
+    assert.equal(rc.active, true, 'the cycle did not end');
+    assert.equal(t.pending(), 1, 'the next attempt is scheduled');
+});
+
+test('attempt that succeeds before the timeout never triggers the abort hook', async () => {
+    const t = fakeTimers();
+    let back = false, aborted = 0;
+    const rc = new ReconnectController({
+        attempt:          async () => { back = true; },
+        isBack:           () => back,
+        onAttemptStart:   () => {},
+        onGiveUp:         () => {},
+        onAttemptTimeout: () => { aborted++; },
+    }, t.opts);
+    rc.start();
+    await t.fire();
+    assert.equal(rc.active, false);
+    assert.equal(aborted, 0);
+    assert.equal(t.pending(), 0, 'the attempt timeout was cleared');
+});

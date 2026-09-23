@@ -77,6 +77,8 @@ export class ConnectionState {
 //   isBack()         — true when a connection is up again (stops the cycle)
 //   onAttemptStart() — UI hook: show "Reconnecting…" (each try, incl. the first)
 //   onGiveUp()       — UI hook: retries exhausted (alarm)
+//   onAttemptTimeout() — optional: an attempt hit ATTEMPT_TIMEOUT_MS without
+//                      a connection; abort whatever it left half-open
 //   keepGoing()      — optional: while true, never give up — after the fast
 //                      burst keep retrying at a slow steady cadence. Meant for
 //                      the Android app, where a foreground service keeps the
@@ -140,13 +142,22 @@ export class ReconnectController {
     // on whichever comes first, the attempt or a timeout.
     #attemptGuarded() {
         let timer;
+        const TIMED_OUT = Symbol('timeout');
         const timeout = new Promise(resolve => {
-            timer = this.#setTimeout(() => resolve(), ReconnectController.ATTEMPT_TIMEOUT_MS);
+            timer = this.#setTimeout(() => resolve(TIMED_OUT), ReconnectController.ATTEMPT_TIMEOUT_MS);
         });
         const attempt = Promise.resolve()
             .then(() => this.#deps.attempt())
             .catch(e => console.warn('Auto-reconnect attempt failed:', e));
-        return Promise.race([attempt, timeout]).then(() => this.#clearTimeout(timer));
+        return Promise.race([attempt, timeout]).then(winner => {
+            this.#clearTimeout(timer);
+            // The attempt hung. Let the app tear down its half-open transport
+            // (a pending connectGatt still holds the device handle): otherwise
+            // the next attempt collides with it and nothing ever retries.
+            if (winner === TIMED_OUT && this.#active && !this.#deps.isBack()) {
+                try { this.#deps.onAttemptTimeout?.(); } catch (e) { console.warn('onAttemptTimeout:', e); }
+            }
+        });
     }
 
     async #tick() {

@@ -6,15 +6,15 @@ import { TableCache } from './table-cache.js?v=3';
 import { ChartCache } from './chart-cache.js?v=1';
 import { MapCache } from './map-cache.js?v=2';
 import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './time-windows.js?v=2';
-import { ContactsDirectory } from './contacts-directory.js?v=1';
+import { ContactsDirectory } from './contacts-directory.js?v=2';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=2';
-import { ConnectionState, ReconnectController } from './connection-state.js?v=3';
+import { ConnectionState, ReconnectController } from './connection-state.js?v=4';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
 import { buildCsv, parseCsv } from './csv.js?v=5';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
-import { extractFrames } from './frame.js?v=1';
+import { extractFrames } from './frame.js?v=2';
 import * as ChartZoom from './chart-zoom.js?v=1';
 
 // Released app version, shown in the header. Distinct from the per-asset ?v=
@@ -59,7 +59,12 @@ class MeshCoreApp {
         this.conn = new ConnectionState();
         this.reconnect = new ReconnectController({
             attempt:        () => this.quickConnect(this._lastConnectedId, { auto: true }),
-            isBack:         () => !!this.device,
+            // Back = a FINALISED connection, not merely a handle: connectToDevice
+            // sets this.device before gatt.connect() even starts, so a hung
+            // attempt used to look like a success at the timeout and end the
+            // cycle for good (status stuck on "Connecting…", no more retries).
+            isBack:         () => this.conn.established,
+            onAttemptTimeout: () => this._abortHungAttempt(),
             onAttemptStart: () => this.updateStatus('Reconnecting…', 'connecting'),
             // Native Android app only: a foreground service keeps the process
             // alive, so a long background BT throttle (Honor/iAware, Doze) can
@@ -1843,6 +1848,13 @@ class MeshCoreApp {
             const p = this.emptyState.querySelector('p');
             if (p) p.textContent = 'Connected. Waiting for first RX log…';
         }
+        // Start the 1 Hz device-position poll if the marker or the "MeshCore
+        // device" packet-position source wants it. Over BLE the SELF_INFO reply
+        // does this, but on serial/WiFi the only SELF_INFO arrives during
+        // detection, while the mode is still null — so without this the position
+        // was read once at connect and never refreshed (every packet geotagged at
+        // the connect-time spot, the marker frozen).
+        this._updateDeviceLocationRefresh();
     }
 
     // Finalise a repeater (text CLI) serial connection: switch serial parsing to
@@ -2302,10 +2314,12 @@ class MeshCoreApp {
     // retry counter.
     async _sendGetContactsCmd() {
         // CMD_GET_CONTACTS = 0x04; optional 4-byte LE lastmod for incremental sync
-        const cmd = new Uint8Array(this.contacts.lastmod > 0 ? 5 : 1);
+        // The marker is per companion (its own clock) — see ContactsDirectory.
+        const lastmod = this.contacts.lastmodFor(this._selfPubKey);
+        const cmd = new Uint8Array(lastmod > 0 ? 5 : 1);
         cmd[0] = 0x04;
-        if (this.contacts.lastmod > 0)
-            new DataView(cmd.buffer).setUint32(1, this.contacts.lastmod, true);
+        if (lastmod > 0)
+            new DataView(cmd.buffer).setUint32(1, lastmod, true);
         this._armContactsWatchdog();
         try { await this._sendFrame(cmd); }
         catch (e) { this._setContactsError('Contact request failed: ' + (e?.message || e)); }
@@ -2734,7 +2748,8 @@ class MeshCoreApp {
             this._contactsFetchActive = false;
             this._setContactsLoading(false);
             if (payload.length >= 5)
-                this.contacts.lastmod = payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24);
+                this.contacts.setLastmod(this._selfPubKey,
+                    (payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24)) >>> 0);
             this.contacts.schedulePersist();   // full list received → persist with the new sync marker
             this._updateContactsCount();
             this._lastColKey = null; // force column header redraw with names
@@ -2788,6 +2803,9 @@ class MeshCoreApp {
     // radio configuration (shown as a preset name in the header).
     _handleSelfInfo(payload) {
         if (payload.length < 44) return;
+        // Bytes 4..35 = the companion's public key: its identity, used to keep
+        // the contact-sync marker per device.
+        this._selfPubKey = Array.from(payload.subarray(4, 36), b => b.toString(16).padStart(2, '0')).join('');
         const lat = ((payload[36] | (payload[37] << 8) | (payload[38] << 16) | (payload[39] << 24)) | 0) / 1e6;
         const lon = ((payload[40] | (payload[41] << 8) | (payload[42] << 16) | (payload[43] << 24)) | 0) / 1e6;
         this._setDeviceLocation(lat, lon);
@@ -6136,6 +6154,17 @@ class MeshCoreApp {
         this._startPairingWatch();
     }
 
+    // A reconnect attempt timed out half-open (typically a connectGatt that
+    // never calls back while the phone dozes). Close the pending transport and
+    // settle to the disconnected state through the normal path — mid-reconnect
+    // that raises no alarm (see ConnectionState.drop) — so the next attempt
+    // starts clean instead of colliding with the stale handle.
+    _abortHungAttempt() {
+        if (this.conn.established) return;
+        try { if (this.device?.gatt) this.device.gatt.disconnect(); } catch (_) {}
+        if (this.device || this.serialPort) this.onDisconnected();
+    }
+
     // The try/backoff/give-up cycle itself lives in this.reconnect
     // (ReconnectController — see connection-state.js); this is the one-line
     // cancel every manual connect path calls (a user-initiated attempt
@@ -6861,8 +6890,9 @@ class MeshCoreApp {
         this._setRadioConfig(null);
         // Clear any in-flight contact fetch so a fresh connection starts clean
         // (a stuck _contactsReceiving from an interrupted stream would otherwise
-        // linger). The lastmod marker is intentionally kept — it only ever
-        // reflects a fully-completed sync now, so incremental sync stays correct.
+        // linger). The per-device lastmod markers are intentionally kept — each
+        // only ever reflects a fully-completed sync with that companion.
+        this._selfPubKey = null;
         this._contactsReceiving = false;
         this._contactsFetchActive = false;
         this._setContactsLoading(false);
