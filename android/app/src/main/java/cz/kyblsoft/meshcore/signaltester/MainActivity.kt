@@ -118,28 +118,17 @@ class MainActivity : AppCompatActivity() {
     // location permission. Written from a WebView binder thread, read on main.
     @Volatile var wantsPhoneLocation: Boolean = true
 
-    private var _onPermsResult: ((Boolean) -> Unit)? = null
+    private var _onPermsResult: (() -> Unit)? = null
 
+    // The connect-flow permission prompt. The decision (connect or fail, start
+    // the service, start GPS) is made by ensureConnectPermissions from the
+    // permissions actually held afterwards — not from "was everything in the
+    // request granted", which made a declined OPTIONAL permission (e.g.
+    // notifications) fail a Bluetooth connect.
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        // Empty map (system dismissed the request without a decision) ⇒ denied.
-        val granted = result.isNotEmpty() && result.values.all { it }
-        // Start the foreground service when the requested set was granted OR we
-        // hold location: with the "MeshCore device" packet-position source the
-        // request legitimately contains no location permission at all, and
-        // startAsForeground picks an FGS type set matching what we actually
-        // hold. Still never start with everything denied — that can crash on
-        // Android 14+ (ForegroundServiceDidNotStartInTime).
-        if (granted || hasLocationPermission()) {
-            MeshcoreService.start(this)
-        }
-        if (hasLocationPermission()) {
-            // Connect-flow grant doubles as the trigger to start GPS capture, so
-            // the map geotags packets from connect time without a separate tap.
-            jsApi.locationPermissionGranted()
-        }
-        _onPermsResult?.invoke(granted)
+    ) {
+        _onPermsResult?.invoke()
         _onPermsResult = null
     }
 
@@ -541,14 +530,20 @@ class MainActivity : AppCompatActivity() {
     private fun recreateWebView() {
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
-        // Drop any lingering HTML5-fullscreen overlay left over from the old page.
-        customView?.let { (window.decorView as FrameLayout).removeView(it) }
+        // Drop any lingering HTML5-fullscreen overlay left over from the old page,
+        // and undo its immersive mode — onHideCustomView never runs for a dead
+        // renderer, so the system bars would otherwise stay hidden (and the
+        // page insets at 0) in the rebuilt app.
+        customView?.let {
+            (window.decorView as FrameLayout).removeView(it)
+            setImmersiveFullscreen(false)
+        }
         customView = null
         customViewCallback = null
 
         webView = WebView(this)
-        // Re-insert into the edge-to-edge container (fills the window; the web app
-        // handles safe-area insets in CSS).
+        // Re-insert into the edge-to-edge container (fills the window; the page
+        // gets the insets as --inset-* CSS variables from the insets listener).
         rootContainer.addView(
             webView,
             FrameLayout.LayoutParams(
@@ -597,30 +592,45 @@ class MainActivity : AppCompatActivity() {
         onDenied: (() -> Unit)? = null,
         onGranted: () -> Unit
     ) {
-        val missing = Permissions.connectPermissions(includeBluetooth, wantsPhoneLocation).filter {
+        fun missing(perms: List<String>) = perms.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isEmpty()) {
+        val required = Permissions.requiredToConnect(includeBluetooth)
+        // Optional permissions are each asked for at most once: after a decline
+        // the system either re-prompts on every connect or (once permanently
+        // denied) silently refuses — neither may nag the user or block them.
+        // The page's "no position" note / "Enable location" button covers a
+        // later change of mind.
+        val askOptional = missing(Permissions.optionalForSession(wantsPhoneLocation))
+            .filter { !wasPermissionAsked(it) }
+        val toAsk = (missing(required) + askOptional).distinct()
+
+        val proceed = {
             MeshcoreService.start(this)
-            // Already held — start GPS capture now (mirrors the post-prompt path).
-            jsApi.locationPermissionGranted()
+            if (hasLocationPermission()) jsApi.locationPermissionGranted()
             onGranted()
-        } else {
-            _onPermsResult = { granted ->
-                if (granted) {
-                    MeshcoreService.start(this)
-                    if (hasLocationPermission()) jsApi.locationPermissionGranted()
-                    onGranted()
-                } else {
-                    // Guide the user to Settings if the perms are permanently
-                    // denied (no prompt will appear again), then reject the call.
-                    maybePromptAppSettings(missing)
-                    onDenied?.invoke()
-                }
-            }
-            requestPerms.launch(missing.toTypedArray())
         }
+        if (toAsk.isEmpty()) {
+            proceed()   // required ones are all held (else they'd be in toAsk)
+            return
+        }
+        _onPermsResult = {
+            toAsk.forEach { markPermissionAsked(it) }
+            val stillMissing = missing(required)
+            if (stillMissing.isEmpty()) {
+                proceed()
+            } else {
+                // Guide the user to Settings if a REQUIRED permission is
+                // permanently denied (no prompt will appear again), then reject.
+                maybePromptAppSettings(stillMissing)
+                onDenied?.invoke()
+            }
+        }
+        requestPerms.launch(toAsk.toTypedArray())
     }
+
+    private fun wasPermissionAsked(perm: String) = prefs().getBoolean("asked:$perm", false)
+    private fun markPermissionAsked(perm: String) = prefs().edit().putBoolean("asked:$perm", true).apply()
 
     // After a denial, if every still-missing permission is permanently denied
     // (the system will no longer show a prompt), surface a Toast and open the

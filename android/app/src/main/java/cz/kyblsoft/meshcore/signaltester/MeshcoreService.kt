@@ -28,6 +28,10 @@ class MeshcoreService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // Whether the running foreground-service type set already includes
+    // `location`. See onStartCommand for why this matters.
+    private var fgHasLocation = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -42,8 +46,32 @@ class MeshcoreService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startAsForeground()
-        return START_STICKY
+        // Every connect attempt calls start() again — including auto-reconnects
+        // running with the screen locked. Re-running the full startForeground
+        // type negotiation there used to DOWNGRADE the service: from the
+        // background Android 14+ refuses the while-in-use `location` type, the
+        // fallback then settled on connectedDevice alone, and background GPS
+        // (packet geotagging) silently stopped. So only ever re-assert to ADD
+        // location (permission granted after the service started, e.g. a USB
+        // session followed by "Enable location"); never drop it. An already-
+        // foreground service needs no new startForeground for a repeat
+        // startForegroundService call.
+        if (!fgHasLocation && Permissions.hasLocation(this)) addLocationType()
+        // Not sticky: after the OS kills the process there is no WebView, radio
+        // link or GPS to sustain — a restarted service would only hold a wake
+        // lock and show a "capturing" notification for nothing.
+        return START_NOT_STICKY
+    }
+
+    private fun addLocationType() {
+        if (Build.VERSION.SDK_INT < 29) { fgHasLocation = true; return }
+        try {
+            ServiceCompat.startForeground(
+                this, NOTIF_ID, buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+            fgHasLocation = true
+        } catch (_: Exception) { /* not allowed right now (background) — keep the current types */ }
     }
 
     override fun onDestroy() {
@@ -57,6 +85,7 @@ class MeshcoreService : Service() {
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT < 29) {
             startForeground(NOTIF_ID, notification)
+            fgHasLocation = true   // no service types before Q
             return
         }
         // The service may run for BLE (connectedDevice + location) or for a
@@ -72,6 +101,7 @@ class MeshcoreService : Service() {
         for (type in candidates) {
             try {
                 ServiceCompat.startForeground(this, NOTIF_ID, notification, type)
+                fgHasLocation = (type and loc) != 0
                 return
             } catch (_: Exception) { /* try the next, less demanding type */ }
         }
