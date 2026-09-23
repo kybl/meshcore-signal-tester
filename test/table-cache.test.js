@@ -332,3 +332,40 @@ test('clear() resets paging state including the hash count', async () => {
     assert.equal(t.cacheAt, 0);
     assert.equal(t.firstPageColCounts.size, 0);
 });
+
+// ---- column rename / split keep the page snapshot in step ------------------
+
+// Load page 0 from `rows` = [{hash, obs:[{rawId, rssi}]}] (newest first).
+async function loadedPage(rows, { resolve = id => id } = {}) {
+    const now = Date.now();
+    const hashes = rows.map((r, i) => ({ hash: r.hash, firstSeen: now - i * 1000, type: 'T' }));
+    const obs = new Map(rows.map((r, i) => [r.hash, r.obs.map(o => ({ ...o, time: now - i * 1000 }))]));
+    const { deps } = makeDeps();
+    deps.resolveCol = resolve;
+    const tc = new TableCache(stubModel({ hashes, obs }), { pageSize: 50, ...deps });
+    await tc.loadPage(0, true);
+    return { tc };
+}
+
+test('renameColumn re-keys the loaded page (no duplicate column for one repeater)', async () => {
+    const { tc } = await loadedPage([
+        { hash: 'h1', obs: [{ rawId: '5E', rssi: -90 }] },
+        { hash: 'h2', obs: [{ rawId: '5E', rssi: -80 }] },
+    ]);
+    tc.renameColumn('5E', '5E9F');
+    for (const h of ['h1', 'h2']) {
+        assert.deepEqual([...tc.rowData(h).repeaters.keys()], ['5E9F']);
+    }
+    assert.equal(tc.firstPageColCounts.get('5E9F'), 2);
+    assert.equal(tc.firstPageColCounts.has('5E'), false);
+});
+
+test('splitColumn moves only the ambiguous (shorter) observations to the collision column', async () => {
+    const { tc } = await loadedPage([
+        { hash: 'h1', obs: [{ rawId: '5E', rssi: -90 }] },
+        { hash: 'h2', obs: [{ rawId: '5E9F', rssi: -80 }] },
+    ], { resolve: id => (id === '5E' || id === '5E9F') ? '5E9F' : id });
+    tc.splitColumn('5E9F', '5E/5EA1', rawId => rawId.length < 4);
+    assert.deepEqual([...tc.rowData('h1').repeaters.keys()], ['5E/5EA1']);
+    assert.deepEqual([...tc.rowData('h2').repeaters.keys()], ['5E9F']);
+});

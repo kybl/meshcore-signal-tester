@@ -68,13 +68,21 @@ class MainActivity : AppCompatActivity() {
         private set
 
     private lateinit var webView: WebView
-    // Holds the WebView and carries the system-bar / cutout insets as padding
-    // (padding a WebView directly is unreliable — it leaves content under the
-    // bars and can make the page wider than the viewport). The WebView fills
-    // this container, so insetting the container resizes the WebView itself.
+    // Holds the WebView, which fills it edge-to-edge; the system-bar / cutout
+    // insets are NOT applied as padding here — they're pushed into the page as
+    // CSS variables instead (see the insets listener in onCreate).
     private lateinit var rootContainer: FrameLayout
     lateinit var jsApi: JsApi
         private set
+
+    // Latest window insets as a JS snippet setting --inset-* CSS variables.
+    // Kept so it can be re-applied after every page (re)load — the inline
+    // styles it sets live in the DOM and vanish with it.
+    private var insetsJs: String? = null
+
+    private fun pushInsetsToPage() {
+        insetsJs?.let { webView.evaluateJavascript(it, null) }
+    }
 
     private val appUrl = "https://appassets.androidplatform.net/assets/www/index.html"
 
@@ -110,29 +118,19 @@ class MainActivity : AppCompatActivity() {
     // location permission. Written from a WebView binder thread, read on main.
     @Volatile var wantsPhoneLocation: Boolean = true
 
-    private var _onPermsResult: ((Boolean) -> Unit)? = null
+    private var _onPermsResult: ((Map<String, Boolean>) -> Unit)? = null
 
+    // The connect-flow permission prompt. The decision (connect or fail, start
+    // the service, start GPS) is made by ensureConnectPermissions from the
+    // permissions actually held afterwards — not from "was everything in the
+    // request granted", which made a declined OPTIONAL permission (e.g.
+    // notifications) fail a Bluetooth connect.
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        // Empty map (system dismissed the request without a decision) ⇒ denied.
-        val granted = result.isNotEmpty() && result.values.all { it }
-        // Start the foreground service when the requested set was granted OR we
-        // hold location: with the "MeshCore device" packet-position source the
-        // request legitimately contains no location permission at all, and
-        // startAsForeground picks an FGS type set matching what we actually
-        // hold. Still never start with everything denied — that can crash on
-        // Android 14+ (ForegroundServiceDidNotStartInTime).
-        if (granted || hasLocationPermission()) {
-            MeshcoreService.start(this)
-        }
-        if (hasLocationPermission()) {
-            // Connect-flow grant doubles as the trigger to start GPS capture, so
-            // the map geotags packets from connect time without a separate tap.
-            jsApi.locationPermissionGranted()
-        }
-        _onPermsResult?.invoke(granted)
+        val cb = _onPermsResult
         _onPermsResult = null
+        cb?.invoke(result)
     }
 
     // The map's "Enable location" button. Separate from requestPerms (the
@@ -233,11 +231,14 @@ class MainActivity : AppCompatActivity() {
         // True edge-to-edge: the WebView fills the whole window, including behind
         // the (transparent) status and navigation bars. We deliberately do NOT pad
         // the container with the system-bar insets — instead the web app pads its
-        // own content with CSS env(safe-area-inset-*) (the page sets
-        // viewport-fit=cover). Not consuming the insets here is exactly what makes
-        // those CSS insets non-zero, so the page background bleeds under the bars
-        // while its content (header, footer) stays clear of them. Status-bar icon
-        // colour is driven from the web theme via ScreenBridge.setLightSystemBars.
+        // own content so the page background bleeds under the bars while its
+        // content (header, footer) stays clear of them. The page CANNOT rely on
+        // CSS env(safe-area-inset-*) for that: Android's WebView resolves those
+        // to 0 (observed on WebView 118 during F-Droid review — the header
+        // rendered under the clock). So the real inset values are pushed into
+        // the page as CSS variables from the insets listener below, and the
+        // stylesheet reads var(--inset-*) with env() as the browser fallback.
+        // Status-bar icon colour is driven via ScreenBridge.setLightSystemBars.
         rootContainer = FrameLayout(this)
         rootContainer.addView(
             webView,
@@ -251,6 +252,23 @@ class MainActivity : AppCompatActivity() {
         // transparent in edge-to-edge — but this keeps older versions consistent).
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        // Feed the system-bar + cutout insets to the page as CSS variables (see
+        // the comment above). Re-fires on rotation and when immersive fullscreen
+        // hides the bars (insets collapse to 0 → page fills the whole screen).
+        // Not consumed, so a WebView whose env() DOES work stays consistent too.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootContainer) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val d = resources.displayMetrics.density
+            fun cssPx(px: Int) = kotlin.math.ceil(px / d).toInt()
+            insetsJs = "document.documentElement.style.setProperty('--inset-top','${cssPx(bars.top)}px');" +
+                "document.documentElement.style.setProperty('--inset-right','${cssPx(bars.right)}px');" +
+                "document.documentElement.style.setProperty('--inset-bottom','${cssPx(bars.bottom)}px');" +
+                "document.documentElement.style.setProperty('--inset-left','${cssPx(bars.left)}px');"
+            pushInsetsToPage()
+            insets
+        }
         setContentView(rootContainer)
 
         jsApi = JsApi(webView)
@@ -317,6 +335,14 @@ class MainActivity : AppCompatActivity() {
                 return assetLoader.shouldInterceptRequest(request.url)
             }
 
+            // The --inset-* CSS variables are inline DOM state — re-apply them
+            // after every (re)load, or the header sits under the status bar
+            // again until the next insets change.
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                pushInsetsToPage()
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url
                 if (url.host == "appassets.androidplatform.net") return false
@@ -377,6 +403,39 @@ class MainActivity : AppCompatActivity() {
                     .setMessage(message)
                     .setView(input)
                     .setPositiveButton("OK") { _, _ -> result.confirm(input.text.toString()) }
+                    .setNegativeButton("Cancel") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }
+                    .show()
+                return true
+            }
+
+            // alert()/confirm() without a handler render as a bare WebView dialog
+            // headed 'The page at "https://appassets.androidplatform.net" says:',
+            // which reads like something is broken. Native dialogs instead, same
+            // pattern as onJsPrompt above.
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult
+            ): Boolean {
+                AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setPositiveButton("OK") { _, _ -> result.confirm() }
+                    .setOnCancelListener { result.confirm() }   // dismiss == acknowledged
+                    .show()
+                return true
+            }
+
+            override fun onJsConfirm(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: android.webkit.JsResult
+            ): Boolean {
+                AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setPositiveButton("OK") { _, _ -> result.confirm() }
                     .setNegativeButton("Cancel") { _, _ -> result.cancel() }
                     .setOnCancelListener { result.cancel() }
                     .show()
@@ -472,14 +531,20 @@ class MainActivity : AppCompatActivity() {
     private fun recreateWebView() {
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
-        // Drop any lingering HTML5-fullscreen overlay left over from the old page.
-        customView?.let { (window.decorView as FrameLayout).removeView(it) }
+        // Drop any lingering HTML5-fullscreen overlay left over from the old page,
+        // and undo its immersive mode — onHideCustomView never runs for a dead
+        // renderer, so the system bars would otherwise stay hidden (and the
+        // page insets at 0) in the rebuilt app.
+        customView?.let {
+            (window.decorView as FrameLayout).removeView(it)
+            setImmersiveFullscreen(false)
+        }
         customView = null
         customViewCallback = null
 
         webView = WebView(this)
-        // Re-insert into the edge-to-edge container (fills the window; the web app
-        // handles safe-area insets in CSS).
+        // Re-insert into the edge-to-edge container (fills the window; the page
+        // gets the insets as --inset-* CSS variables from the insets listener).
         rootContainer.addView(
             webView,
             FrameLayout.LayoutParams(
@@ -528,30 +593,53 @@ class MainActivity : AppCompatActivity() {
         onDenied: (() -> Unit)? = null,
         onGranted: () -> Unit
     ) {
-        val missing = Permissions.connectPermissions(includeBluetooth, wantsPhoneLocation).filter {
+        fun missing(perms: List<String>) = perms.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isEmpty()) {
+        val required = Permissions.requiredToConnect(includeBluetooth)
+        // Optional permissions are each asked for at most once: after a decline
+        // the system either re-prompts on every connect or (once permanently
+        // denied) silently refuses — neither may nag the user or block them.
+        // The page's "no position" note / "Enable location" button covers a
+        // later change of mind.
+        val askOptional = missing(Permissions.optionalForSession(wantsPhoneLocation))
+            .filter { !wasPermissionAsked(it) }
+        val toAsk = (missing(required) + askOptional).distinct()
+
+        val proceed = {
             MeshcoreService.start(this)
-            // Already held — start GPS capture now (mirrors the post-prompt path).
-            jsApi.locationPermissionGranted()
+            if (hasLocationPermission()) jsApi.locationPermissionGranted()
             onGranted()
-        } else {
-            _onPermsResult = { granted ->
-                if (granted) {
-                    MeshcoreService.start(this)
-                    if (hasLocationPermission()) jsApi.locationPermissionGranted()
-                    onGranted()
-                } else {
-                    // Guide the user to Settings if the perms are permanently
-                    // denied (no prompt will appear again), then reject the call.
-                    maybePromptAppSettings(missing)
-                    onDenied?.invoke()
-                }
-            }
-            requestPerms.launch(missing.toTypedArray())
         }
+        if (toAsk.isEmpty()) {
+            proceed()   // required ones are all held (else they'd be in toAsk)
+            return
+        }
+        // A second request launched while the first dialog is still up must not
+        // orphan the first caller (its JS connect() would never settle): chain
+        // both — each decides from the permissions actually held afterwards.
+        val previous = _onPermsResult
+        _onPermsResult = { result ->
+            previous?.invoke(result)
+            // Mark only what the system actually answered: an empty result
+            // (request cancelled, e.g. by a configuration change) or a
+            // superseded request must not burn the one-time ask.
+            toAsk.filter { it in result }.forEach { markPermissionAsked(it) }
+            val stillMissing = missing(required)
+            if (stillMissing.isEmpty()) {
+                proceed()
+            } else {
+                // Guide the user to Settings if a REQUIRED permission is
+                // permanently denied (no prompt will appear again), then reject.
+                maybePromptAppSettings(stillMissing)
+                onDenied?.invoke()
+            }
+        }
+        requestPerms.launch(toAsk.toTypedArray())
     }
+
+    private fun wasPermissionAsked(perm: String) = prefs().getBoolean("asked:$perm", false)
+    private fun markPermissionAsked(perm: String) = prefs().edit().putBoolean("asked:$perm", true).apply()
 
     // After a denial, if every still-missing permission is permanently denied
     // (the system will no longer show a prompt), surface a Toast and open the

@@ -116,16 +116,21 @@ export class ColumnModel {
     }
 
     // Fold one live observation into the column's session stats (ingest path).
+    // Observations can arrive OUT of time order (a CSV import of older data into
+    // a live session): only one at least as new as the current last one may
+    // move lastSeen / lastSnr / lastRssi — an old row must not make "Last seen"
+    // jump back to yesterday.
     noteObservation(col, rawId, now, snr, rssi) {
         const rawPrec  = ColumnKey.idPrecision(rawId);
         const existing = this.#stats.get(col);
+        const newest   = !existing || now >= existing.lastSeen;
         this.#stats.set(col, {
-            lastSeen:     now,
+            lastSeen:     newest ? now : existing.lastSeen,
             count:        (existing?.count ?? 0) + 1,
             maxSnr:  snr  != null ? Math.max(existing?.maxSnr  ?? -Infinity, snr)  : (existing?.maxSnr  ?? null),
             maxRssi: rssi != null ? Math.max(existing?.maxRssi ?? -Infinity, rssi) : (existing?.maxRssi ?? null),
-            lastSnr:  snr  != null ? snr  : (existing?.lastSnr  ?? null),
-            lastRssi: rssi != null ? rssi : (existing?.lastRssi ?? null),
+            lastSnr:  newest && snr  != null ? snr  : (existing?.lastSnr  ?? null),
+            lastRssi: newest && rssi != null ? rssi : (existing?.lastRssi ?? null),
             minPrecision: Math.min(existing?.minPrecision ?? rawPrec, rawPrec),
         });
     }

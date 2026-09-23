@@ -54,10 +54,15 @@
         android:theme="@style/Theme.MeshCore"
         tools:targetApi="34">
 
+        <!-- configChanges: an activity restart destroys the WebView and closes
+             the radio link (onDestroy), ending a running capture — so every
+             config change a user can trigger mid-session is handled in place:
+             rotation, dark mode, font size / display size (fontScale, density),
+             language, and plugging in a keyboard. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection|keyboard|navigation|touchscreen"
             android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

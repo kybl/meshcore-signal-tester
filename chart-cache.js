@@ -26,6 +26,9 @@ export class ChartCache {
     #sentAt = 0;             // time the sent layer reflects
     #arrTimer = null;        // coalesces bucket upserts into one array rebuild
     #building = false;       // a rebuildBase() is in flight (self-heal guard)
+    #inflight = 0;           // rebuildBase() calls in flight (any caller)
+    #pending = [];           // live upserts that arrived while a build was in flight
+                             // or the base was missing — see rebuildBase()
     #healAt = 0;             // last self-heal attempt, to debounce retries
 
     constructor(model, { bucketCount = 1500, ...deps } = {}) {
@@ -55,6 +58,27 @@ export class ChartCache {
 
     async rebuildBase() {
         if (!this.#model.ready) return;
+        this.#inflight++;
+        try { await this.#rebuildBase(); }
+        finally {
+            this.#inflight--;
+            // Every queued point is now either inside a committed scan or was
+            // replayed on top of it (see below) — drop the queue once no build
+            // that might still need it is running.
+            if (this.#inflight === 0 && this.#base) this.#pending = [];
+        }
+    }
+
+    async #rebuildBase() {
+        // Snapshot point T, taken BEFORE the flush: every live observation that
+        // exists by T (time ≤ T) is in the write buffer this flush drains, so a
+        // scan bounded by T sees it. Observations after T may or may not reach
+        // disk before the scan runs — so the scan excludes them (upper bound T)
+        // and they are replayed from #pending after the build instead. Before
+        // this, a point arriving mid-build was dropped by upsert() (no base)
+        // AND missed by the scan, vanishing from the chart until the next
+        // Display change.
+        const snapshotAt = Date.now();
         // Standalone callers (escape valve, self-heal) may have unflushed writes;
         // flush so the rebuilt base includes the packets that triggered it.
         await this.#model.flush();
@@ -69,7 +93,7 @@ export class ChartCache {
         // would stretch the width, collapsing all in-view points into a couple of
         // buckets. Using nowRef for `from` too keeps the window consistent with
         // the frozen clock.
-        const nowRef = this.#deps.frozenAt() ?? Date.now();
+        const nowRef = this.#deps.frozenAt() ?? snapshotAt;
         const from = isFinite(lifetime) ? nowRef - lifetime : -Infinity;
         try {
             const { buckets, width, lo } = await this.#model.bucketObs(from, nowRef, this.#bucketCount);
@@ -77,6 +101,7 @@ export class ChartCache {
             const cells = new Map();
             for (const b of buckets) cells.set(b.rawId + '|' + b.bIdx, b);
             this.#base = { cells, width, lo };
+            for (const p of this.#pending) if (p[0] > nowRef) this.#fold(this.#base, ...p);
             // Seed canonical repeater columns from the disk buckets, applying the
             // same promote/merge as live ingest. Without this, a node seen at
             // several path-prefix lengths (e.g. 11 / 1122 / 112233) splits into
@@ -131,40 +156,13 @@ export class ChartCache {
     // Fold one live observation into the bucket layers (base always, the zoom
     // layer when the time falls inside it).
     upsert(time, snr, rssi, rawId, type = null, hash = null) {
-        const fold = layer => {
-            const bIdx = Math.floor((time - layer.lo) / layer.width);
-            const key = rawId + '|' + bIdx;
-            let g = layer.cells.get(key);
-            if (!g) {
-                g = { rawId, bIdx, time: layer.lo + bIdx * layer.width + Math.floor(layer.width / 2),
-                      count: 0, snrMin: null, snrMax: null, snrSum: 0, snrN: 0,
-                      rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0,
-                      lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null };
-                layer.cells.set(key, g);
-            }
-            g.count++;
-            // A bucket holding exactly one reception stands for a single packet —
-            // carry its exact time, type and hash (the tooltip shows ms + the type
-            // badge; a chart click opens the packet's detail). A second reception
-            // makes it a cluster — drop all three.
-            if (g.count === 1) { g.exactTime = time; g.type = type ?? null; g.hash = hash ?? null; }
-            else { g.exactTime = null; g.type = null; g.hash = null; }
-            if (snr != null) {
-                g.snrSum += snr; g.snrN++;
-                if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
-                if (g.snrMax == null || snr > g.snrMax) g.snrMax = snr;
-                if (time >= (g.lastSnrT ?? -Infinity)) { g.lastSnrT = time; g.lastSnr = snr; }
-            }
-            if (rssi != null) {
-                g.rssiSum += rssi; g.rssiN++;
-                if (g.rssiMin == null || rssi < g.rssiMin) g.rssiMin = rssi;
-                if (g.rssiMax == null || rssi > g.rssiMax) g.rssiMax = rssi;
-                if (time >= (g.lastRssiT ?? -Infinity)) { g.lastRssiT = time; g.lastRssi = rssi; }
-            }
-            return bIdx;
-        };
-        if (!this.#base) { this.ensureBase(); return; }   // self-heal; the point is on disk
-        const bIdx = fold(this.#base);
+        // While a build is in flight (or the base is missing, awaiting one),
+        // remember the point: the build's disk scan may not include it — see
+        // #rebuildBase. Bounded by build duration; the cap is a safety net.
+        if ((this.#inflight > 0 || !this.#base) && this.#model.ready && this.#pending.length < 200_000)
+            this.#pending.push([time, snr, rssi, rawId, type, hash]);
+        if (!this.#base) { this.ensureBase(); return; }   // self-heal; replayed from #pending
+        const bIdx = this.#fold(this.#base, time, snr, rssi, rawId, type, hash);
         // "All" keeps a fixed bucket width from its build, so a long session can
         // outgrow the bucket budget — rebuild once with a wider bucket when the
         // index runs 3x past it. (Finite windows slide: the index grows but the
@@ -175,8 +173,42 @@ export class ChartCache {
             return;
         }
         const zl = this.#zoomLayer;
-        if (zl && time >= zl.from && time <= zl.to) fold(zl);
+        if (zl && time >= zl.from && time <= zl.to) this.#fold(zl, time, snr, rssi, rawId, type, hash);
         this.scheduleDerive();
+    }
+
+    // Fold one observation into a bucket layer; returns its bucket index.
+    #fold(layer, time, snr, rssi, rawId, type = null, hash = null) {
+        const bIdx = Math.floor((time - layer.lo) / layer.width);
+        const key = rawId + '|' + bIdx;
+        let g = layer.cells.get(key);
+        if (!g) {
+            g = { rawId, bIdx, time: layer.lo + bIdx * layer.width + Math.floor(layer.width / 2),
+                  count: 0, snrMin: null, snrMax: null, snrSum: 0, snrN: 0,
+                  rssiMin: null, rssiMax: null, rssiSum: 0, rssiN: 0,
+                  lastSnrT: -Infinity, lastSnr: null, lastRssiT: -Infinity, lastRssi: null };
+            layer.cells.set(key, g);
+        }
+        g.count++;
+        // A bucket holding exactly one reception stands for a single packet —
+        // carry its exact time, type and hash (the tooltip shows ms + the type
+        // badge; a chart click opens the packet's detail). A second reception
+        // makes it a cluster — drop all three.
+        if (g.count === 1) { g.exactTime = time; g.type = type ?? null; g.hash = hash ?? null; }
+        else { g.exactTime = null; g.type = null; g.hash = null; }
+        if (snr != null) {
+            g.snrSum += snr; g.snrN++;
+            if (g.snrMin == null || snr < g.snrMin) g.snrMin = snr;
+            if (g.snrMax == null || snr > g.snrMax) g.snrMax = snr;
+            if (time >= (g.lastSnrT ?? -Infinity)) { g.lastSnrT = time; g.lastSnr = snr; }
+        }
+        if (rssi != null) {
+            g.rssiSum += rssi; g.rssiN++;
+            if (g.rssiMin == null || rssi < g.rssiMin) g.rssiMin = rssi;
+            if (g.rssiMax == null || rssi > g.rssiMax) g.rssiMax = rssi;
+            if (time >= (g.lastRssiT ?? -Infinity)) { g.lastRssiT = time; g.lastRssi = rssi; }
+        }
+        return bIdx;
     }
 
     scheduleDerive() {

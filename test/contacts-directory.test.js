@@ -71,7 +71,7 @@ test('put persists (debounced) and bumps the count hook', async () => {
     await tick(1100);
     assert.equal(persisted.length, 1, 'one batched persist');
     assert.equal(persisted[0].entries.length, 2);
-    assert.equal(persisted[0].lastmod, 0);
+    assert.deepEqual(persisted[0].lastmodByDevice, {});
 });
 
 test('persist is skipped while the store is not ready', async () => {
@@ -81,11 +81,11 @@ test('persist is skipped while the store is not ready', async () => {
     assert.equal(persisted.length, 0);
 });
 
-test('restore fills entries + lastmod without re-persisting', async () => {
+test('restore fills entries + per-device markers without re-persisting', async () => {
     const { dir, persisted, counts } = makeDir();
-    dir.restore({ entries: [C('aa00', 'One'), { bogus: true }], lastmod: 777 });
+    dir.restore({ entries: [C('aa00', 'One'), { bogus: true }], lastmodByDevice: { devA: 777 } });
     assert.equal(dir.size, 1, 'entries without a pubkey are skipped');
-    assert.equal(dir.lastmod, 777);
+    assert.equal(dir.lastmodFor('devA'), 777);
     assert.equal(counts(), 1);
     await tick(1100);
     assert.equal(persisted.length, 0, 'restore must not write back what it just read');
@@ -94,10 +94,26 @@ test('restore fills entries + lastmod without re-persisting', async () => {
 test('clear wipes entries + marker and cancels a pending persist', async () => {
     const { dir, persisted } = makeDir();
     dir.put(C('aa00', 'One'));
-    dir.lastmod = 123;
+    dir.setLastmod('devA', 123);
     dir.clear();
     assert.equal(dir.size, 0);
-    assert.equal(dir.lastmod, 0);
+    assert.equal(dir.lastmodFor('devA'), 0);
     await tick(1100);
     assert.equal(persisted.length, 0, 'pending persist cancelled — must not re-write after clearAll');
+});
+
+test("sync marker is per companion: device A's marker is never sent to device B", () => {
+    const { dir } = makeDir();
+    dir.setLastmod('devA', 1_700_000_000);
+    assert.equal(dir.lastmodFor('devA'), 1_700_000_000);
+    assert.equal(dir.lastmodFor('devB'), 0, 'unknown companion → full sync');
+    assert.equal(dir.lastmodFor(null), 0, 'companion not identified yet → full sync');
+    dir.setLastmod(null, 5);                 // no identity → not recorded anywhere
+    assert.equal(dir.lastmodFor('devB'), 0);
+});
+
+test('a legacy single lastmod (no device) is dropped on restore, not applied to whoever connects', () => {
+    const { dir } = makeDir();
+    dir.restore({ entries: [], lastmod: 999 });
+    assert.equal(dir.lastmodFor('devA'), 0);
 });

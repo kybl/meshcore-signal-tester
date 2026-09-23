@@ -97,3 +97,11 @@ test('msUntilNextMidnight: counts down to local 00:00', () => {
     // month rollover
     assert.equal(msUntilNextMidnight(new Date(2026, 6, 31, 23, 0, 0)), 3600_000);
 });
+
+test('displayCutoff follows the frozen chart clock (resumed session from yesterday)', () => {
+    const yesterday = Date.now() - 24 * 60 * MIN;
+    const w = new TimeWindows({ displayMs: 60 * MIN, frozenAt: yesterday });
+    assert.equal(w.displayCutoff(), yesterday - 60 * MIN, 'window ends where the axis ends');
+    w.frozenAt = null;                                   // live again → wall clock
+    assert.ok(Math.abs(w.displayCutoff() - (Date.now() - 60 * MIN)) < 100);
+});

@@ -5,9 +5,12 @@
 //   • the entries map  (pubKeyFullHex → {name, type, lat, lon, lastAdvert,
 //     lastmod, pubKeyFullHex}), fed by the device contact sync, adverts and
 //     CSV import;
-//   • the incremental-sync marker (lastmod) — advanced ONLY when a full list
-//     completed (END_OF_CONTACTS), never per contact (an interrupted fetch must
-//     not make later reconnects skip the missing tail);
+//   • the incremental-sync markers (lastmod), one PER COMPANION (keyed by its
+//     public key): the value is a timestamp from that radio's own clock and
+//     means "you already sent me everything up to here" — sending companion
+//     A's marker to companion B made B skip all its older contacts. Advanced
+//     ONLY when a full list completed (END_OF_CONTACTS), never per contact (an
+//     interrupted fetch must not make later reconnects skip the missing tail);
 //   • the debounced persistence to the session store (KV 'contacts'), so
 //     contacts survive a reload / renderer-crash rebuild.
 //
@@ -21,15 +24,22 @@ import * as ColumnKey from './column-key.js?v=2';
 
 export class ContactsDirectory {
     #entries = new Map();
-    #lastmod = 0;
+    #lastmodByDevice = new Map();   // companion pubkey hex → lastmod
     #persistTimer = null;
     #deps;   // { ready: () => bool, persist: payload => void, onCountChanged: () => void }
 
     constructor(deps) { this.#deps = deps; }
 
     get size()    { return this.#entries.size; }
-    get lastmod() { return this.#lastmod; }
-    set lastmod(v){ this.#lastmod = v; }
+
+    // Incremental-sync marker for one companion. An unknown device (or none
+    // identified yet) gets 0 = full sync — correct, just slower.
+    lastmodFor(deviceKey) { return (deviceKey && this.#lastmodByDevice.get(deviceKey)) || 0; }
+    setLastmod(deviceKey, v) {
+        if (!deviceKey || !Number.isFinite(v)) return;
+        this.#lastmodByDevice.set(deviceKey, v);
+        this.schedulePersist();
+    }
 
     get(pubKeyFullHex) { return this.#entries.get(pubKeyFullHex); }
     has(pubKeyFullHex) { return this.#entries.has(pubKeyFullHex); }
@@ -49,7 +59,12 @@ export class ContactsDirectory {
     restore(saved) {
         if (!saved || !Array.isArray(saved.entries)) return;
         for (const c of saved.entries) if (c?.pubKeyFullHex) this.#entries.set(c.pubKeyFullHex, c);
-        if (Number.isFinite(saved.lastmod)) this.#lastmod = saved.lastmod;
+        // A legacy single `lastmod` (pre-1.3.2) has no device attached — it is
+        // dropped, costing one full sync, rather than applied to the wrong radio.
+        if (saved.lastmodByDevice && typeof saved.lastmodByDevice === 'object') {
+            for (const [k, v] of Object.entries(saved.lastmodByDevice))
+                if (Number.isFinite(v)) this.#lastmodByDevice.set(k, v);
+        }
         this.#deps.onCountChanged();
     }
 
@@ -59,7 +74,10 @@ export class ContactsDirectory {
         if (!this.#deps.ready()) return;
         clearTimeout(this.#persistTimer);
         this.#persistTimer = setTimeout(() => {
-            this.#deps.persist({ entries: [...this.#entries.values()], lastmod: this.#lastmod });
+            this.#deps.persist({
+                entries: [...this.#entries.values()],
+                lastmodByDevice: Object.fromEntries(this.#lastmodByDevice),
+            });
         }, 1000);
     }
 
@@ -67,7 +85,7 @@ export class ContactsDirectory {
     // contacts after the session store has been cleared.
     clear() {
         this.#entries.clear();
-        this.#lastmod = 0;
+        this.#lastmodByDevice.clear();
         clearTimeout(this.#persistTimer); this.#persistTimer = null;
     }
 

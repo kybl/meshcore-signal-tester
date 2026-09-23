@@ -195,3 +195,62 @@ test('a leading UTF-8 BOM is stripped before parsing', () => {
     assert.ok(ok);
     assert.equal(rows.length, 1);
 });
+
+// ---- untrusted-input validation ---------------------------------------------
+
+const HDR = CSV_HEADER.join(',');
+
+test('parseCsv: rejects HTML/script in hash or repeater (XSS via shared CSV)', () => {
+    const text = [
+        HDR,
+        '2024-01-01T00:00:00Z,Flood Advert,abcd,<svg onload=alert(1)>,1,,-90,,,,,',
+        '2024-01-01T00:00:01Z,Flood Advert,"x"" onmouseover=""a",5E,1,,-90,,,,,',
+        '2024-01-01T00:00:02Z,Flood Advert,abcd,5E,1,,-90,,,,,',
+    ].join('\n');
+    const r = parseCsv(text);
+    assert.equal(r.rows.length, 1);
+    assert.equal(r.rows[0].repeater, '5E');
+    assert.equal(r.skipped, 2);
+});
+
+test('parseCsv: truncated/short rows are skipped, not passed on as undefined', () => {
+    const text = [HDR, '2024-01-01T00:00:00Z,Flood Advert', '2024-01-01T00:00:01Z,Flood Advert,abcd,,1'].join('\n');
+    const r = parseCsv(text);
+    assert.equal(r.rows.length, 0);
+    assert.equal(r.skipped, 2);
+});
+
+test('parseCsv: every identifier shape the app itself exports is accepted', () => {
+    const rows = [
+        ['abcdef0123456789', '5E'], ['abcd', '5E9F1234'], ['abcd', 'direct'], ['abcd', 'unknown'],
+        ['DSC:7', 'a'.repeat(64)], ['TR:0000ABCD', '5E'], ['nbr-5E9F-1700000000', '5E9F'],
+        ['unknown-3f2a1c9e-1b2c-4d5e-8f90-123456789abc', 'unknown'], ['SENTSNR', '5E/A1'],
+    ];
+    const text = [HDR, ...rows.map(([h, rep], i) => `2024-01-01T00:00:0${i}Z,T,${h},${rep},1,,-90,,,,,`)].join('\n');
+    const r = parseCsv(text);
+    assert.equal(r.skipped, 0);
+    assert.equal(r.rows.length + r.sentRows.length, rows.length);
+});
+
+test('parseCsv: non-hex raw_hex is dropped; contacts with non-hex keys are ignored', () => {
+    const text = [
+        '# CONTACT,<img src=x>,Evil,1,2',
+        '# CONTACT,5e9f1234,Good,50,14',
+        HDR,
+        '2024-01-01T00:00:00Z,T,abcd,5E,1,,-90,"<b>zz</b>",,,,',
+    ].join('\n');
+    const r = parseCsv(text);
+    assert.deepEqual(r.contacts.map(c => c.name), ['Good']);
+    assert.equal(r.rows[0].rawHex, '');
+});
+
+test("parseCsv: the debug simulator's synthetic raw_hex round-trips", () => {
+    const text = [
+        HDR,
+        '2024-01-01T00:00:00Z,T,abcd,5E,1,,-90,debug-18f3a2b4c5d-9a8b7c6d5e,,,,',
+        '2024-01-01T00:00:01Z,T,abce,5E,1,,-90,debug-<x>,,,,',
+    ].join('\n');
+    const r = parseCsv(text);
+    assert.equal(r.rows[0].rawHex, 'debug-18f3a2b4c5d-9a8b7c6d5e');
+    assert.equal(r.rows[1].rawHex, '');
+});

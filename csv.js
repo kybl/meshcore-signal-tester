@@ -12,6 +12,19 @@ export const CSV_HEADER = [
     'rssi', 'raw_hex', 'lat', 'lon', 'text', 'sender',
 ];
 
+// Accepted shapes of imported identifiers — exactly what the app writes:
+//  hash: hex packet hash, or a synthetic one (DSC:…, TR:…, nbr-…, unknown-<uuid>,
+//        SENTSNR for sent-SNR rows)
+//  repeater: hex id / public key, 'direct' or 'unknown', or a collision label
+//        of hex ids joined by '/' (sent-SNR rows exported from RAM carry the
+//        resolved column)
+const HASH_RE = /^[A-Za-z0-9:_-]{1,128}$/;
+const REPEATER_RE = /^(?:[0-9A-Fa-f]{1,64}(?:\/[0-9A-Fa-f]{1,64})*|direct|unknown)$/;
+const HEX_KEY_RE = /^[0-9A-Fa-f]{2,64}$/;
+// raw_hex: packet bytes as hex, or the debug simulator's synthetic
+// 'debug-<hex time>-<hex random>' marker (exported as-is, so it round-trips).
+const HEX_RE = /^(?:[0-9A-Fa-f]*|debug-[0-9a-f-]{1,64})$/;
+
 // Quote a field only when it contains a delimiter, quote or newline (RFC 4180).
 export function escapeCsvValue(v) {
     if (v == null || v === '') return '';
@@ -135,7 +148,7 @@ export function parseCsv(text) {
         if (!line) continue;
         if (line.startsWith('# CONTACT,')) {
             const [pubKeyFullHex, name, latStr, lonStr] = parseCsvLine(line.slice('# CONTACT,'.length));
-            if (pubKeyFullHex) {
+            if (pubKeyFullHex && HEX_KEY_RE.test(pubKeyFullHex)) {
                 contacts.push({
                     pubKeyFullHex,
                     name: name || null,
@@ -162,12 +175,23 @@ export function parseCsv(text) {
     }
 
     const all = [];
+    let skipped = 0;
     for (let i = headerLineIdx + 1; i < lines.length; i++) {
         const line = lines[i].trim();
         if (!line) continue;
         const c = parseCsvLine(line);
         const time = new Date(c[iTime]).getTime();
         if (isNaN(time)) continue;
+        // A CSV is untrusted input (shared files): hash and repeater become DOM
+        // ids, data-* attributes and column keys, so anything outside the shapes
+        // the app itself produces is rejected here rather than escaped at every
+        // render site. This also drops truncated rows (missing cells), which
+        // used to throw deep inside column resolution and wedge the import.
+        const hash = c[iHash], repeater = c[iRep];
+        if (!hash || !HASH_RE.test(hash) || !repeater || !REPEATER_RE.test(repeater)) {
+            skipped++;
+            continue;
+        }
         // Numeric cells: empty or unparsable = null, and 0 is a real value.
         // (The old `parseInt(..) || -100` / `parseFloat(..) || 0` fallbacks
         // turned an empty RSSI — legitimate for repeater-neighbour and Trace
@@ -180,25 +204,26 @@ export function parseCsv(text) {
         };
         all.push({
             time,
-            type:      iType >= 0 ? c[iType] : '',
-            hash:      c[iHash],
-            repeater:  c[iRep],
+            type:      iType >= 0 ? (c[iType] ?? '') : '',
+            hash,
+            repeater,
             rssi:      num(iRssi, s => parseInt(s, 10)),
             snr:       num(iSnr, parseFloat),
-            rawHex:    iHex >= 0 ? c[iHex] : '',
+            rawHex:    iHex >= 0 && HEX_RE.test(c[iHex] ?? '') ? c[iHex] : '',
             lat:       num(iLat, parseFloat),
             lon:       num(iLon, parseFloat),
             // Code-side this value is remoteSnr everywhere; only the CSV
             // column keeps the historical name uplink_snr (format stability).
             remoteSnr: num(iUplinkSnr, parseFloat),
-            csvText:   iTxt >= 0 ? c[iTxt] : '',
-            csvSender: iSnd >= 0 ? c[iSnd] : '',
+            csvText:   iTxt >= 0 ? (c[iTxt] ?? '') : '',
+            csvSender: iSnd >= 0 ? (c[iSnd] ?? '') : '',
         });
     }
 
     return {
         ok: true,
         error: null,
+        skipped,
         contacts,
         rows: all.filter(r => r.type !== 'SentSNR'),
         sentRows: all.filter(r => r.type === 'SentSNR'),
