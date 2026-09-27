@@ -49,7 +49,9 @@ const GPS_DR_MAX_DT  = 2;    // s — cap on dead-reckon extrapolation time, so 
 
 // Mapy.com tile API: path includes tile size (256) before z/x/y.
 // Reference: https://developer.mapy.com/rest-api/maptiles/
-const MAPYCOM_KEY = '8k8RZ_2rNYvfSzsufejwlKuBnnF0kYmPtfVDhSeBoiE';
+// No key ships in the source — each user supplies their own free Mapy.com
+// key (https://developer.mapy.com/), stored client-side in localStorage.
+const MAPYCOM_KEY = (typeof localStorage !== 'undefined' && localStorage.getItem('mapycomApiKey')) || '';
 const mapycomUrl = type => (z, x, y) =>
     `https://api.mapy.cz/v1/maptiles/${type}/256/${z}/${x}/${y}?apikey=${MAPYCOM_KEY}`;
 const cartoUrl = style => (z, x, y) =>
