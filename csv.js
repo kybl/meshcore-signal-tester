@@ -10,6 +10,9 @@
 export const CSV_HEADER = [
     'time', 'type', 'hash', 'repeater', 'snr', 'uplink_snr',
     'rssi', 'raw_hex', 'lat', 'lon', 'text', 'sender',
+    // Added in 1.3.3 (appended, so older versions — which look columns up by
+    // name — still read the file): a trace's per-hop SNRs, ';'-separated.
+    'hop_snr',
 ];
 
 // Accepted shapes of imported identifiers — exactly what the app writes:
@@ -78,7 +81,7 @@ export function parseCsvLine(line) {
 
 // Build the full CSV text for an export.
 //   contacts:     [{ pubKeyFullHex, name, lat, lon }]      → '# CONTACT,' comment lines
-//   observations: [{ time, type, hash, rawId, snr, remoteSnr, rssi, rawHex, lat, lon, text, sender }]
+//   observations: [{ time, type, hash, rawId, snr, remoteSnr, rssi, rawHex, lat, lon, text, sender, hopSnr? }]
 //   sentRows:     [{ time, col, snr, lat, lon, label }]    → SentSNR history rows
 // Numeric/date formatting (ISO time, 2-dp SNR) lives here so callers pass raw
 // values. Rows are emitted in the order given.
@@ -105,6 +108,7 @@ export function buildCsv({ contacts = [], observations = [], sentRows = [] } = {
             o.lon ?? '',
             o.text || '',
             o.sender || '',
+            Array.isArray(o.hopSnr) ? o.hopSnr.map(v => +(+v).toFixed(2)).join(';') : '',
         ].map(esc).join(','));
     }
 
@@ -121,6 +125,7 @@ export function buildCsv({ contacts = [], observations = [], sentRows = [] } = {
             p.lat ?? '',
             p.lon ?? '',
             p.label || '',
+            '',
             '',
         ].map(esc).join(','));
     }
@@ -149,11 +154,15 @@ export function parseCsv(text) {
         if (line.startsWith('# CONTACT,')) {
             const [pubKeyFullHex, name, latStr, lonStr] = parseCsvLine(line.slice('# CONTACT,'.length));
             if (pubKeyFullHex && HEX_KEY_RE.test(pubKeyFullHex)) {
+                const lat = parseFloat(latStr) || 0, lon = parseFloat(lonStr) || 0;
+                const onGlobe = Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
                 contacts.push({
-                    pubKeyFullHex,
+                    // The app keys contacts by lower-case hex (prefix lookups
+                    // lower-case the prefix) — normalise a hand-made file.
+                    pubKeyFullHex: pubKeyFullHex.toLowerCase(),
                     name: name || null,
-                    lat: parseFloat(latStr) || 0,
-                    lon: parseFloat(lonStr) || 0,
+                    lat: onGlobe ? lat : 0,
+                    lon: onGlobe ? lon : 0,
                 });
             }
             continue;
@@ -168,7 +177,7 @@ export function parseCsv(text) {
     const iRep = idx('repeater'), iRssi = idx('rssi'), iSnr = idx('snr');
     const iUplinkSnr = idx('uplink_snr');
     const iHex = idx('raw_hex'), iLat = idx('lat'), iLon = idx('lon');
-    const iTxt = idx('text'), iSnd = idx('sender');
+    const iTxt = idx('text'), iSnd = idx('sender'), iHop = idx('hop_snr');
 
     if (iTime < 0 || iHash < 0 || iRep < 0) {
         return { ok: false, error: 'format', contacts, rows: [], sentRows: [] };
@@ -177,8 +186,10 @@ export function parseCsv(text) {
     const all = [];
     let skipped = 0;
     for (let i = headerLineIdx + 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
+        // Not trimmed: that would eat trailing spaces of the last (sender)
+        // field. Only a blank line is skipped.
+        const line = lines[i];
+        if (!line.trim()) continue;
         const c = parseCsvLine(line);
         const time = new Date(c[iTime]).getTime();
         if (isNaN(time)) continue;
@@ -202,6 +213,9 @@ export function parseCsv(text) {
             const v = parse(c[i]);
             return isNaN(v) ? null : v;
         };
+        const lat = num(iLat, parseFloat), lon = num(iLon, parseFloat);
+        const validLat = lat != null && lon != null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+        const hop = iHop >= 0 && c[iHop] ? c[iHop].split(';').map(Number) : null;
         all.push({
             time,
             type:      iType >= 0 ? (c[iType] ?? '') : '',
@@ -210,13 +224,16 @@ export function parseCsv(text) {
             rssi:      num(iRssi, s => parseInt(s, 10)),
             snr:       num(iSnr, parseFloat),
             rawHex:    iHex >= 0 && HEX_RE.test(c[iHex] ?? '') ? c[iHex] : '',
-            lat:       num(iLat, parseFloat),
-            lon:       num(iLon, parseFloat),
+            // Off-the-globe coordinates (a typo, 1e9, Infinity) would blow up
+            // the map's extent — treat them as "no position".
+            lat:       validLat ? lat : null,
+            lon:       validLat ? lon : null,
             // Code-side this value is remoteSnr everywhere; only the CSV
             // column keeps the historical name uplink_snr (format stability).
             remoteSnr: num(iUplinkSnr, parseFloat),
             csvText:   iTxt >= 0 ? (c[iTxt] ?? '') : '',
             csvSender: iSnd >= 0 ? (c[iSnd] ?? '') : '',
+            hopSnr:    hop && hop.length && hop.every(Number.isFinite) ? hop : null,
         });
     }
 

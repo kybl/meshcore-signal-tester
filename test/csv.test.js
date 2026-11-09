@@ -70,10 +70,12 @@ test('a text field containing a newline round-trips through build → parse', ()
 // ---- header stability -----------------------------------------------------
 
 test('CSV_HEADER is stable (old exports must keep importing)', () => {
-    assert.deepEqual(CSV_HEADER, [
+    // The original columns never change; new ones are only ever appended.
+    assert.deepEqual(CSV_HEADER.slice(0, 12), [
         'time', 'type', 'hash', 'repeater', 'snr', 'uplink_snr',
         'rssi', 'raw_hex', 'lat', 'lon', 'text', 'sender',
     ]);
+    assert.deepEqual(CSV_HEADER.slice(12), ['hop_snr']);
 });
 
 // ---- build → parse round-trip --------------------------------------------
@@ -253,4 +255,36 @@ test("parseCsv: the debug simulator's synthetic raw_hex round-trips", () => {
     const r = parseCsv(text);
     assert.equal(r.rows[0].rawHex, 'debug-18f3a2b4c5d-9a8b7c6d5e');
     assert.equal(r.rows[1].rawHex, '');
+});
+
+
+test('parseCsv: trace hop SNRs round-trip; files without hop_snr still import', () => {
+    const csv = buildCsv({ observations: [
+        { time: Date.UTC(2024, 0, 1), type: 'Trace', hash: 'TR:0000ABCD', rawId: '5E', snr: -2.5, hopSnr: [7, 6.25, -2.5] },
+    ] });
+    const r = parseCsv(csv);
+    assert.deepEqual(r.rows[0].hopSnr, [7, 6.25, -2.5]);
+    const old = parseCsv([HDR, '2024-01-01T00:00:00Z,T,abcd,5E,1,,-90,,,,,'].join('\n'));
+    assert.equal(old.rows.length, 1);
+    assert.equal(old.rows[0].hopSnr, null);
+});
+
+test('parseCsv: trailing spaces in the last field survive', () => {
+    const r = parseCsv([HDR, '2024-01-01T00:00:00Z,T,abcd,5E,1,,-90,,,,hi,Bob  '].join('\n'));
+    assert.equal(r.rows[0].csvSender, 'Bob  ');
+});
+
+test('parseCsv: off-the-globe coordinates become "no position"', () => {
+    const r = parseCsv([HDR,
+        '2024-01-01T00:00:00Z,T,abcd,5E,1,,-90,,1e9,14,,',
+        '2024-01-01T00:00:01Z,T,abce,5E,1,,-90,,50.1,Infinity,,',
+        '2024-01-01T00:00:02Z,T,abcf,5E,1,,-90,,50.1,14.4,,',
+    ].join('\n'));
+    assert.deepEqual(r.rows.map(x => [x.lat, x.lon]), [[null, null], [null, null], [50.1, 14.4]]);
+});
+
+test('parseCsv: contact keys are lower-cased and bad contact coords zeroed', () => {
+    const r = parseCsv(['# CONTACT,5E9F12AB,Hill,95,14', HDR].join('\n'));
+    assert.equal(r.contacts[0].pubKeyFullHex, '5e9f12ab');
+    assert.deepEqual([r.contacts[0].lat, r.contacts[0].lon], [0, 0]);
 });

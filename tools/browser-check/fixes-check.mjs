@@ -563,6 +563,26 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await ctx.close();
 }
 
+// ---- Resume with a finite Auto-remove keeps the resumed data -------------------
+{
+    const ctx = await browser.newContext();
+    const { page, errors } = await openPage(ctx, base);
+    const y = Date.now() - 26 * 3600 * 1000;
+    const rows = []; for (let i = 0; i < 10; i++) rows.push(`${iso(y + i * 60000)},Flood Advert,fa${String(i).padStart(4, '0')},5E,3,,-90,,,,,`);
+    await importCsv(page, tmp('ttl', [HDR, ...rows].join('\n')));
+    await page.selectOption('#ttlSelect', '3600');                 // Auto-remove 1 h (persisted)
+    await page.waitForTimeout(5000);
+    await page.reload({ waitUntil: 'networkidle' });                // accept "Load previously captured data?"
+    await page.waitForFunction(() => window.__mcApp?.model?.ready, null, { timeout: 15000 });
+    await page.waitForTimeout(12000);                               // past the first 10 s cleanup tick
+    const st = await page.evaluate(async () => ({
+        ttl: document.getElementById('ttlSelect').value,
+        disk: await window.__mcApp.model.obsSpan(-Infinity, Infinity).then(s => !!s) }));
+    check('resumed old session with Auto-remove 1 h is not deleted', st.disk && st.ttl === 'Infinity', JSON.stringify(st));
+    check('no page errors (resume + Auto-remove)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);

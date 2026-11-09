@@ -287,7 +287,7 @@ export class PacketStore {
      *  out of RAM) — a plain put() there would reset its firstSeen (jumping the
      *  packet to the top of the time-sorted table) and null out its type/meta. */
     async putHashesMerge(records) {
-        if (!records || !records.length) return;
+        if (!records || !records.length) return true;
         // Merge intra-batch duplicates in memory FIRST. The per-record get()
         // below is queued before any put() runs, so it always reads the
         // pre-transaction state — two records with the same hash in one batch
@@ -298,7 +298,7 @@ export class PacketStore {
             const ex = byHash.get(r.hash);
             byHash.set(r.hash, ex ? ps_mergeHashRec(ex, r) : r);
         }
-        await this._write('hashes', os => {
+        return this._write('hashes', os => {
             for (const r of byHash.values()) {
                 const g = os.get(r.hash);
                 g.onsuccess = () => {
@@ -313,10 +313,10 @@ export class PacketStore {
         return this._read('hashes', os => os.get(hash), null, r => r ?? null);
     }
 
-    /** Append outgoing-SNR records: {time, snr, rawId, label}. */
+    /** Append outgoing-SNR records: {time, snr, rawId, label}. True on commit. */
     async putSent(records) {
-        if (!records || !records.length) return;
-        await this._write('sent', os => { for (const r of records) os.add(r); });
+        if (!records || !records.length) return true;
+        return this._write('sent', os => { for (const r of records) os.add(r); });
     }
 
     // ---- small key/value state (column model, aggregates, totals) ---------

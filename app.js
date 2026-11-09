@@ -1,17 +1,17 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=6';
 import { Signal3DMap } from './signal3d.js?v=165';
-import { CaptureModel } from './capture-model.js?v=5';
+import { CaptureModel } from './capture-model.js?v=6';
 import { TableCache } from './table-cache.js?v=4';
 import { ChartCache } from './chart-cache.js?v=2';
-import { MapCache } from './map-cache.js?v=3';
+import { MapCache } from './map-cache.js?v=4';
 import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './time-windows.js?v=3';
 import { ContactsDirectory } from './contacts-directory.js?v=2';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=3';
 import { ConnectionState, ReconnectController } from './connection-state.js?v=5';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
-import { buildCsv, parseCsv } from './csv.js?v=6';
+import { buildCsv, parseCsv } from './csv.js?v=7';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=2';
@@ -3492,22 +3492,26 @@ class MeshCoreApp {
             tagKnown,
         };
 
-        // Record uplink SNR in the Sent SNR History chart and 3D map. Persist the
-        // capture position too, so the map can show outgoing SNR from disk
-        // (clustered, surviving reload/export) the same way it shows incoming.
+        // Like the paired DSC row (dropped by _ingestPacket while stopped), the
+        // sent SNR is recorded only while collecting.
         const now = Date.now();
-        const sentLoc = this.signalMap?.currentLocation() ?? null;
-        // Canonicalise the column so the live star shares the exact column key
-        // the table/other charts use (and that disk-loaded sent points resolve to
-        // via _resolveColReadonly). Using the raw prefix could select a
-        // non-existent column on click. The stored rawId stays raw (resolved on
-        // read). The paired DSC ingest below resolves the same key.
-        const sentCol = this.columns.resolve(pubKeyHex);
-        this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: sentCol, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
-        this.model.bufferSent({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
-        this._scheduleChartRender();
-        if (sentLoc && remoteSnr != null) {
-            this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: sentCol, time: now, rawId: pubKeyHex });
+        if (this._collecting) {
+            // Record uplink SNR in the Sent SNR History chart and 3D map. Persist the
+            // capture position too, so the map can show outgoing SNR from disk
+            // (clustered, surviving reload/export) the same way it shows incoming.
+            const sentLoc = this.signalMap?.currentLocation() ?? null;
+            // Canonicalise the column so the live star shares the exact column key
+            // the table/other charts use (and that disk-loaded sent points resolve to
+            // via _resolveColReadonly). Using the raw prefix could select a
+            // non-existent column on click. The stored rawId stays raw (resolved on
+            // read). The paired DSC ingest below resolves the same key.
+            const sentCol = this.columns.resolve(pubKeyHex);
+            this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: sentCol, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
+            this.model.bufferSent({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
+            this._scheduleChartRender();
+            if (sentLoc && remoteSnr != null) {
+                this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: sentCol, time: now, rawId: pubKeyHex });
+            }
         }
 
         // Each DSC response → new row in Received Packets; always use current time so order is correct.
@@ -3888,6 +3892,7 @@ class MeshCoreApp {
             // re-export come out smaller than the file just imported; the
             // strongest-RSSI merge below keeps the representative correct.
             if (now > data.lastSeen) data.lastSeen = now;   // an imported older row must not rewind it
+            if (now < data.firstSeen) data.firstSeen = now; // …but may move the first sighting earlier
             // Keep the strongest-RSSI observation per (packet, repeater), matching
             // the disk grid/page representative so the table cell reads the same
             // value in every Display window.
@@ -3898,6 +3903,12 @@ class MeshCoreApp {
         }
 
         this.columns.noteObservation(canonicalKey, repeater, now, snr, rssi);
+        // Persist this observation (rawHex is per-path, so it lives per-obs)
+        // BEFORE the chart/map caches see it: an upsert can start a cache
+        // rebuild that flushes the store and scans the disk, which must
+        // already include this packet. Skipped only while replaying from disk
+        // to avoid writing it back.
+        if (!replaying) this._ingestToStore({ now, hash, repeater, rawHex, snr, rssi, meta, type, loc, remoteSnr: opts.remoteSnr }, isNewHash);
         if (snr != null || rssi != null) {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater, type, hash });
             // Fold it into the chart bucket cache so the charts show it without a
@@ -3917,9 +3928,6 @@ class MeshCoreApp {
             }
         }
 
-        // Persist this observation (rawHex is per-path, so it lives per-obs).
-        // Skipped only while replaying from disk to avoid writing it back.
-        if (!replaying) this._ingestToStore({ now, hash, repeater, rawHex, snr, rssi, meta, type, loc, remoteSnr: opts.remoteSnr }, isNewHash);
 
         if (!live) return;
 
@@ -5526,11 +5534,15 @@ class MeshCoreApp {
         if (candidates.length) {
             const [id, e] = candidates[0];
             const when = new Date(e.beat).toLocaleString();
-            if (confirm(`Load previously captured data?\n\n${e.count} packets received, last seen ${when}.`)) {
-                for (const [oid] of candidates.slice(1)) this._deleteSession(oid);  // drop the rest
+            // Other closed sessions with data (e.g. two tabs that captured two
+            // devices) are kept and offered on a later launch — they used to be
+            // deleted here without ever being mentioned.
+            const more = candidates.length - 1;
+            const moreNote = more ? `\n\n(${more} other saved capture${more > 1 ? 's' : ''} will be offered next time.)` : '';
+            if (confirm(`Load previously captured data?\n\n${e.count} packets received, last seen ${when}.${moreNote}`)) {
                 return setTab(id);
             }
-            for (const [oid] of candidates) this._deleteSession(oid);  // declined → discard all
+            this._deleteSession(id);   // declined → discard just this one
         }
         this._gcStaleSessions(live);
         return setTab(mk());
@@ -5709,6 +5721,11 @@ class MeshCoreApp {
                 try {
                     const span = await this.model.obsSpan(-Infinity, Infinity);
                     if (span) this.windows.frozenAt = span.max + 1000;
+                    // A resumed session holding data older than a finite
+                    // Auto-remove: the next cleanup tick would delete what the
+                    // user just chose to load — keep it, as an import does.
+                    if (span && isFinite(this.windows.retentionMs)
+                        && span.min < Date.now() - this.windows.retentionMs) this._disableAutoRemove();
                 } catch (_) {}
             }
             await this._replayWindow();
@@ -5773,12 +5790,20 @@ class MeshCoreApp {
     }
 
     _onStorageQuota() {
-        // Disk full: keep the newest history by trimming the oldest on disk down
-        // to the render budget. The session keeps running on its RAM window.
+        // Disk full: make room by deleting the OLDEST quarter of the stored
+        // time span — measured on the data, not the wall clock, which would
+        // wipe an imported or resumed historical capture entirely (and ignored
+        // Auto-remove "Never"). The batch that failed was put back into the
+        // model's buffers and is written by the flush after the prune.
         if (this._quotaPruning || !this.model.ready) return;
         this._quotaPruning = true;
-        this.model.pruneOlderThan(Date.now() - this.windows.renderBudgetMs)
-            .then(n => this._afterDiskPrune(n))
+        this.model.obsSpan(-Infinity, Infinity)
+            .then(span => {
+                if (!span || !(span.max > span.min)) return 0;
+                return this.model.pruneOlderThan(span.min + (span.max - span.min) / 4);
+            })
+            .then(n => { if (n) this._afterDiskPrune(n); return this.model.flush(); })
+            .catch(e => console.warn('Quota prune failed:', e))
             .finally(() => { this._quotaPruning = false; });
     }
 
@@ -6999,6 +7024,14 @@ class MeshCoreApp {
         this._updateCornerNotices();
     }
 
+    // Called by the Android app once the CSV it was handed has been written.
+    // Packets received while the dialog was open stay counted as unsaved.
+    _onNativeExportSaved() {
+        const n = this._nativeExportUnsaved;
+        this._nativeExportUnsaved = null;
+        if (n != null) this._unsavedRxCount = Math.max(0, this._unsavedRxCount - n);
+    }
+
     _updateExportBtn() {
         if (!this.exportCsvBtn) return;
         this.exportCsvBtn.disabled = !!this._importing || (this.model.recentSize === 0 && !this.model.ready);
@@ -7115,6 +7148,7 @@ class MeshCoreApp {
             lon:       rep.lon,
             text:      data.meta?.text,
             sender:    data.meta?.sender,
+            hopSnr:    Array.isArray(data.meta?.snrs) ? data.meta.snrs : undefined,
         }));
 
         const csv = buildCsv({
@@ -7127,13 +7161,15 @@ class MeshCoreApp {
         // Clear the "unsaved packets" guard only once a save actually happens —
         // resetting up front would disarm the beforeunload warning even when the
         // user then cancels the save dialog.
-        // Android native app: delegate to SAF picker (shows system "Save as" dialog).
-        // Fire-and-forget (no result callback), so treat delegation as the save.
         // The CSV is built: from here on only the dialog is left.
         this._setExportPreparing(false);
+        // Android native app: delegate to SAF picker (shows system "Save as"
+        // dialog). The native side reports a completed save back through
+        // _onNativeExportSaved — only then is the guard disarmed (a cancelled
+        // dialog must leave it armed).
         if (window.AndroidFiles?.saveCsvWithPicker) {
+            this._nativeExportUnsaved = filteredExport ? null : this._unsavedRxCount;
             window.AndroidFiles.saveCsvWithPicker(suggestedName, csv);
-            if (!filteredExport) this._unsavedRxCount = 0;
             return;
         }
 
@@ -7169,6 +7205,19 @@ class MeshCoreApp {
     // activity (the WebView reloaded, so the file <input> never got them) —
     // staged natively, imported here once startup has finished. Called at the
     // end of startup and by the native side after it staged files.
+    // Switch Auto-remove to "Never" — for historical data the user just brought
+    // in (import, resumed session), which a finite Auto-remove measured on the
+    // wall clock would delete within seconds.
+    _disableAutoRemove() {
+        const ttlSelect = document.getElementById('ttlSelect');
+        if (ttlSelect && isFinite(this.windows.retentionMs)) {
+            ttlSelect.value = 'Infinity';
+            this.windows.retentionMs = Infinity;
+            Store.set('ttl', 'Infinity');
+            this._updateHideSelectOptions();
+        }
+    }
+
     _takeNativeImports() {
         if (!this._startupDone || !window.AndroidFiles?.takePendingImport) return;
         const files = [];
@@ -7293,13 +7342,7 @@ class MeshCoreApp {
         rows.sort((a, b) => a.time - b.time);
 
         // Ensure imported historical data isn't immediately cleaned up by TTL
-        const ttlSelect = document.getElementById('ttlSelect');
-        if (ttlSelect && isFinite(this.windows.retentionMs)) {
-            ttlSelect.value = 'Infinity';
-            this.windows.retentionMs = Infinity;
-            Store.set('ttl', 'Infinity');
-            this._updateHideSelectOptions();
-        }
+        this._disableAutoRemove();
         // Show all imported data regardless of previous display window setting
         const hideSelect = document.getElementById('hideSelect');
         if (hideSelect && hideSelect.value !== 'all') {
@@ -7359,6 +7402,7 @@ class MeshCoreApp {
             }
             if (!meta.text   && row.csvText)   meta.text   = row.csvText;
             if (!meta.sender && row.csvSender)  meta.sender = row.csvSender;
+            if (row.hopSnr && !meta.snrs) { meta.snrs = row.hopSnr; meta.pathLen = row.hopSnr.length - 1; }
             if (packet) this._ingestContactFromPacket(packet);
 
             const type = packet
@@ -7385,7 +7429,7 @@ class MeshCoreApp {
             // that empty numeric cells parse as null) has nothing to plot.
             if (snr == null) continue;
             const lat = r.lat, lon = r.lon;
-            this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater });
+            this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater, lat: lat ?? null, lon: lon ?? null });
             this.model.bufferSent({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
         }
         if (sentSnrRows.length) {

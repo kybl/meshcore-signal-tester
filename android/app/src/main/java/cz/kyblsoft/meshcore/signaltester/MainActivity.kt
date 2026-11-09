@@ -260,12 +260,14 @@ class MainActivity : AppCompatActivity() {
         if (uri == null) { staged.delete(); return@registerForActivityResult }   // cancelled
         // Copy off the main thread — a large export would otherwise freeze the UI.
         Thread {
+            var saved = false
             val msg = try {
                 if (!staged.exists()) throw IOException("the export data was lost — please export again")
                 val size = staged.length()
                 val out = contentResolver.openOutputStream(uri)
                     ?: throw IOException("cannot open the file for writing")
                 out.use { o -> staged.inputStream().use { it.copyTo(o) } }
+                saved = true
                 "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(size.toInt())})."
             } catch (e: Throwable) {
                 // Don't leave an empty / partial file behind looking like a save.
@@ -274,7 +276,13 @@ class MainActivity : AppCompatActivity() {
             } finally {
                 staged.delete()
             }
-            runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+            runOnUiThread {
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                // Tell the page the capture is saved (disarms its unsaved-data
+                // guard). Only on success; a cancel or failure leaves it armed.
+                if (saved && ::webView.isInitialized)
+                    webView.evaluateJavascript("window.__mcApp && window.__mcApp._onNativeExportSaved && window.__mcApp._onNativeExportSaved()", null)
+            }
         }.start()
     }
 
