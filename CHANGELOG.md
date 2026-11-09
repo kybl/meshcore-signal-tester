@@ -19,10 +19,12 @@
   the external LNA (firmware v1.18.0+; boosted gain left off is flagged, as it
   lowers the RSSI/SNR you measure); and **restart** the device, after which
   the app reconnects by itself without the disconnect alarm.
+  ([#20](https://github.com/kybl/meshcore-signal-tester/issues/20))
 - **Device console**: type CLI commands and see the replies — for a
   **repeater** over USB, and for a **companion** with firmware v1.18.0 or
   newer. Commands that would stop the capture, or restart or erase the device,
   ask for confirmation first; a repeater can also be restarted with a button.
+  ([#20](https://github.com/kybl/meshcore-signal-tester/issues/20))
 - The companion's **firmware and protocol version** are shown next to the
   device name, in amber when the firmware is too old for some Radio tools
   (which then says what needs a newer firmware).
@@ -40,6 +42,7 @@
 - **A packet filter that matches nothing no longer hides itself**: the filter
   field disappeared together with the empty table, so it couldn't be fixed or
   cleared without restarting the app. It now says that nothing matches.
+  ([#21](https://github.com/kybl/meshcore-signal-tester/issues/21))
 - Trace results with 2- or 4-byte repeater IDs (firmware v1.11+) were
   misread and dropped.
 - Export CSV is disabled while an import is running, and Import CSV while an
