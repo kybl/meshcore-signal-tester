@@ -328,9 +328,20 @@ class MeshCoreApp {
         setInterval(() => {
             if (!this.windows.frozenAt) { this._advanceLiveZoom(); this._scheduleChartRender(); }
             if (isFinite(this.windows.displayMs)) {
-                this.signalMap?.setDisplayCutoff?.(this.windows.displayCutoff());
-                this._renderRepTable();
-                this._renderMsgTable();
+                const cutoff = this.windows.displayCutoff();
+                this.signalMap?.setDisplayCutoff?.(cutoff);
+                // Re-render the tables only when the moving cutoff actually
+                // drops something — rebuilding them every 2 s cleared any text
+                // the user had selected and cost a full table build each tick.
+                let rows = 0, reps = 0;
+                for (const d of this.model.recentValues()) if (d.lastSeen >= cutoff) rows++;
+                for (const [, d] of this.columns.statsEntries()) if (d.lastSeen >= cutoff) reps++;
+                const sig = rows + '|' + reps;
+                if (sig !== this._displayTickSig) {
+                    this._displayTickSig = sig;
+                    this._renderRepTable();
+                    this._renderMsgTable();
+                }
             }
             this._updateStats();
             this._updateLocSourceWarning();
@@ -663,7 +674,9 @@ class MeshCoreApp {
                 // background (dark-theme values are ~1.3:1 on white; found by
                 // the F-Droid on-device review). Rebuild both tables.
                 this._renderRepTable();
+                this._lastColKey = null;     // header dots too (it skips an unchanged column set)
                 this._renderMsgTable();
+                this._updateCornerNotices();
             });
         }
 
@@ -4254,7 +4267,10 @@ class MeshCoreApp {
     }
 
     toggleDetailRow(hash, col = null) {
-        const existing = document.getElementById(`detail-${hash}`);
+        let existing = document.getElementById(`detail-${hash}`);
+        // A row still playing its close animation has a removal timer pending
+        // — reusing it made a freshly opened detail vanish a moment later.
+        if (existing?.classList.contains('detail-closing')) { existing.remove(); existing = null; }
         this.msgTableBody?.querySelectorAll('.sig-active').forEach(el => el.classList.remove('sig-active'));
         // Same cell clicked again → close with animation
         if (existing && existing.dataset.col === (col ?? '')) { this._closeDetailRow(existing); return; }
@@ -4553,14 +4569,18 @@ class MeshCoreApp {
         const pts = this._visibleChartPoints();
         // Avoid spread on potentially large arrays (Math.min(...arr) has an arg-count limit)
         let vMin = Infinity, vMax = -Infinity;
-        for (const p of pts) {
+        // Only the series actually drawn: with Incoming unticked the SNR axis
+        // must fit the outgoing stars, not the hidden incoming range.
+        const showIn  = type !== 'snr' || this._snrShowIncoming !== false;
+        const showOut = type === 'snr' && this._snrShowOutgoing !== false;
+        for (const p of showIn ? pts : []) {
             if (!inWin(p)) continue;
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
             if (v < vMin) vMin = v;
             if (v > vMax) vMax = v;
         }
-        if (type === 'snr') {
+        if (showOut) {
             for (const p of this._visibleSentSnrPts()) {
                 if (!inWin(p)) continue;
                 if (p.snr < vMin) vMin = p.snr;
@@ -4599,11 +4619,12 @@ class MeshCoreApp {
         const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
         const mx = (e.clientX - rect.left) / scale;
         const my = (e.clientY - rect.top) / scale;
-        const { xOf, yOf } = this._lastDrawGeometry(svg, type);
+        const { xOf, yOf, tMin: wMin, tMax: wMax } = this._lastDrawGeometry(svg, type);
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
+            if (p.time < wMin || p.time > wMax) continue;   // clipped away — not drawn
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
             const d = dx * dx + dy * dy;
@@ -4656,12 +4677,25 @@ class MeshCoreApp {
 
     // Map a clientX over `svg` to a time, using the window the chart was last
     // drawn with (so it matches what's on screen).
+    // The horizontal data frame the points are drawn in (see _chartGeometry):
+    // the plot starts at pl + padX and is innerW wide, in SVG-local px; `scale`
+    // converts client (CSS) px to local px when the page is text-size scaled.
+    _chartXFrame(svg) {
+        const { l: pl, r: pr } = CHART_PAD;
+        const cw = Math.max(1, svg.clientWidth - pl - pr);
+        const padX = this._dotSize * 3.5 + 2;
+        const rect = svg.getBoundingClientRect();
+        const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
+        return { x0: pl + padX, innerW: Math.max(1, cw - 2 * padX), scale };
+    }
+
     _chartTimeAtClientX(svg, clientX) {
         const win = this._lastChartWindow ?? this._chartFullWindow;
         if (!win) return null;
-        const { l: pl, r: pr } = CHART_PAD;
-        const cw = Math.max(1, svg.clientWidth - pl - pr);
-        const frac = Math.max(0, Math.min(1, (this._chartLocalX(svg, clientX) - pl) / cw));
+        // Exact inverse of the drawing transform (incl. the dot inset), so the
+        // drag band, wheel and pinch anchors sit under the pointer.
+        const { x0, innerW } = this._chartXFrame(svg);
+        const frac = Math.max(0, Math.min(1, (this._chartLocalX(svg, clientX) - x0) / innerW));
         return win.tMin + frac * (win.tMax - win.tMin);
     }
 
@@ -4884,11 +4918,9 @@ class MeshCoreApp {
         svg.addEventListener('touchmove', e => {
             if (!pinch || e.touches.length !== 2) return;
             e.preventDefault();
-            const rect = svg.getBoundingClientRect();
-            const { l: pl, r: pr } = CHART_PAD;
-            const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
-            const x0 = e.touches[0].clientX - rect.left - pl;
-            const x1 = e.touches[1].clientX - rect.left - pl;
+            const { x0: fx, innerW: cw } = this._chartXFrame(svg);
+            const x0 = this._chartLocalX(svg, e.touches[0].clientX) - fx;
+            const x1 = this._chartLocalX(svg, e.touches[1].clientX) - fx;
             if (Math.abs(x0 - x1) < 1) return;
             const span = (pinch.t0 - pinch.t1) * cw / (x0 - x1);
             if (!isFinite(span) || span <= 0) return;
@@ -4918,11 +4950,9 @@ class MeshCoreApp {
             }
             if (pan.mode !== 'pan') return;        // vertical ⇒ let the page scroll
             e.preventDefault();
-            const rect = svg.getBoundingClientRect();
-            const { l: pl, r: pr } = CHART_PAD;
-            const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
+            const { innerW, scale } = this._chartXFrame(svg);
             const span = this._chartZoom.tMax - this._chartZoom.tMin;
-            this._panChartZoom(-dx / cw * span);   // drag right → reveal earlier times
+            this._panChartZoom(-(dx / scale) / innerW * span);   // drag right → reveal earlier times
             pan.x = t.clientX; pan.y = t.clientY;  // incremental delta
             pan.moved = true;
             this.hideChartTooltip();
@@ -4939,12 +4969,47 @@ class MeshCoreApp {
         // ~50 px per label for readability
         const targetSteps = Math.max(2, Math.floor(chartWidthPx / 50));
         const targetStep = rangeMs / targetSteps;
+        const D = 24 * 3600000;
         const steps = [
             15000, 30000, 60000, 2*60000, 5*60000, 10*60000, 15*60000, 30*60000,
-            3600000, 2*3600000, 3*3600000, 6*3600000, 12*3600000, 24*3600000,
+            3600000, 2*3600000, 3*3600000, 6*3600000, 12*3600000, D,
+            2*D, 7*D, 14*D, 30*D,
         ];
         for (const s of steps) if (s >= targetStep) return s;
         return steps[steps.length - 1];
+    }
+
+    // Tick times in [tMin, tMax] every `step`, aligned to LOCAL time — a 6 h
+    // step falls on 00/06/12/18 h and a day step on local midnight, as on a
+    // clock. (Aligning to multiples of the step from the epoch is UTC: odd
+    // hours in Central Europe, :30 in India.) Day-or-longer steps walk the
+    // calendar, so a DST change doesn't shift them off midnight.
+    _chartTicks(tMin, tMax, step) {
+        const out = [];
+        if (!(step > 0) || !(tMax >= tMin)) return out;
+        const D = 24 * 3600000;
+        if (step >= D) {
+            const days = Math.round(step / D);
+            const d = new Date(tMin); d.setHours(0, 0, 0, 0);
+            if (d.getTime() < tMin) d.setDate(d.getDate() + 1);
+            // Multi-day steps: anchor on a fixed local calendar grid (day number
+            // since the epoch), so the ticks don't jump while panning.
+            if (days > 1) {
+                const dayNo = Math.round((d.getTime() - d.getTimezoneOffset() * 60000) / D);
+                d.setDate(d.getDate() + ((days - dayNo % days) % days));
+            }
+            for (let i = 0; d.getTime() <= tMax && i < 1000; i++) { out.push(d.getTime()); d.setDate(d.getDate() + days); }
+            return out;
+        }
+        const off = t => -new Date(t).getTimezoneOffset() * 60000;
+        let t = Math.ceil((tMin + off(tMin)) / step) * step - off(tMin);
+        for (let i = 0; t <= tMax && i < 2000; i++, t += step) {
+            // Across a DST change re-align to the new offset.
+            const local = t + off(t);
+            const aligned = Math.round(local / step) * step - off(t);
+            if (aligned >= tMin && aligned <= tMax && out[out.length - 1] !== aligned) out.push(aligned);
+        }
+        return out;
     }
 
     // ----- shared chart plot geometry -------------------------------------
@@ -4975,7 +5040,7 @@ class MeshCoreApp {
     _lastDrawGeometry(svg, type) {
         const now = this.windows.frozenAt ?? Date.now();
         const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
-        const { yMin, yMax } = this._chartYBounds(type, win.tMin, win.tMax);
+        const { yMin, yMax } = this._lastChartY?.[type] ?? this._chartYBounds(type, win.tMin, win.tMax);
         return this._chartGeometry(svg, win.tMin, win.tMax, yMin, yMax);
     }
 
@@ -5043,14 +5108,23 @@ class MeshCoreApp {
         } else {
             ({ yMin, yMax, yStep } = this._chartYBounds(type, tMin, tMax));
         }
-        const g = this._chartGeometry(svg, tMin, tMax, yMin, yMax);
-        const { W, H, pl, pr, pt, pb, cw, ch, tRange, yRange } = g;
+        let g = this._chartGeometry(svg, tMin, tMax, yMin, yMax);
         // Adapt yStep so major gridlines are ~35 px apart (more when taller, fewer when short)
-        const maxMajorLines = Math.max(2, Math.floor(ch / 35));
+        const maxMajorLines = Math.max(2, Math.floor(g.ch / 35));
         const niceYSteps = [0.5, 1, 2, 5, 10, 20, 50, 100];
         const minYStep = (yMax - yMin) / maxMajorLines;
         const adaptedStep = niceYSteps.find(s => s >= minYStep);
-        if (adaptedStep && adaptedStep > yStep) yStep = adaptedStep;
+        if (adaptedStep && adaptedStep > yStep) {
+            yStep = adaptedStep;
+            // Re-snap the range to the wider step, or the gridlines land on odd
+            // values (−2, 3, 8 …) and the top one goes missing.
+            yMin = Math.floor(yMin / yStep) * yStep;
+            yMax = Math.ceil(yMax / yStep) * yStep;
+            g = this._chartGeometry(svg, tMin, tMax, yMin, yMax);
+        }
+        // Clicks and hovers are hit-tested against exactly this geometry.
+        (this._lastChartY ??= {})[type] = { yMin, yMax };
+        const { W, H, pl, pr, pt, pb, cw, ch, tRange, yRange } = g;
 
         // The SVG builders want fixed-precision strings; hit-testing uses the
         // same numeric transforms via _lastDrawGeometry — one math, two skins.
@@ -5112,17 +5186,21 @@ class MeshCoreApp {
         const minorStep = labelStep / 2;
         // Use date+time when the visible range spans more than ~12 h
         const useDate = tRange > 12 * 3600000;
-        const fmtOpts = useDate
+        const fmtOpts = labelStep >= 24 * 3600000
+            ? { month: '2-digit', day: '2-digit' }            // day ticks sit on midnight: the time adds nothing
+            : useDate
             ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
             : (labelStep < 60000
                 ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
                 : { hour: '2-digit', minute: '2-digit' });
-        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= tMax; t += minorStep) {
-            if (t % labelStep === 0) continue;
+        const majors = this._chartTicks(tMin, tMax, labelStep);
+        const majorSet = new Set(majors);
+        for (const t of this._chartTicks(tMin, tMax, minorStep)) {
+            if (majorSet.has(t)) continue;
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMinor}" stroke-width="1"/>`);
         }
-        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= tMax; t += labelStep) {
+        for (const t of majors) {
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMajor}" stroke-width="1"/>`);
             const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
@@ -5338,12 +5416,13 @@ class MeshCoreApp {
         const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
         const mx = (e.clientX - rect.left) / scale;
         const my = (e.clientY - rect.top) / scale;
-        const { xOf, yOf } = this._lastDrawGeometry(svg, type);
+        const { xOf, yOf, tMin: wMin, tMax: wMax } = this._lastDrawGeometry(svg, type);
 
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
+            if (p.time < wMin || p.time > wMax) continue;   // clipped away — not drawn
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
             const d = dx * dx + dy * dy;
@@ -6100,6 +6179,10 @@ class MeshCoreApp {
     }
 
     _clearAllData() {
+        // A zoom into the old data would leave the charts on an empty window
+        // (and "Reset zoom" showing) after a Clear or for the next import.
+        this._clearChartZoom();
+        this._chartFullWindow = null;
         // model.clearAll() below wipes the recent window, write buffers and disk.
         this.chartPoints = [];
         this._sentSnrHistory = [];
@@ -6188,11 +6271,20 @@ class MeshCoreApp {
     // within a short grace period — a fast rebuild shouldn't flash a spinner.
     // Returns a done() to call when the work settles (clears the pending show
     // and hides the modal). No-op unless armed.
+    // Overlapping loads share one modal: it hides when the LAST one finishes
+    // (each used to hide it on its own, while another was still running).
     _beginLoadingModal() {
         const modal = document.getElementById('loadingModal');
         if (!modal) return () => {};
+        this._loadingCount = (this._loadingCount || 0) + 1;
         const timer = setTimeout(() => modal.classList.remove('hidden'), 250);
-        return () => { clearTimeout(timer); modal.classList.add('hidden'); };
+        let done = false;
+        return () => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            if (--this._loadingCount <= 0) { this._loadingCount = 0; modal.classList.add('hidden'); }
+        };
     }
 
     _updateHideSelectOptions() {
@@ -7322,6 +7414,9 @@ class MeshCoreApp {
     // Returning early (e.g. the user declines the merge prompt) is fine — the
     // caller restores the UI.
     async _applyCsvImport(rows, sentSnrRows) {
+        // Show the whole import, not a zoom left over from earlier data.
+        this._clearChartZoom();
+        this._chartFullWindow = null;
         // Count what's actually stored, not just the small RAM window. The recent window
         // only holds the recent in-memory window (often a few dozen hashes), while
         // the disk may hold many thousands — so reporting its size here showed

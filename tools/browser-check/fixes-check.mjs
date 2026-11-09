@@ -583,6 +583,46 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await ctx.close();
 }
 
+// ---- UI fixes from the second review round ------------------------------------
+{
+    const now = Date.now();
+    // Header dots follow a theme switch
+    {
+        const ctx = await browser.newContext();
+        const { page, errors } = await openPage(ctx, base);
+        await importCsv(page, tmp('th', [HDR, `${iso(now - 30000)},Flood Advert,ff0001,5E,3,,-110,,,,,`].join('\n')));
+        const get = () => page.evaluate(() => ({ head: document.querySelector('#msgTableHead .rl-dot')?.style.background, rep: document.querySelector('#repTableBody .rl-dot')?.style.background }));
+        const a = await get();
+        await page.click('#themeToggleBtn'); await page.waitForTimeout(300);
+        const b = await get();
+        check('packet-table header dots follow a theme switch', a.head !== b.head && b.head === b.rep, JSON.stringify({ a, b }));
+        // Detail row reopened while the previous one is still closing stays open
+        await importCsv(page, tmp('dt', [HDR, `${iso(now - 20000)},Flood Advert,ab0001,5E,3,,-110,,,,,`, `${iso(now - 19000)},Flood Advert,ab0001,8A,4,,-100,,,,,`].join('\n')));
+        await page.click('#msgTableBody td.sig-snr[data-hash="ab0001"][data-col="5E"]'); await page.waitForTimeout(400);
+        await page.click('tr.detail-row td'); await page.waitForTimeout(50);
+        await page.click('#msgTableBody td.sig-snr[data-hash="ab0001"][data-col="8A"]'); await page.waitForTimeout(700);
+        const det = await page.$$eval('tr.detail-row', t => t.map(x => x.dataset.col));
+        check('a detail opened right after closing another stays open', det.length === 1 && det[0] === '8A', JSON.stringify(det));
+        // Zoom is reset by Clear data
+        await page.evaluate(() => { const a = window.__mcApp; const f = a._chartFullWindow; if (f) a._setChartZoom(f.tMin, f.tMin + (f.tMax - f.tMin) / 3); });
+        await page.evaluate(() => window.__mcApp._clearAllData()); await page.waitForTimeout(300);
+        check('Clear data resets the chart zoom', await page.evaluate(() => window.__mcApp._chartZoom === null && document.querySelector('.chart-zoom-reset').classList.contains('hidden')));
+        check('no page errors (UI round 2)', errors.length === 0, errors.join(' | '));
+        await ctx.close();
+    }
+    // Chart time labels follow local time (India: UTC+5:30)
+    {
+        const ctx = await browser.newContext({ timezoneId: 'Asia/Kolkata' });
+        const { page } = await openPage(ctx, base);
+        const rows = [HDR]; for (let i = 0; i < 60; i++) rows.push(`${iso(now - 20 * 3600000 + i * 20 * 60000)},Flood Advert,ee${String(i).padStart(4, '0')},5E,${i % 10},,-90,,,,,`);
+        await importCsv(page, tmp('tz', rows.join('\n')));
+        await page.waitForTimeout(500);
+        const lbls = await page.$$eval('#snrChart text', t => t.map(x => x.textContent).filter(x => /\d\d:\d\d/.test(x)));
+        check('chart time labels sit on whole local hours (Asia/Kolkata)', lbls.length > 0 && lbls.every(l => /:00$/.test(l)), lbls.join(' | '));
+        await ctx.close();
+    }
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);
