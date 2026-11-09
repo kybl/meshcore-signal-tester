@@ -301,6 +301,7 @@ class MeshCoreApp {
         this._initSignalMap();
         this._initDebug();
         this._setupRepeaterConsole();
+        this._setupRadioTools();
     }
 
     _setupChartArea() {
@@ -1184,8 +1185,10 @@ class MeshCoreApp {
                 'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "3E" matches "3E2F1234" and vice versa. Affects Seen Repeaters, charts, Received Packets, and the 3D map. A notice appears top-right while a filter is active.',
             'messages':
                 'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then how many of the newest packets on the first page came via that repeater, then last RSSI, last SNR, total RX count, then alphabetically.',
+            'tools':
+                'Shown while a companion radio is connected. TX power: the radio\'s transmit power, read from the device; "Set" changes it on the device (saved there, applies immediately) — the allowed maximum is reported by the radio itself. Trace: sends a trace along a path of repeater IDs and shows the SNR measured at every hop. A single ID (e.g. "5E", or a longer "5E9F") is a round trip to that neighbour: ↑ is how well the repeater heard you, ↓ how well you heard it back. For a longer route, give the way out and back, e.g. "5E,8A,5E". All IDs must be the same length (2, 4 or 8 hex digits). With a repeater selected, an empty field traces to that repeater. The trace also appears as a "Trace" row in Received packets.',
             'cli':
-                'Shown while a repeater is connected over USB. Type any repeater CLI command (e.g. "ver", "get tx", "set tx 20", "neighbors", "clock") and press Enter or Send; the reply appears above. ↑/↓ recall earlier commands. While a command is running, the app pauses its own background polling (packet log, neighbours) so the reply isn\'t mixed with them. Commands that would stop the capture or restart/erase the repeater ask for confirmation first. Settings changed with "set" are saved on the repeater; some (radio parameters) take effect only after a reboot.',
+                'Shown while a repeater is connected over USB, or a companion radio with firmware that supports CLI commands (protocol v14+). Type any repeater CLI command (e.g. "ver", "get tx", "set tx 20", "neighbors", "clock") and press Enter or Send; the reply appears above. ↑/↓ recall earlier commands. While a command is running, the app pauses its own background polling (packet log, neighbours) so the reply isn\'t mixed with them. Commands that would stop the capture or restart/erase the repeater ask for confirmation first. Settings changed with "set" are saved on the repeater; some (radio parameters) take effect only after a reboot.',
             'msg-filter':
                 'Keeps only the packets that match what you type — a case-insensitive substring search across several fields at once: the packet type (full or abbreviated, e.g. "advert", "GT", "traceroute"), a repeater\'s short ID or its synced contact name, the decoded message text and sender (when available — most traffic is encrypted, so this is often empty), and the raw packet hex. The count next to the box shows matching / total. Clear with the ✕.',
             'msg-type':
@@ -1840,6 +1843,7 @@ class MeshCoreApp {
         this._stopPairingWatch(); this._hideDisconnectAlarm();
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
+        this._onCompanionReady();
         this._setActiveTransportBtn(this._serialBtnKind || 'serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
@@ -2231,9 +2235,173 @@ class MeshCoreApp {
         });
     }
 
-    _showRepeaterConsole(show) {
+    _showRepeaterConsole(show, title = 'Repeater console') {
         document.getElementById('cliWrap')?.classList.toggle('hidden', !show);
+        const t = document.getElementById('cliTitle');
+        if (t) t.textContent = title;
         if (!show) this._cliPending = null;
+    }
+
+    // Companion firmware with the text CLI over the companion protocol.
+    _companionCli() { return (this._fwVer ?? 0) >= 14; }
+
+    // --- Radio tools (companion) ---
+
+    _setupRadioTools() {
+        document.getElementById('txPowerForm')?.addEventListener('submit', e => { e.preventDefault(); this._setTxPower(); });
+        document.getElementById('traceForm')?.addEventListener('submit', e => { e.preventDefault(); this._runTrace(); });
+    }
+
+    // A companion is connected and identified (SELF_INFO): show the tools and,
+    // once per connection, ask which protocol version it speaks — the CLI
+    // console needs v14+.
+    _onCompanionReady() {
+        document.getElementById('toolsWrap')?.classList.remove('hidden');
+        // Not mid contact dump — an injected command can stall it; the end of
+        // the dump calls back here.
+        if (!this._devQuerySent && !this._contactsFetchActive) {
+            this._devQuerySent = true;
+            this._sendFrame(new Uint8Array([22, 3])).catch(() => {});   // CMD_DEVICE_QUERY, app protocol v3
+        }
+    }
+
+    _handleDeviceInfo(payload) {
+        if (payload.length < 2) return;
+        this._fwVer = payload[1];
+        if (this.conn.mode === 'companion' && this._companionCli()) this._showRepeaterConsole(true, 'Companion console');
+    }
+
+    _hideCompanionTools() {
+        document.getElementById('toolsWrap')?.classList.add('hidden');
+        this._devQuerySent = false;
+        this._fwVer = null;
+        this._txPower = null;
+        this._toolWaiter?.resolve(null);
+        for (const done of this._traceWaiters?.values() ?? []) done(null);
+    }
+
+    _noteTxPower(dbm, max) {
+        const changed = dbm !== this._txPower;
+        this._txPower = dbm;
+        const input = document.getElementById('txPowerInput');
+        if (!input) return;
+        if (max > 0 && max <= 40) input.max = String(max);
+        // Don't overwrite what the user is typing.
+        if (changed && document.activeElement !== input) input.value = String(dbm);
+        const note = document.getElementById('txPowerNote');
+        if (note && !note.dataset.msg) note.textContent = max > 0 && max <= 40 ? `max ${max} dBm` : '';
+    }
+
+    _toolNote(el, msg) {
+        if (!el) return;
+        el.dataset.msg = '1';
+        el.textContent = msg;
+        clearTimeout(el._t);
+        el._t = setTimeout(() => { delete el.dataset.msg; this._noteTxPower(this._txPower, Number(document.getElementById('txPowerInput')?.max)); }, 4000);
+    }
+
+    // Send one companion command and wait for its reply frame (one of
+    // `codes`). Calls run one at a time; while one is in flight the app's
+    // own battery / noise-floor polls pause, and a short head start lets a
+    // poll reply already on its way arrive first — replies come in request
+    // order, and an old firmware answers the stats poll with the same ERR
+    // code we wait for. Resolves to the reply payload, or null on timeout.
+    _companionCall(bytes, codes, timeoutMs = 5000) {
+        const run = async () => {
+            if (this.conn.mode !== 'companion' || !this._canSend()) return null;
+            this._toolBusy = true;
+            try {
+                await new Promise(r => setTimeout(r, 300));
+                return await new Promise(resolve => {
+                    const finish = p => { clearTimeout(timer); if (this._toolWaiter === w) this._toolWaiter = null; resolve(p); };
+                    const w = { codes, resolve: finish };
+                    const timer = setTimeout(() => finish(null), timeoutMs);
+                    this._toolWaiter = w;
+                    this._sendFrame(bytes).catch(() => finish(null));
+                });
+            } finally { this._toolBusy = false; }
+        };
+        const p = (this._toolChain ?? Promise.resolve()).then(run, run);
+        this._toolChain = p.catch(() => {});
+        return p;
+    }
+
+    async _setTxPower() {
+        const input = document.getElementById('txPowerInput');
+        const note = document.getElementById('txPowerNote');
+        const v = Number(input?.value);
+        const max = Number(input?.max) || 30;
+        if (!Number.isInteger(v) || v < -9 || v > max) { this._toolNote(note, `Enter a whole number from -9 to ${max}.`); return; }
+        // CMD_SET_RADIO_TX_POWER (12): [12, int8 dBm] → OK / ERR
+        const r = await this._companionCall(new Uint8Array([12, v & 0xff]), [0, 1]);
+        if (r?.[0] === 0) { this._txPower = v; this._toolNote(note, `TX power set to ${v} dBm.`); }
+        else this._toolNote(note, r ? 'The radio rejected this value.' : 'No reply from the radio.');
+    }
+
+    // Parse "5E", "5E9F" or "5E,8A,5E" into path bytes. IDs must share one
+    // length of 1, 2 or 4 bytes (the trace hash sizes, firmware v1.11+ for >1).
+    _parseTracePath(text) {
+        const ids = text.split(/[\s,>→-]+/).filter(Boolean);
+        if (!ids.length) return { error: 'Enter a repeater ID (e.g. 5E) or a path (e.g. 5E,8A,5E).' };
+        if (!ids.every(id => /^[0-9a-f]+$/i.test(id))) return { error: 'IDs are hex, e.g. 5E or 5E9F.' };
+        const len = ids[0].length;
+        if (![2, 4, 8].includes(len) || !ids.every(id => id.length === len))
+            return { error: 'All IDs must have the same length: 2, 4 or 8 hex digits.' };
+        if (ids.length * len / 2 > 64) return { error: 'Path too long.' };
+        const bytes = new Uint8Array(ids.length * len / 2);
+        ids.forEach((id, i) => { for (let j = 0; j < len / 2; j++) bytes[i * len / 2 + j] = parseInt(id.substr(j * 2, 2), 16); });
+        return { ids: ids.map(i => i.toUpperCase()), bytes, sizeBits: len === 2 ? 0 : len === 4 ? 1 : 2 };
+    }
+
+    async _runTrace() {
+        const input = document.getElementById('traceInput');
+        const out = document.getElementById('traceResult');
+        const btn = document.getElementById('traceBtn');
+        if (!out || this._traceRunning) return;
+        let text = (input?.value ?? '').trim();
+        // Empty field + a repeater selected → trace to that repeater.
+        const sel = this.selection.col;
+        if (!text && sel && /^[0-9a-f]+$/i.test(sel)) { text = sel.slice(0, sel.length >= 4 ? 4 : 2); if (input) input.value = text; }
+        const p = this._parseTracePath(text);
+        const show = (msg, cls) => { out.innerHTML = ''; const d = document.createElement('div'); if (cls) d.className = cls; d.textContent = msg; out.appendChild(d); };
+        if (p.error) { show(p.error, 'tools-note'); return; }
+        const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
+        // CMD_SEND_TRACE_PATH (36): [36, tag u32, auth u32, flags, path...]
+        const frame = new Uint8Array(10 + p.bytes.length);
+        const dv = new DataView(frame.buffer);
+        frame[0] = 36; dv.setUint32(1, tag, true); dv.setUint32(5, 0, true); frame[9] = p.sizeBits;
+        frame.set(p.bytes, 10);
+        this._traceRunning = true;
+        if (btn) { btn.disabled = true; btn.textContent = 'Tracing…'; }
+        show(`Tracing ${p.ids.join(' → ')} …`, 'tools-note');
+        try {
+            this._traceWaiters ??= new Map();
+            const result = new Promise(resolve => this._traceWaiters.set(tag, resolve));
+            const r = await this._companionCall(frame, [6, 1]);
+            if (!r || r[0] !== 6) { this._traceWaiters.delete(tag); show(r ? 'The radio rejected the trace (path or firmware not supported).' : 'No reply from the radio.', 'tools-note'); return; }
+            // RESP_CODE_SENT: [6, flood, tag u32, est_timeout ms u32]
+            const est = r.length >= 10 ? new DataView(r.buffer, r.byteOffset).getUint32(6, true) : 5000;
+            const wait = Math.min(30000, Math.max(3000, est * 1.5 + 1000));
+            const res = await Promise.race([result, new Promise(rs => setTimeout(() => rs(undefined), wait))]);
+            this._traceWaiters.delete(tag);
+            if (res === null) return;                      // disconnected meanwhile
+            if (!res) { show(`No answer within ${Math.round(wait / 1000)} s — the path is broken somewhere (or a repeater was busy). Try again.`, 'tools-note'); return; }
+            show(this._formatTrace(res.ids, res.snrs));
+        } finally {
+            this._traceRunning = false;
+            if (btn) { btn.disabled = false; btn.textContent = 'Trace'; }
+        }
+    }
+
+    // One line per hop: "you → 5E   7.25 dB". snrs[i] = SNR at hop i of the
+    // packet from the previous node; the last value is this radio hearing
+    // the final hop.
+    _formatTrace(ids, snrs) {
+        const fmt = v => (v > 0 ? '+' : '') + v.toFixed(2) + ' dB';
+        const name = id => { const n = this.contacts.nameForCol(id); return n ? `${id} (${n})` : id; };
+        if (ids.length === 1) return `↑ ${name(ids[0])} heard you: ${fmt(snrs[0])}\n↓ you heard ${name(ids[0])}: ${fmt(snrs[1])}`;
+        const nodes = ['you', ...ids.map(name), 'you'];
+        return snrs.map((v, i) => `${nodes[i]} → ${nodes[i + 1]}   ${fmt(v)}`).join('\n');
     }
 
     // A console command is in flight: its reply window is still open.
@@ -2257,13 +2425,14 @@ class MeshCoreApp {
     async _cliSubmit() {
         const cmd = (this._cliInputEl?.value ?? '').trim();
         if (!cmd) return;
-        if (this.conn.mode !== 'repeater' || !this.serialPort) {
-            this._cliAppend('Not connected to a repeater.', 'cli-note');
+        const companion = this.conn.mode === 'companion' && this._companionCli();
+        if (!companion && (this.conn.mode !== 'repeater' || !this.serialPort)) {
+            this._cliAppend('Not connected.', 'cli-note');
             return;
         }
         // Commands that would silently break the capture, or restart / wipe
         // the repeater, need an explicit OK.
-        const risky = /^(reboot|erase|start\s+ota|log\s+stop)\b/i.exec(cmd);
+        const risky = /^(reboot|erase|poweroff|shutdown|start\s+ota|log\s+stop)\b/i.exec(cmd);
         if (risky) {
             const why = /^log/i.test(risky[1])
                 ? 'This stops the repeater\'s packet log — the app will stop capturing packets until you send "log start" (or reconnect).'
@@ -2275,6 +2444,21 @@ class MeshCoreApp {
         this._cliHistIdx = this._cliHistory.length;
         this._cliInputEl.value = '';
         this._cliAppend('> ' + cmd, 'cli-cmd');
+        if (companion) {
+            // CMD_RUN_CLI_COMMAND (66, protocol v14+) → RESP_CODE_CLI_REPLY (29).
+            const text = new TextEncoder().encode(cmd);
+            const frame = new Uint8Array(1 + text.length);
+            frame[0] = 66; frame.set(text, 1);
+            const r = await this._companionCall(frame, [29, 1]);
+            if (!r) this._cliAppend('(no reply)', 'cli-note');
+            else if (r[0] === 1) this._cliAppend('Error — command not supported by this firmware.', 'cli-note');
+            else {
+                const reply = new TextDecoder().decode(r.subarray(1)).replace(/\r/g, '');
+                if (!reply.trim()) this._cliAppend('(empty reply)', 'cli-note');
+                else for (const l of reply.split('\n')) this._cliAppend(l);
+            }
+            return;
+        }
         const t = performance.now();
         // Reply window: open for up to 4 s waiting for the first line, then
         // kept open 1 s past the latest reply line (multi-line replies such as
@@ -2395,7 +2579,7 @@ class MeshCoreApp {
     _startBatteryPoll() {
         clearInterval(this._batteryPollTimer);
         this._batteryPollTimer = setInterval(() => {
-            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive && !this._toolBusy) {
                 this.sendBatteryQuery();
             }
         }, 60000);
@@ -2403,7 +2587,7 @@ class MeshCoreApp {
         // line, so 10 s resolution matters; the request/reply is ~10 bytes.
         clearInterval(this._noisePollTimer);
         this._noisePollTimer = setInterval(() => {
-            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive && !this._toolBusy) {
                 this._sendFrame(new Uint8Array([56, 1])).catch(() => {});   // CMD_GET_STATS type RADIO
             }
         }, 10000);
@@ -2809,6 +2993,11 @@ class MeshCoreApp {
 
     handlePayload(payload) {
         const pushCode = payload[0];
+        // Reply to a Radio tools / console command (see _companionCall):
+        // RESP_CODE_OK/ERR/SENT/CLI_REPLY are only ever awaited there.
+        if (this._toolWaiter?.codes.includes(pushCode)) { this._toolWaiter.resolve(payload); return; }
+        // RESP_CODE_DEVICE_INFO (0x0D): [1] = firmware protocol version.
+        if (pushCode === 0x0d) { this._handleDeviceInfo(payload); return; }
         // RESP_CODE_BATT_AND_STORAGE (0x0C), reply to CMD_GET_BATT_AND_STORAGE:
         // bytes [1-2] = uint16 LE voltage in mV. The storage kB fields that
         // follow are ignored — they track the radio's internal config
@@ -2861,6 +3050,7 @@ class MeshCoreApp {
                 this.contacts.setLastmod(this._selfPubKey,
                     (payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24)) >>> 0);
             this.contacts.schedulePersist();   // full list received → persist with the new sync marker
+            if (this.conn.mode === 'companion') this._onCompanionReady();
             this._updateContactsCount();
             this._lastColKey = null; // force column header redraw with names
             this._renderMsgTable();
@@ -2916,6 +3106,9 @@ class MeshCoreApp {
         // Bytes 4..35 = the companion's public key: its identity, used to keep
         // the contact-sync marker per device.
         this._selfPubKey = Array.from(payload.subarray(4, 36), b => b.toString(16).padStart(2, '0')).join('');
+        // [2] = current TX power (dBm, signed), [3] = the radio's maximum.
+        this._noteTxPower(payload[2] > 127 ? payload[2] - 256 : payload[2], payload[3]);
+        if (this.conn.mode === 'companion') this._onCompanionReady();
         const lat = ((payload[36] | (payload[37] << 8) | (payload[38] << 16) | (payload[39] << 24)) | 0) / 1e6;
         const lon = ((payload[40] | (payload[41] << 8) | (payload[42] << 16) | (payload[43] << 24)) | 0) / 1e6;
         this._setDeviceLocation(lat, lon);
@@ -3126,27 +3319,34 @@ class MeshCoreApp {
         this._ingestPacket(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null, { remoteSnr, ...this._myLocation() });
     }
 
+    // PUSH_CODE_TRACE_DATA layout: [0]=0x89, [1]=reserved, [2]=path_len (bytes
+    // of path hashes), [3]=flags (bits 0-1: hash size = 1 << n, firmware
+    // v1.11+), [4-7]=tag, [8-11]=auth, then the path hashes, one SNR byte per
+    // hop (signed, ×4) and a final SNR (the last hop as heard by this radio).
     _handleTracePush(payload) {
         if (payload.length < 12) return;
         const pathLen = payload[2];
+        const hashSize = 1 << (payload[3] & 0x03);
+        const hops = pathLen >> (payload[3] & 0x03);
         const tag = ((payload[4]) | (payload[5]<<8) | (payload[6]<<16) | (payload[7]<<24)) >>> 0;
-        const needed = 12 + pathLen + pathLen + 1;
-        if (payload.length < needed) return;
-        // SNRs: path_len+1 values (signed byte / 4)
+        if (payload.length < 12 + pathLen + hops + 1) return;
         const snrs = [];
-        for (let i = 0; i <= pathLen; i++) {
+        for (let i = 0; i <= hops; i++) {
             const b = payload[12 + pathLen + i];
             snrs.push((b > 127 ? b - 256 : b) / 4);
         }
-        // Last path hash = last repeater before destination
-        const lastHash = pathLen > 0 ? payload[12 + pathLen - 1] : null;
-        const repeaterCol = lastHash != null
-            ? lastHash.toString(16).padStart(2, '0').toUpperCase()
-            : 'direct';
+        const ids = [];
+        for (let i = 0; i < hops; i++) {
+            ids.push(Array.from(payload.subarray(12 + i * hashSize, 12 + (i + 1) * hashSize),
+                b => b.toString(16).padStart(2, '0')).join('').toUpperCase());
+        }
+        // Last path hash = the last repeater, the one this radio heard.
+        const repeaterCol = ids.length ? ids[ids.length - 1] : 'direct';
         const lastSnr = snrs[snrs.length - 1];
         const hash = 'TR:' + tag.toString(16).toUpperCase().padStart(8, '0');
-        const meta = { pathLen, tag, snrs };
+        const meta = { pathLen: hops, tag, snrs };
         this._ingestPacket(hash, repeaterCol, 'Trace', null, lastSnr, null, meta, null, this._myLocation());
+        this._traceWaiters?.get(tag)?.({ ids, snrs });
     }
 
     _bufferToHex(buffer) {
@@ -7109,6 +7309,7 @@ class MeshCoreApp {
         this.releaseWakeLock();
         this._stopRepeaterPolling();
         this._showRepeaterConsole(false);
+        this._hideCompanionTools();
         clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
         this._monitorDelay = null;

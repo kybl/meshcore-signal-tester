@@ -2915,3 +2915,39 @@ html.light-theme .theme-toggle-btn:hover {
 .cli-input {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+
+/* ── Radio tools (companion) ────────────────────────── */
+
+.tools-inner {
+    padding: 2px 4px 6px;
+}
+
+.tools-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.tools-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 64px;
+}
+
+.tools-num { flex: 0 0 70px; }
+.tools-text { flex: 1 1 160px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.tools-unit { font-size: 12px; color: var(--text-secondary); }
+.tools-note { font-size: 11px; color: var(--text-secondary); }
+
+.tools-result {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.tools-result:empty { display: none; }
+.tools-result .tools-note { font-style: italic; }

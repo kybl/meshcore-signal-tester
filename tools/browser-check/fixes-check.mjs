@@ -305,6 +305,99 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await ctx.close();
 }
 
+// ---- #20: companion Radio tools + console (fake companion) ---------------------
+{
+    const ctx = await browser.newContext();
+    const { page, errors } = await openPage(ctx, base);
+    // A fake companion behind _sendFrame: answers like the firmware does.
+    await page.evaluate(() => {
+        const app = window.__mcApp;
+        window.__frames = [];
+        window.__fw = { ver: 14, tx: 20, max: 22, traceOk: true, hashBytes: 1 };
+        const reply = b => setTimeout(() => app.handlePayload(Uint8Array.from(b)), 20);
+        app._sendFrame = async bytes => {
+            const f = Array.from(bytes); window.__frames.push(f);
+            const fw = window.__fw;
+            switch (f[0]) {
+                case 22: reply([0x0d, fw.ver]); break;
+                case 12: { const v = f[1] > 127 ? f[1] - 256 : f[1];
+                           if (v >= -9 && v <= fw.max) { fw.tx = v; reply([0]); } else reply([1, 6]); break; }
+                case 66: { const cmd = new TextDecoder().decode(Uint8Array.from(f.slice(1)));
+                           const txt = cmd === 'get radio.rxgain' ? '> on' : cmd === 'set radio.rxgain off' ? 'OK' : 'Unknown command';
+                           reply([29, ...new TextEncoder().encode(txt)]); break; }
+                case 36: { const tag = f.slice(1, 5), flags = f[9], path = f.slice(10);
+                           reply([6, 0, ...tag, 0xe8, 0x03, 0, 0]);            // est 1000 ms
+                           if (!fw.traceOk) break;
+                           const hs = 1 << (flags & 3), hops = path.length / hs;
+                           const snrs = Array.from({ length: hops }, (_, i) => (7 - i) * 4);   // 7, 6, … dB
+                           setTimeout(() => app.handlePayload(Uint8Array.from(
+                               [0x89, 0, path.length, flags, ...tag, 0, 0, 0, 0, ...path, ...snrs, 0xf6 /* -2.5 dB */])), 200);
+                           break; }
+                case 56: reply([1, 1]); break;          // old-firmware ERR to the stats poll
+            }
+        };
+        app.conn.setMode('companion');
+        app._canSend = () => true;
+        app._collecting = true;            // a real connect starts collecting
+        // SELF_INFO: tx power 20, max 22
+        const si = new Uint8Array(58); si[0] = 5; si[2] = 20; si[3] = 22;
+        app.handlePayload(si);
+    });
+    await page.waitForTimeout(800);
+    let st = await page.evaluate(() => ({
+        tools: !document.getElementById('toolsWrap').classList.contains('hidden'),
+        cli: !document.getElementById('cliWrap').classList.contains('hidden'),
+        title: document.getElementById('cliTitle').textContent,
+        tx: document.getElementById('txPowerInput').value, max: document.getElementById('txPowerInput').max }));
+    check('#20 Radio tools appear for a companion, TX power read from SELF_INFO', st.tools && st.tx === '20' && st.max === '22', JSON.stringify(st));
+    check('#20 companion console appears on firmware v14+', st.cli && st.title === 'Companion console', JSON.stringify(st));
+
+    await page.fill('#txPowerInput', '17'); await page.click('#txPowerSet'); await page.waitForTimeout(800);
+    let note = await page.textContent('#txPowerNote');
+    check('#20 TX power set', note.includes('17 dBm') && await page.evaluate(() => window.__fw.tx === 17), note);
+    await page.fill('#txPowerInput', '30'); await page.click('#txPowerSet'); await page.waitForTimeout(500);
+    note = await page.textContent('#txPowerNote');
+    check('#20 TX power above the radio max is refused locally', /from -9 to 22/.test(note) && await page.evaluate(() => window.__fw.tx === 17), note);
+
+    // Console over the companion protocol, while the (old-fw ERR) stats poll also runs.
+    await page.evaluate(() => window.__mcApp._sendFrame(new Uint8Array([56, 1])));
+    await page.fill('#cliInput', 'get radio.rxgain'); await page.press('#cliInput', 'Enter'); await page.waitForTimeout(900);
+    const log = await page.$eval('#cliLog', e => e.innerText);
+    check('#20 companion console sends CMD_RUN_CLI_COMMAND and shows the reply', /> get radio\.rxgain\n> on/.test(log), JSON.stringify(log));
+
+    // Trace: single ID = round trip
+    await page.fill('#traceInput', '5e'); await page.click('#traceBtn');
+    await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 10000 });
+    let tr = await page.textContent('#traceResult');
+    check('#20 trace to one repeater shows ↑ and ↓ SNR', /5E heard you: \+7\.00 dB/.test(tr) && /you heard 5E: -2\.50 dB/.test(tr), tr);
+    const row = await page.evaluate(() => [...window.__mcApp.model.recentEntries()].some(([h, d]) => h.startsWith('TR:') && d.repeaters.has('5E')));
+    check('#20 trace also lands as a Trace row under 5E', row);
+    // Multi-hop with 2-byte IDs
+    await page.fill('#traceInput', '5E9F,8A01,5E9F'); await page.click('#traceBtn');
+    await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 10000 });
+    tr = await page.textContent('#traceResult');
+    const flags = await page.evaluate(() => window.__frames.filter(f => f[0] === 36).pop()[9]);
+    check('#20 2-byte multi-hop trace: flags=1 and per-hop lines', flags === 1
+        && /you → 5E9F\s+\+7\.00 dB/.test(tr) && /5E9F → 8A01\s+\+6\.00 dB/.test(tr) && /5E9F → you\s+-2\.50 dB/.test(tr), `flags=${flags} ${tr}`);
+    // Bad input / no answer
+    await page.fill('#traceInput', '5E,8A01'); await page.click('#traceBtn'); await page.waitForTimeout(200);
+    check('#20 mixed ID lengths are rejected', /same length/.test(await page.textContent('#traceResult')));
+    await page.evaluate(() => { window.__fw.traceOk = false; });
+    await page.fill('#traceInput', '5E'); await page.click('#traceBtn');
+    await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 15000 });
+    check('#20 a trace with no answer times out with a message', /No answer within/.test(await page.textContent('#traceResult')));
+
+    // Old firmware: no console
+    await page.evaluate(() => { const a = window.__mcApp; a._hideCompanionTools(); a._showRepeaterConsole(false); window.__fw.ver = 9;
+        const si = new Uint8Array(58); si[0] = 5; si[2] = 20; si[3] = 22; a.handlePayload(si); });
+    await page.waitForTimeout(800);
+    st = await page.evaluate(() => ({ tools: !document.getElementById('toolsWrap').classList.contains('hidden'),
+        cli: !document.getElementById('cliWrap').classList.contains('hidden') }));
+    check('#20 older companion firmware: tools yes, console no', st.tools && !st.cli, JSON.stringify(st));
+    check('no page errors (#20 companion)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);
