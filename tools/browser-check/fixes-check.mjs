@@ -446,6 +446,31 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await ctx.close();
 }
 
+// ---- Android: an import picked while the activity was recreated ---------------
+{
+    const ctx = await browser.newContext();
+    const now = Date.now();
+    const rows = []; for (let i = 0; i < 5; i++) rows.push(`${iso(now - 60000 + i * 1000)},Flood Advert,cd${String(i).padStart(4, '0')},5E,3,,-90,,,,,`);
+    const csv = [HDR, ...rows].join('\n');
+    // The native side has staged one file before the page starts.
+    await ctx.addInitScript(text => {
+        let pending = [{ name: 'capture.csv', text }];
+        window.AndroidFiles = { takePendingImports: () => { const j = JSON.stringify(pending); pending = []; return j; } };
+    }, csv);
+    const { page, errors } = await openPage(ctx, base);
+    await page.waitForTimeout(2500);
+    let n = await page.$$eval('#msgTableBody tr[id^="row-"]', t => t.length);
+    check('Android: a staged import is taken at startup', n === 5, `rows=${n}`);
+    // …and one staged after startup, announced by the native side.
+    await page.evaluate(text => { window.AndroidFiles.takePendingImports = () => JSON.stringify([{ name: 'b.csv', text }]); window.__mcApp._takeNativeImports(); window.AndroidFiles.takePendingImports = () => '[]'; },
+        [HDR, `${iso(now - 1000)},Flood Advert,cdff00,5E,3,,-90,,,,,`].join('\n'));
+    await page.waitForTimeout(2500);
+    n = await page.$$eval('#msgTableBody tr[id^="row-"]', t => t.length);
+    check('Android: a staged import announced later is imported too', n === 6, `rows=${n}`);
+    check('no page errors (staged import)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);

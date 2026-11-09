@@ -25,6 +25,13 @@ class FilesBridge(private val activity: MainActivity) {
         main.post { activity.launchCsvSavePicker(filename, content) }
     }
 
+    /**
+     * CSV files picked for import whose result reached a recreated activity
+     * (see MainActivity.stageOrphanImport): JSON [{name, text}], emptied on read.
+     */
+    @JavascriptInterface
+    fun takePendingImports(): String = try { activity.takePendingImportsJson() } catch (_: Exception) { "[]" }
+
     /** Save directly to the public Downloads folder (legacy fallback). */
     @JavascriptInterface
     fun saveCsv(filename: String, content: String) {

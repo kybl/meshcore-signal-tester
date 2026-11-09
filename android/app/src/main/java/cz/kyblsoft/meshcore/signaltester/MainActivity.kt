@@ -157,7 +157,8 @@ class MainActivity : AppCompatActivity() {
     ) { uri: Uri? ->
         val cb = fileChooserCallback
         fileChooserCallback = null
-        cb?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+        if (cb != null) cb.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+        else if (uri != null) stageOrphanImport(listOf(uri))
     }
 
     // Multi-file variant, used when the page's <input> has the `multiple`
@@ -169,7 +170,52 @@ class MainActivity : AppCompatActivity() {
     ) { uris: List<Uri> ->
         val cb = fileChooserCallback
         fileChooserCallback = null
-        cb?.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
+        if (cb != null) cb.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
+        else if (uris.isNotEmpty()) stageOrphanImport(uris)
+    }
+
+    // The import picker's result arrived at a NEW instance of this activity:
+    // the system destroyed the old one (or killed the process) while the
+    // picker was open — MIUI/HyperOS do this eagerly. The WebView callback
+    // that should receive the files died with the old page, so the import used
+    // to vanish silently. Instead, read the picked files now (the URI grant is
+    // valid for this result) into the cache, and let the reloaded page take
+    // them once it has started (FilesBridge.takePendingImports).
+    private val pendingImportDir get() = File(cacheDir, "pending-import")
+    private fun stageOrphanImport(uris: List<Uri>) {
+        Thread {
+            var staged = 0
+            try {
+                val dir = pendingImportDir.apply { mkdirs() }
+                uris.forEachIndexed { i, uri ->
+                    val name = (displayNameOf(uri) ?: "import-$i.csv").replace('/', '_')
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        File(dir, "%03d-%s".format(Locale.US, i, name)).outputStream().use { input.copyTo(it) }
+                        staged++
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+            if (staged > 0) runOnUiThread {
+                // Page already up → import now; otherwise its startup takes them.
+                if (::webView.isInitialized)
+                    webView.evaluateJavascript("window.__mcApp && window.__mcApp._takeNativeImports && window.__mcApp._takeNativeImports()", null)
+            }
+        }.start()
+    }
+
+    // Hand the staged files to the page as JSON [{name, text}] and delete them.
+    fun takePendingImportsJson(): String {
+        val out = JSONArray()
+        val files = pendingImportDir.listFiles()?.sortedBy { it.name } ?: return "[]"
+        for (f in files) {
+            try {
+                out.put(JSONObject().put("name", f.name.substring(4)).put("text", f.readText(Charsets.UTF_8)))
+            } catch (_: Exception) {}
+            f.delete()
+        }
+        return out.toString()
     }
 
     // File picker for CSV export — shows "Save as" dialog via SAF.

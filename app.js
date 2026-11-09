@@ -5679,6 +5679,8 @@ class MeshCoreApp {
         } finally {
             doneLoading();
         }
+        this._startupDone = true;
+        this._takeNativeImports();
         // No periodic wide-view tick: charts, map and table page 0 are all kept
         // current in RAM (bucket/cell upserts + the live row tail); writes flush
         // themselves via the model's debounced flush. Disk is only read on view changes.
@@ -7087,6 +7089,19 @@ class MeshCoreApp {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         if (!filteredExport) this._unsavedRxCount = 0;
+    }
+
+    // Android: CSV files picked for import while the system recreated the
+    // activity (the WebView reloaded, so the file <input> never got them) —
+    // staged natively, imported here once startup has finished. Called at the
+    // end of startup and by the native side after it staged files.
+    _takeNativeImports() {
+        if (!this._startupDone || !window.AndroidFiles?.takePendingImports) return;
+        let list = [];
+        try { list = JSON.parse(window.AndroidFiles.takePendingImports() || '[]'); } catch (_) {}
+        if (!Array.isArray(list) || !list.length) return;
+        const files = list.map(f => new File([String(f.text ?? '')], String(f.name || 'import.csv'), { type: 'text/csv' }));
+        this._importCsvFiles(files).catch(e => console.error('CSV import failed:', e));
     }
 
     // Back-compat single-file entry point.
