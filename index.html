@@ -24,7 +24,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=488">
+    <link rel="modulepreload" href="app.js?v=489">
     <link rel="modulepreload" href="capture-model.js?v=5">
     <link rel="modulepreload" href="chart-cache.js?v=2">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -435,12 +435,16 @@
 
             <div class="help-section-title">Getting started</div>
             <p>Click <b>Connect Bluetooth</b> (or <b>Connect USB</b> for a wired serial connection, or <b>Connect WiFi</b> in the Android app) and select your MeshCore device. Packet data appears automatically as the device picks up mesh traffic. Previously used devices (Bluetooth, USB and WiFi) appear as quick-connect buttons. Click any <b>section title</b> to collapse or expand that section. Use <b>⏹ Stop / ▶ Resume</b> to suspend data collection without disconnecting — collection pauses automatically on disconnect and resumes on reconnect.</p>
-            <p>Use <b>Import CSV</b> / <b>Export CSV</b> to save the captured packets to a file and reload them later (you can select several CSV files at once and they're merged into one session), and <b>Clear data</b> to wipe the current session. Captured data is also saved automatically as you go, so if you reload the page or the app restarts it offers to resume the previous session. If an established connection drops unexpectedly — cable unplugged, device reset, or out of range — a full-screen <b>alarm</b> warns you that data collection has stopped (a deliberate disconnect won't trigger it).</p>
+            <p>Use <b>Import CSV</b> / <b>Export CSV</b> to save the captured packets to a file and reload them later (you can select several CSV files at once and they're merged into one session), and <b>Clear data</b> to wipe the current session. Captured data is also saved automatically as you go, so if you reload the page or the app restarts it offers to resume the previous session. If an established connection drops unexpectedly — cable unplugged, device reset, or out of range — a full-screen <b>alarm</b> warns you that data collection has stopped (a deliberate disconnect or a restart from <b>Radio tools</b> won't trigger it).</p>
             <p>Tick <b>Auto-reconnect</b> (next to the connect buttons) to have the app quietly retry the last device a few times after such an unexpected drop, instead of alarming straight away. This only appears where a reconnect can happen <i>without</i> a manual confirmation: the Android app (Bluetooth, USB or WiFi), or desktop Chrome/Edge (Bluetooth or USB). It is deliberately hidden for <b>Bluetooth in a mobile browser</b>, because there the browser forces a system device picker on every single connection for privacy reasons — so a silent reconnect is simply not possible.</p>
 
             <div class="help-section-title">What you can connect to</div>
             <p>The app auto-detects the device — you don't pick a type. A <b>companion radio</b> (Bluetooth, USB, or WiFi in the Android app) pushes every received packet fully decoded, which is the richest source. A <b>repeater</b> (USB only) instead exposes a text CLI the app drives; how much it can report depends on its firmware (see below).</p>
-            <p>Once connected, the green status box shows the device's node name, its battery level, and — matched against a built-in list of the standard MeshCore radio presets (consulting the official online list only when the radio reports settings the built-in list doesn't know) — which preset the radio is using (frequency, bandwidth, spreading factor, coding rate).</p>
+            <p>Once connected, the green status box shows the device's node name, its battery level, and — matched against a built-in list of the standard MeshCore radio presets (consulting the official online list only when the radio reports settings the built-in list doesn't know) — which preset the radio is using (frequency, bandwidth, spreading factor, coding rate). For a companion it also shows the firmware and protocol version — in amber when the firmware is too old for some of the tools below.</p>
+
+            <div class="help-section-title">Radio tools &amp; console</div>
+            <p>With a <b>companion</b> connected, the <b>Radio tools</b> section lets you read and set the <b>TX power</b>, run a <b>Trace</b> to a repeater (the SNR in both directions — how well it hears you and you hear it — or of every hop along a longer path), switch the <b>RX gain</b> (boosted receive gain, and an external LNA on boards that have one; firmware v1.18.0+) and <b>restart</b> the device — the app reconnects by itself once it is back. Keep the RX gain the same when comparing measurements: it directly changes the RSSI and SNR you see.</p>
+            <p>A <b>console</b> section lets you type device commands and see the replies: always for a <b>repeater</b> on USB (its text CLI), and for a companion with firmware v1.18.0 or newer (e.g. <code>get radio.rxgain</code>, <code>get tx</code>). Commands that would stop the capture, or restart or erase the device, ask for confirmation first.</p>
 
             <div class="help-section-title">Key concepts</div>
             <div class="help-dl">
@@ -518,6 +522,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=488"></script>
+    <script type="module" src="app.js?v=489"></script>
 </body>
 </html>
