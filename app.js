@@ -1,7 +1,7 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=6';
 import { Signal3DMap } from './signal3d.js?v=165';
-import { CaptureModel } from './capture-model.js?v=6';
+import { CaptureModel } from './capture-model.js?v=7';
 import { TableCache } from './table-cache.js?v=4';
 import { ChartCache } from './chart-cache.js?v=2';
 import { MapCache } from './map-cache.js?v=4';
@@ -11,7 +11,7 @@ import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=3';
 import { ConnectionState, ReconnectController } from './connection-state.js?v=6';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
-import { buildCsv, parseCsv } from './csv.js?v=7';
+import { buildCsv, parseCsv } from './csv.js?v=8';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=2';
@@ -333,10 +333,14 @@ class MeshCoreApp {
                 // Re-render the tables only when the moving cutoff actually
                 // drops something — rebuilding them every 2 s cleared any text
                 // the user had selected and cost a full table build each tick.
-                let rows = 0, reps = 0;
-                for (const d of this.model.recentValues()) if (d.lastSeen >= cutoff) rows++;
+                // Count + oldest visible: a row ageing out while a new one
+                // arrives leaves the count equal but moves the oldest.
+                let rows = 0, reps = 0, oldest = Infinity;
+                for (const d of this.model.recentValues()) {
+                    if (d.lastSeen >= cutoff) { rows++; if (d.firstSeen < oldest) oldest = d.firstSeen; }
+                }
                 for (const [, d] of this.columns.statsEntries()) if (d.lastSeen >= cutoff) reps++;
-                const sig = rows + '|' + reps;
+                const sig = rows + '|' + reps + '|' + oldest + '|' + (cutoff > oldest ? 1 : 0);
                 if (sig !== this._displayTickSig) {
                     this._displayTickSig = sig;
                     this._renderRepTable();
@@ -1527,7 +1531,16 @@ class MeshCoreApp {
         }
     }
 
+    // A BLE attempt the user cancelled (or that a newer connection replaced)
+    // may still reject — a write or notification setup failing because its
+    // link was dropped. That error belongs to a dead attempt: surfacing it
+    // would alert and tear down the live connection.
     async connectToDevice(device) {
+        try { return await this._connectToDeviceInner(device); }
+        catch (e) { if (this.device !== device) return; throw e; }
+    }
+
+    async _connectToDeviceInner(device) {
         this._setActiveTransportBtn('ble', 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting…', 'connecting');
         this.conn.beginAttempt('ble');   // BLE is always the companion protocol
@@ -1552,6 +1565,7 @@ class MeshCoreApp {
         let server, service;
         for (let attempt = 1; attempt <= 3; attempt++) {
             if (gone()) return;
+            server = null;      // per attempt — the "no NUS service" message relies on it
             try {
                 server = await device.gatt.connect();
                 if (gone()) { try { device.gatt.disconnect(); } catch (e) {} return; }
@@ -1880,8 +1894,8 @@ class MeshCoreApp {
     // buffer, so the app kept showing "Connected" — for about 15 minutes, until
     // the kernel gave up retransmitting. A companion always answers the
     // app's 10 s noise-floor poll (with stats, or ERR on old firmware), so a
-    // long silence means the link is dead: after 30 s of nothing, probe
-    // once more; after 60 s, treat it as an unexpected drop (alarm /
+    // long silence means the link is dead: after 45 s of nothing, probe
+    // once more; after 90 s, treat it as an unexpected drop (alarm /
     // auto-reconnect).
     _startWifiWatchdog(port) {
         clearInterval(this._wifiWatchdog);
@@ -1891,11 +1905,13 @@ class MeshCoreApp {
                 clearInterval(this._wifiWatchdog); this._wifiWatchdog = null; return;
             }
             const quiet = performance.now() - this._lastRxAt;
-            if (quiet > 60000) {
+            // Generous margins: a backgrounded WebView may run timers only
+            // about once a minute, which delays the polls that keep it fed.
+            if (quiet > 90000) {
                 clearInterval(this._wifiWatchdog); this._wifiWatchdog = null;
-                console.warn('WiFi link silent for 60 s — treating it as dropped');
+                console.warn('WiFi link silent for 90 s — treating it as dropped');
                 this.onDisconnected();
-            } else if (quiet > 30000) {
+            } else if (quiet > 45000) {
                 this.sendBatteryQuery();
             }
         }, 10000);
@@ -5063,7 +5079,13 @@ class MeshCoreApp {
                 const dayNo = Math.round((d.getTime() - d.getTimezoneOffset() * 60000) / D);
                 d.setDate(d.getDate() + ((days - dayNo % days) % days));
             }
-            for (let i = 0; d.getTime() <= tMax && i < 1000; i++) { out.push(d.getTime()); d.setDate(d.getDate() + days); }
+            for (let i = 0; d.getTime() <= tMax && i < 1000; i++) {
+                out.push(d.getTime());
+                // Re-snap to midnight every step: where DST starts AT midnight
+                // (Chile, Cuba …) that day's midnight is 01:00, and carrying
+                // it forward put every later tick an hour off.
+                d.setDate(d.getDate() + days); d.setHours(0, 0, 0, 0);
+            }
             return out;
         }
         const off = t => -new Date(t).getTimezoneOffset() * 60000;
@@ -5248,7 +5270,10 @@ class MeshCoreApp {
 
         // X grid + labels — adaptive step based on chart width and visible range
         const labelStep = this._xLabelStepMs(tRange, cw);
-        const minorStep = labelStep / 2;
+        // Minor lines halve the step — except where half isn't whole days
+        // (a 7-day step), which would be rounded to an uneven grid: use days.
+        const D = 24 * 3600000;
+        const minorStep = labelStep > D && (labelStep / 2) % D !== 0 ? D : labelStep / 2;
         // Use date+time when the visible range spans more than ~12 h
         const useDate = tRange > 12 * 3600000;
         const fmtOpts = labelStep >= 24 * 3600000
@@ -5868,8 +5893,11 @@ class MeshCoreApp {
                     // A resumed session holding data older than a finite
                     // Auto-remove: the next cleanup tick would delete what the
                     // user just chose to load — keep it, as an import does.
+                    // Only when ALL of it is older (an old session): a capture
+                    // that merely ran longer than its Auto-remove — e.g. after a
+                    // reload or crash recovery — keeps the user's setting.
                     if (span && isFinite(this.windows.retentionMs)
-                        && span.min < Date.now() - this.windows.retentionMs) this._disableAutoRemove();
+                        && span.max < Date.now() - this.windows.retentionMs) this._disableAutoRemove();
                 } catch (_) {}
             }
             await this._replayWindow();
@@ -7739,6 +7767,11 @@ class MeshCoreApp {
         // the capture service while the open carries on. Just drop the attempt.
         if (this._serialOpenToken && !this.serialPort) {
             this._serialOpenToken = null;
+            // Settle the connection state as a deliberate disconnect, so a
+            // later "Bluetooth on" / return to the app doesn't restart the
+            // reconnect the user just cancelled.
+            this.conn.intendDisconnect();
+            this.conn.drop();
             this.updateStatus('Disconnected', 'disconnected');
             this._resetConnectBtn();
             this._stopCaptureServiceIfIdle();

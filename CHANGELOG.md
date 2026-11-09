@@ -58,7 +58,7 @@
 - **Auto-reconnect no longer shows a blocking error dialog** on each attempt
   when a USB/WiFi device doesn't answer yet (e.g. still starting after a
   restart).
-- **A WiFi link to a radio that disappeared is noticed within a minute**
+- **A WiFi link to a radio that disappeared is noticed within about 1.5 minutes**
   (was about 15 minutes), so the alarm / auto-reconnect kick in.
 - **Connecting**: Cancel while a USB/WiFi port is opening works; a cancelled
   Bluetooth attempt can no longer take over a newer connection; a failed

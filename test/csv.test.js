@@ -288,3 +288,8 @@ test('parseCsv: contact keys are lower-cased and bad contact coords zeroed', () 
     assert.equal(r.contacts[0].pubKeyFullHex, '5e9f12ab');
     assert.deepEqual([r.contacts[0].lat, r.contacts[0].lon], [0, 0]);
 });
+
+test('parseCsv: a hop_snr list with an empty entry is ignored, not read as 0', () => {
+    const r = parseCsv([HDR, '2024-01-01T00:00:00Z,Trace,TR:00000001,5E,1,,,,,,,,1;;2'].join('\n'));
+    assert.equal(r.rows[0].hopSnr, null);
+});

@@ -659,14 +659,14 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
         let dropped = 0; const od = app.onDisconnected.bind(app); app.onDisconnected = () => { dropped++; od(); };
         app._playDisconnectAlarm = () => {}; app._showDisconnectAlarm = () => {};
         app._startWifiWatchdog(w);
-        app._lastRxAt -= 61000;
+        app._lastRxAt -= 91000;
         await new Promise(r => setTimeout(r, 10500));
         out.wifiDropped = dropped; out.wifiClosed = w.closed;
         return out;
     });
     check('auto-reconnect to a device that does not answer shows no dialog', dialogs.length === 0, JSON.stringify({ r, dialogs }));
     check('Cancel while a port is opening: status Disconnected, port closed once open', /Disconnected/.test(r.afterCancel) && r.slowClosed === 1 && !r.serialAfter, JSON.stringify(r));
-    check('a WiFi companion silent for 60 s is treated as dropped', r.wifiDropped === 1 && r.wifiClosed >= 1, JSON.stringify(r));
+    check('a WiFi companion silent for 90 s is treated as dropped', r.wifiDropped === 1 && r.wifiClosed >= 1, JSON.stringify(r));
     check('no page errors (connection fixes)', errors.length === 0, errors.join(' | '));
     await ctx.close();
 }

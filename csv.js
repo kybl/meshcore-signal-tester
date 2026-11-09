@@ -215,7 +215,8 @@ export function parseCsv(text) {
         };
         const lat = num(iLat, parseFloat), lon = num(iLon, parseFloat);
         const validLat = lat != null && lon != null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
-        const hop = iHop >= 0 && c[iHop] ? c[iHop].split(';').map(Number) : null;
+        const hopParts = iHop >= 0 && c[iHop] ? c[iHop].split(';') : null;
+        const hop = hopParts && hopParts.every(x => x.trim() !== '') ? hopParts.map(Number) : null;
         all.push({
             time,
             type:      iType >= 0 ? (c[iType] ?? '') : '',

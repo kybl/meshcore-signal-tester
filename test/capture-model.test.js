@@ -181,3 +181,17 @@ test('flush() also persists the totals', async () => {
     await m.flush();
     assert.ok(store.calls.some(c => c[0] === 'setKV' && c[1] === 'totals' && c[2].total === 7));
 });
+
+test('a failed write that settles after clearAll() is not re-queued', async () => {
+    const store = stubStore();
+    let release;
+    store.putObs = r => { store.calls.push(['putObs', r.length]); return new Promise(res => { release = () => res([]); }); };
+    const m = new CaptureModel({ store, flushMs: 5 });
+    await m.open('db');
+    m.bufferObservation({ time: 1, hash: 'a' });
+    m.persistNow();                 // write in flight
+    m.clearAll();                   // user clears meanwhile
+    release();                      // …then the write fails
+    await tick(30);
+    assert.equal(store.calls.filter(c => c[0] === 'putObs').length, 1, 'nothing written back');
+});
