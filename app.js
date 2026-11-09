@@ -9,7 +9,7 @@ import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './ti
 import { ContactsDirectory } from './contacts-directory.js?v=2';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=3';
-import { ConnectionState, ReconnectController } from './connection-state.js?v=5';
+import { ConnectionState, ReconnectController } from './connection-state.js?v=6';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
 import { buildCsv, parseCsv } from './csv.js?v=7';
 import { Store } from './storage.js?v=1';
@@ -1459,7 +1459,7 @@ class MeshCoreApp {
                 port = await navigator.serial.requestPort({ filters: [] });
             }
 
-            await this.connectToSerialPort(port);
+            await this.connectToSerialPort(port, opts);
         } catch (error) {
             this._handleConnectError(error, !!(this.serialPort || this.device), opts.auto);
         }
@@ -1532,6 +1532,11 @@ class MeshCoreApp {
         this.updateStatus('Connecting…', 'connecting');
         this.conn.beginAttempt('ble');   // BLE is always the companion protocol
         this.device = device;
+        // This attempt is over once the app's device is no longer THIS one —
+        // cancelled (null) or replaced by another connection (e.g. a USB/WiFi
+        // connect after a cancel). Checking only for null let a cancelled BLE
+        // attempt that completed late carry on over the newer connection.
+        const gone = () => this.device !== device;
 
         // Nordic UART Service (NUS) — a de-facto industry standard from Nordic
         // Semiconductor for tunnelling a serial-port-style byte stream over BLE.
@@ -1546,17 +1551,26 @@ class MeshCoreApp {
 
         let server, service;
         for (let attempt = 1; attempt <= 3; attempt++) {
-            if (!this.device) return;
+            if (gone()) return;
             try {
                 server = await device.gatt.connect();
-                if (!this.device) { try { device.gatt.disconnect(); } catch (e) {} return; }
+                if (gone()) { try { device.gatt.disconnect(); } catch (e) {} return; }
                 service = await server.getPrimaryService(NUS_SERVICE);
                 break;
             } catch (e) {
-                if (!this.device) return;
+                if (gone()) { try { device.gatt.disconnect(); } catch (_) {} return; }
                 // BT off (native InvalidStateError) won't recover by retrying —
                 // it already prompted; surface it to the caller immediately.
-                if (attempt === 3 || e.name === 'InvalidStateError') throw e;
+                if (e.name === 'InvalidStateError') throw e;
+                if (attempt === 3) {
+                    // NotFoundError here = the device has no NUS service (not a
+                    // MeshCore companion). That name is also "picker cancelled",
+                    // which is shown silently — give it a message of its own.
+                    if (e.name === 'NotFoundError' && server) {
+                        throw new Error('This Bluetooth device has no MeshCore service (Nordic UART). Is it a MeshCore companion radio?');
+                    }
+                    throw e;
+                }
                 await new Promise(r => setTimeout(r, attempt * 500));
             }
         }
@@ -1564,38 +1578,38 @@ class MeshCoreApp {
         // Register the disconnect listener AFTER gatt.connect() so that any
         // lingering gattserverdisconnected event from the previous session
         // doesn't fire onDisconnected() and abort our new connection setup.
-        if (!this.device) return;
+        if (gone()) return;
         this._onGattDisconnected = () => this.onDisconnected();
         device.addEventListener('gattserverdisconnected', this._onGattDisconnected);
 
-        if (!this.device) return;
+        if (gone()) return;
         this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
-        if (!this.device) return;
+        if (gone()) return;
         const txCharacteristic = await service.getCharacteristic(NUS_TX);
-        if (!this.device) return;
+        if (gone()) return;
         this.txCharacteristic = txCharacteristic;
         this._onDataReceived = e => this.handleData(e);
         // Reset Chrome's notify pipe — may retain state from a previous session
         try { await txCharacteristic.stopNotifications(); } catch (e) {}
-        if (!this.device) return;
+        if (gone()) return;
         await txCharacteristic.startNotifications();
-        if (!this.device) return;
+        if (gone()) return;
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
-        if (!this.device) return;
+        if (gone()) return;
         await new Promise(r => setTimeout(r, 300));
-        if (!this.device) return;
+        if (gone()) return;
         // Ask for the battery level before the contact dump starts — the device
         // only ever reports it on request (see sendBatteryQuery), and injecting
         // commands mid-dump can stall the contact stream.
         await this.sendBatteryQuery();
-        if (!this.device) return;
+        if (gone()) return;
         await this.sendGetContacts();
         // A drop (or user cancel) during any of the awaits above already ran
         // onDisconnected() and reset the UI — bail before we clobber it with a
         // stale "Connected" state that no live link backs.
-        if (!this.device) return;
+        if (gone()) return;
 
         this._startBatteryPoll();
         this._stopPairingWatch(); this._hideDisconnectAlarm();
@@ -1732,7 +1746,7 @@ class MeshCoreApp {
             this._beginConnectAttempt('wifi');
             this.updateStatus('Connecting…', 'connecting');
             const port_ = window.__mcMakeWifiPort(host, port);
-            await this.connectToSerialPort(port_);
+            await this.connectToSerialPort(port_, opts);
         } catch (error) {
             if (!opts.auto) alert('WiFi connection failed: ' + (error.message || error));
             if (this.serialPort || this.device) this.onDisconnected();
@@ -1748,7 +1762,10 @@ class MeshCoreApp {
         await this._doWifiConnect(saved.host, saved.port, opts);
     }
 
-    async connectToSerialPort(port) {
+    // opts.auto: an auto-reconnect attempt — no blocking alert() when the
+    // device doesn't answer (it may still be booting, e.g. after a restart);
+    // the reconnect cycle just tries again.
+    async connectToSerialPort(port, opts = {}) {
         // A WiFi/TCP companion is a serial-like port (same frame protocol) but
         // surfaced through the native host; track which so the right button acts
         // as Cancel/Disconnect and so we can tailor messaging.
@@ -1759,7 +1776,24 @@ class MeshCoreApp {
         this._setActiveTransportBtn(this._serialBtnKind, 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting…', 'connecting');
 
-        await port.open({ baudRate: 115200 });
+        // The open can take a while (WiFi TCP connect up to ~8 s, a USB
+        // permission dialog on Android). A Cancel meanwhile is recorded by
+        // dropping the token (see disconnect); the port that opens afterwards
+        // is closed again instead of carrying on to "Connected".
+        const openToken = {};
+        this._serialOpenToken = openToken;
+        try {
+            await port.open({ baudRate: 115200 });
+        } catch (e) {
+            if (this._serialOpenToken !== openToken) return;     // cancelled — the failure is moot
+            this._serialOpenToken = null;
+            throw e;
+        }
+        if (this._serialOpenToken !== openToken) {
+            try { await port.close(); } catch (_) {}
+            return;
+        }
+        this._serialOpenToken = null;
 
         this.conn.beginAttempt('serial');  // mode unknown until detection completes
         this.serialPort = port;
@@ -1805,7 +1839,7 @@ class MeshCoreApp {
         // WiFi-specific message rather than falling through to the repeater path.
         if (isWifi) {
             this.updateStatus('No MeshCore companion found', 'disconnected');
-            alert('No MeshCore companion answered at that WiFi address.\n\n'
+            if (!opts.auto) alert('No MeshCore companion answered at that WiFi address.\n\n'
                 + 'Check that:\n'
                 + '• the IP and port are correct,\n'
                 + '• the device runs the WiFi companion firmware,\n'
@@ -1832,13 +1866,39 @@ class MeshCoreApp {
         } else {
             // Phase 3 — neither protocol answered.
             this.updateStatus('Unsupported device', 'disconnected');
-            alert('This USB serial device didn\'t respond as a MeshCore companion or repeater.\n\n'
+            if (!opts.auto) alert('This USB serial device didn\'t respond as a MeshCore companion or repeater.\n\n'
                 + 'Note: connecting a companion radio over USB usually requires a special USB firmware build. '
                 + 'Some companion devices do have this firmware, so if yours does, it should work here. '
                 + 'Standard companion radios connect via Bluetooth. '
                 + 'USB is also supported for MeshCore repeaters.');
             this.onDisconnected();
         }
+    }
+
+    // A WiFi (TCP) link to a radio that lost power or went out of range is not
+    // closed by anyone: reads just block and writes vanish into the socket
+    // buffer, so the app kept showing "Connected" — for about 15 minutes, until
+    // the kernel gave up retransmitting. A companion always answers the
+    // app's 10 s noise-floor poll (with stats, or ERR on old firmware), so a
+    // long silence means the link is dead: after 30 s of nothing, probe
+    // once more; after 60 s, treat it as an unexpected drop (alarm /
+    // auto-reconnect).
+    _startWifiWatchdog(port) {
+        clearInterval(this._wifiWatchdog);
+        this._lastRxAt = performance.now();
+        this._wifiWatchdog = setInterval(() => {
+            if (this.serialPort !== port || this.conn.mode !== 'companion') {
+                clearInterval(this._wifiWatchdog); this._wifiWatchdog = null; return;
+            }
+            const quiet = performance.now() - this._lastRxAt;
+            if (quiet > 60000) {
+                clearInterval(this._wifiWatchdog); this._wifiWatchdog = null;
+                console.warn('WiFi link silent for 60 s — treating it as dropped');
+                this.onDisconnected();
+            } else if (quiet > 30000) {
+                this.sendBatteryQuery();
+            }
+        }, 10000);
     }
 
     // Finalise a companion (binary frame protocol) serial connection.
@@ -1856,6 +1916,7 @@ class MeshCoreApp {
         this._stopPairingWatch(); this._hideDisconnectAlarm();
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
+        if (this._serialBtnKind === 'wifi') this._startWifiWatchdog(port);
         this._onCompanionReady();
         this._setActiveTransportBtn(this._serialBtnKind || 'serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
@@ -1928,9 +1989,12 @@ class MeshCoreApp {
     // on error, but the returned promise still rejects to THIS write's caller.
     _serialWriteBytes(bytes) {
         const prev = this._serialWriteChain ?? Promise.resolve();
+        // The port this write was meant for — a write still queued when that
+        // connection ends must not land on the next one.
+        const target = this.serialPort;
         const p = prev.then(async () => {
             const port = this.serialPort;
-            if (!port) return;
+            if (!port || port !== target) return;
             const writer = port.writable.getWriter();
             try { await writer.write(bytes); }
             finally { try { writer.releaseLock(); } catch (e) {} }
@@ -1967,6 +2031,7 @@ class MeshCoreApp {
     // radio→app, 0x3c ('<') is app→radio. Unknown leading bytes are skipped to
     // resynchronise after any corruption.
     _onSerialBytes(chunk) {
+        this._lastRxAt = performance.now();   // any byte = the link is alive (see _startWifiWatchdog)
         // Repeater links speak text, not binary frames.
         if (this.conn.mode === 'repeater') { this._onSerialText(chunk); return; }
         if (this._serialReadBuffer.length) {
@@ -6918,7 +6983,10 @@ class MeshCoreApp {
     // agree; start() itself is idempotent.
     _maybeReconnect() {
         if (!this._autoReconnect || !this.conn.lastDropWasSurprise) return;
-        if (this.device || this.serialPort || this.reconnect.active) return;
+        // A cycle already running may be waiting up to a minute for its next
+        // try (keepGoing) — try right away instead.
+        if (this.reconnect.active) { this.reconnect.kick(); return; }
+        if (this.device || this.serialPort) return;
         if (!this._lastConnectedId) return;
         this.reconnect.start();
         this._startPairingWatch();
@@ -7666,6 +7734,16 @@ class MeshCoreApp {
         // any auto-reconnect cycle (and a reconnect pending after a restart).
         this._cancelAutoReconnect();
         if (!this._restarting) { clearTimeout(this._restartReconnectTimer); this._restartPending = false; }
+        // Cancel while a USB/WiFi port is still opening: nothing is connected
+        // yet (no transport kind), so the BLE teardown below would run and stop
+        // the capture service while the open carries on. Just drop the attempt.
+        if (this._serialOpenToken && !this.serialPort) {
+            this._serialOpenToken = null;
+            this.updateStatus('Disconnected', 'disconnected');
+            this._resetConnectBtn();
+            this._stopCaptureServiceIfIdle();
+            return;
+        }
         this.conn.intendDisconnect();
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.conn.transportKind === 'serial') {
@@ -7703,7 +7781,13 @@ class MeshCoreApp {
                 const t = setTimeout(resolve, 3000);
                 try {
                     if (device.gatt.connected) device.gatt.disconnect();
-                    else { clearTimeout(t); device.removeEventListener('gattserverdisconnected', onDisc); resolve(); }
+                    else {
+                        // Still connecting: disconnect() aborts the pending
+                        // connect (natively it settles it), so a cancelled
+                        // attempt can't complete later on its own.
+                        try { device.gatt.disconnect(); } catch (_) {}
+                        clearTimeout(t); device.removeEventListener('gattserverdisconnected', onDisc); resolve();
+                    }
                 } catch (_) { clearTimeout(t); resolve(); }
             });
         }
@@ -7714,6 +7798,7 @@ class MeshCoreApp {
     onDisconnected() {
         this.releaseWakeLock();
         this._stopRepeaterPolling();
+        clearInterval(this._wifiWatchdog); this._wifiWatchdog = null;
         this._showRepeaterConsole(false);
         this._hideCompanionTools();
         clearTimeout(this._monitorDelay);
@@ -7731,6 +7816,13 @@ class MeshCoreApp {
         }
         this.txCharacteristic = null;
         this.bleRxCharacteristic = null;
+        // A BLE attempt that failed half-way (e.g. no NUS service, a rejected
+        // notification setup) leaves the GATT link up — the radio then stops
+        // advertising and can't be found again. Drop it (a no-op when the
+        // link is already down).
+        if (this.device?.gatt) { try { this.device.gatt.disconnect(); } catch (_) {} }
+        // Writes queued for this connection must not run on the next one.
+        this._serialWriteChain = null;
         // Serial teardown: release the reader lock (this unblocks the read loop)
         // and close the port. Releasing the lock with a read pending makes that
         // read() reject with a TypeError, which the read loop swallows.

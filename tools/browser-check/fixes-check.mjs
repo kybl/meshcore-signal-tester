@@ -623,6 +623,54 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     }
 }
 
+// ---- Connection fixes (fake serial / WiFi ports) --------------------------------
+{
+    const ctx = await browser.newContext();
+    const { page, errors, dialogs } = await openPage(ctx, base);
+    const r = await page.evaluate(async () => {
+        const app = window.__mcApp, out = {};
+        const mkPort = ({ wifi = false, openMs = 0 } = {}) => {
+            const p = { closed: 0, opened: 0, listeners: {},
+                getInfo: () => (wifi ? { wifi: true } : {}),
+                open: () => new Promise(r => setTimeout(() => { p.opened++; r(); }, openMs)),
+                close: async () => { p.closed++; },
+                addEventListener() {}, removeEventListener() {},
+                readable: { getReader: () => ({ read: () => new Promise(() => {}), releaseLock() {} }) },
+                writable: { getWriter: () => ({ write: async () => {}, releaseLock() {} }) } };
+            return p;
+        };
+        // 1) Auto-reconnect to a silent device: no blocking alert
+        const before = window.__dialogCount = 0;
+        await app.connectToSerialPort(mkPort(), { auto: true });
+        out.autoStatus = document.getElementById('statusText').textContent;
+        // 2) Cancel while the port is still opening
+        const slow = mkPort({ openMs: 800 });
+        const pr = app.connectToSerialPort(slow);
+        await new Promise(r => setTimeout(r, 100));
+        await app.disconnect();
+        out.afterCancel = document.getElementById('statusText').textContent;
+        await pr;
+        out.slowClosed = slow.closed; out.serialAfter = !!app.serialPort;
+        // 3) A silent WiFi companion is dropped by the watchdog
+        const w = mkPort({ wifi: true });
+        app._serialBtnKind = 'wifi';
+        app.serialPort = w; app.conn.beginAttempt('serial'); app.conn.setMode('companion'); app.conn.finalise();
+        app.device = { kind: 'serial' };
+        let dropped = 0; const od = app.onDisconnected.bind(app); app.onDisconnected = () => { dropped++; od(); };
+        app._playDisconnectAlarm = () => {}; app._showDisconnectAlarm = () => {};
+        app._startWifiWatchdog(w);
+        app._lastRxAt -= 61000;
+        await new Promise(r => setTimeout(r, 10500));
+        out.wifiDropped = dropped; out.wifiClosed = w.closed;
+        return out;
+    });
+    check('auto-reconnect to a device that does not answer shows no dialog', dialogs.length === 0, JSON.stringify({ r, dialogs }));
+    check('Cancel while a port is opening: status Disconnected, port closed once open', /Disconnected/.test(r.afterCancel) && r.slowClosed === 1 && !r.serialAfter, JSON.stringify(r));
+    check('a WiFi companion silent for 60 s is treated as dropped', r.wifiDropped === 1 && r.wifiClosed >= 1, JSON.stringify(r));
+    check('no page errors (connection fixes)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);

@@ -109,6 +109,7 @@ export class ReconnectController {
     #active = false;
     #tries = 0;
     #timer = null;
+    #inFlight = false;
 
     constructor(deps, { setTimeoutFn, clearTimeoutFn } = {}) {
         this.#deps = deps;
@@ -130,6 +131,15 @@ export class ReconnectController {
         this.#tries = 0;
         this.#deps.onAttemptStart();
         this.#schedule(ReconnectController.FIRST_DELAY_MS);
+    }
+
+    // Something changed that makes an immediate attempt worthwhile (Bluetooth
+    // came back on, the app returned to the foreground): if the cycle is
+    // waiting — possibly a full minute in the slow keepGoing phase — try now.
+    // No-op while an attempt is running or when no cycle is active.
+    kick() {
+        if (!this.#active || this.#inFlight) return;
+        this.#schedule(0);
     }
 
     cancel() {
@@ -177,7 +187,9 @@ export class ReconnectController {
         if (this.#deps.isBack()) { this.cancel(); return; }   // already back (manual connect)
         this.#tries++;
         this.#deps.onAttemptStart();
-        await this.#attemptGuarded();
+        this.#inFlight = true;
+        try { await this.#attemptGuarded(); }
+        finally { this.#inFlight = false; }
         if (!this.#active) return;                            // cancelled meanwhile
         if (this.#deps.isBack()) { this.cancel(); return; }   // success
         if (this.#tries >= ReconnectController.MAX_TRIES) {

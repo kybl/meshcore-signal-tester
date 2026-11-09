@@ -612,6 +612,16 @@ class MainActivity : AppCompatActivity() {
     private fun recreateWebView() {
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
+        // The rebuilt page starts disconnected and knows nothing of the old
+        // page's links: close them (a kept BLE link stops the radio
+        // advertising, so it couldn't be found again), and release the
+        // capture service and the keep-screen-on flag, which the new page
+        // re-acquires when it connects.
+        try { ble.dropConnection() } catch (_: Exception) {}
+        try { serial.dropConnection() } catch (_: Exception) {}
+        try { wifi.close() } catch (_: Exception) {}
+        try { MeshcoreService.stop(this) } catch (_: Exception) {}
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Drop any lingering HTML5-fullscreen overlay left over from the old page,
         // and undo its immersive mode — onHideCustomView never runs for a dead
         // renderer, so the system bars would otherwise stay hidden (and the

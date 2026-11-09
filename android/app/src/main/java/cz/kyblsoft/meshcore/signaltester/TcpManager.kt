@@ -35,6 +35,10 @@ class TcpManager(private val js: JsApi) {
             try {
                 s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
                 s.tcpNoDelay = true
+                // Let the OS probe an idle link, so a radio that vanished
+                // without closing TCP (power loss, out of range) is noticed at
+                // all; the page also watches for silence (see _wifiWatchdog).
+                s.keepAlive = true
             } catch (e: Exception) {
                 try { s.close() } catch (_: Exception) {}
                 js.resolve(reqId, false, errJson(BridgeError.NETWORK, "Couldn't reach $host:$port — ${e.message}"))

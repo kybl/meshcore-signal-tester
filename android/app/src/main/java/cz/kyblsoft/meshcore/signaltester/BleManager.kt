@@ -163,6 +163,13 @@ class BleManager(private val context: Context, private val js: JsApi) {
         }
     }
 
+    // The page was rebuilt (WebView renderer crash): drop the link it can no
+    // longer drive, but keep listening for adapter state.
+    fun dropConnection() {
+        connectReqId = null
+        closeGatt()
+    }
+
     private fun closeGatt() {
         try { gatt?.disconnect() } catch (_: Exception) {}
         try { gatt?.close() } catch (_: Exception) {}
@@ -297,8 +304,16 @@ class BleManager(private val context: Context, private val js: JsApi) {
 
     // ---- GATT callbacks -------------------------------------------------
 
+    // Every connection shares this one callback object. A previous link's late
+    // callbacks (its STATE_DISCONNECTED after connect() closed it, a stray
+    // onServicesDiscovered) must not be taken for the current attempt — that
+    // failed or mis-resolved a fresh connect. `gatt` is assigned on the main
+    // thread right after connectGatt() returns, long before its first callback.
+    private fun stale(g: BluetoothGatt) = g !== gatt
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (stale(g)) return
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     connected = true
@@ -329,11 +344,13 @@ class BleManager(private val context: Context, private val js: JsApi) {
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (stale(g)) return
             // Whether or not the larger MTU was granted, proceed to discovery.
             main.post { try { g.discoverServices() } catch (_: Exception) {} }
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (stale(g)) return
             val reqId = connectReqId ?: return
             connectReqId = null
             if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -350,11 +367,13 @@ class BleManager(private val context: Context, private val js: JsApi) {
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, ch: BluetoothGattCharacteristic, status: Int) {
+            if (stale(g)) return
             if (status == BluetoothGatt.GATT_SUCCESS) completePending(null)
             else failPending(BridgeError.NETWORK, "write failed ($status)")
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (stale(g)) return
             if (status == BluetoothGatt.GATT_SUCCESS) completePending(null)
             else failPending(BridgeError.NETWORK, "descriptor write failed ($status)")
         }
@@ -362,12 +381,14 @@ class BleManager(private val context: Context, private val js: JsApi) {
         // Read — API < 33
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicRead(g: BluetoothGatt, ch: BluetoothGattCharacteristic, status: Int) {
+            if (stale(g)) return
             @Suppress("DEPRECATION")
             handleRead(ch.value, status)
         }
 
         // Read — API 33+
         override fun onCharacteristicRead(g: BluetoothGatt, ch: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            if (stale(g)) return
             handleRead(value, status)
         }
 
@@ -383,12 +404,14 @@ class BleManager(private val context: Context, private val js: JsApi) {
         // Notification — API < 33
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
+            if (stale(g)) return
             @Suppress("DEPRECATION")
             handleNotify(ch.service.uuid, ch.uuid, ch.value)
         }
 
         // Notification — API 33+
         override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic, value: ByteArray) {
+            if (stale(g)) return
             handleNotify(ch.service.uuid, ch.uuid, value)
         }
 
