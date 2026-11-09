@@ -6970,12 +6970,25 @@ class MeshCoreApp {
         const prevText = btn?.textContent;
         const prevDisabled = btn?.disabled ?? false;
         if (btn) { btn.textContent = 'Exporting…'; btn.disabled = true; }
+        this._setExportPreparing(true);
         await new Promise(r => setTimeout(r, 0));
         try {
             await this._buildAndSaveCsv(useDisk);
         } finally {
+            this._setExportPreparing(false);
             if (btn) { btn.textContent = prevText; btn.disabled = prevDisabled; }
         }
+    }
+
+    // While the export is being built (until its save dialog / download is
+    // handed off), Import is disabled: an import then would change the data
+    // under the export. Cleared just before the dialog opens, whatever the
+    // outcome of the dialog.
+    _setExportPreparing(on) {
+        if (this._exportPreparing === on) return;
+        this._exportPreparing = on;
+        const importBtn = document.getElementById('importCsvBtn');
+        if (importBtn && !this._importing) importBtn.disabled = on;
     }
 
     async _buildAndSaveCsv(useDisk) {
@@ -7065,6 +7078,8 @@ class MeshCoreApp {
         // user then cancels the save dialog.
         // Android native app: delegate to SAF picker (shows system "Save as" dialog).
         // Fire-and-forget (no result callback), so treat delegation as the save.
+        // The CSV is built: from here on only the dialog is left.
+        this._setExportPreparing(false);
         if (window.AndroidFiles?.saveCsvWithPicker) {
             window.AndroidFiles.saveCsvWithPicker(suggestedName, csv);
             if (!filteredExport) this._unsavedRxCount = 0;
@@ -7125,6 +7140,9 @@ class MeshCoreApp {
     async _importCsvFiles(files) {
         files = Array.from(files || []).filter(Boolean);
         if (!files.length) return;
+        // An export is being built: let it finish first (Android's staged
+        // import can arrive at any moment; the Import button is disabled).
+        while (this._exportPreparing) await new Promise(r => setTimeout(r, 100));
         this._importing = (this._importing || 0) + 1;     // counter: imports can overlap
         this._updateExportBtn();
         try { await this._importCsvFilesBody(files); }

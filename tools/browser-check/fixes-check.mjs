@@ -491,6 +491,25 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await page.waitForTimeout(300);
     const after = await page.$eval('#exportCsvBtn', b => ({ d: b.disabled, t: b.title }));
     check('…and enabled again afterwards, with its tooltip', !after.d && after.t === 'Export visible packets as CSV', JSON.stringify(after));
+    // Export → Import disabled until the save dialog is reached (here the
+    // download fallback / save picker stub), then back.
+    await page.evaluate(() => {
+        window.__imp = [];
+        window.showSaveFilePicker = async () => { window.__imp.push(document.getElementById('importCsvBtn').disabled); throw Object.assign(new Error('x'), { name: 'AbortError' }); };
+    });
+    await page.click('#exportCsvBtn');
+    const whileBuilding = await page.evaluate(() => new Promise(res => {
+        const t0 = performance.now();
+        (function poll() {
+            if (document.getElementById('exportCsvBtn').textContent === 'Exporting…') return res(document.getElementById('importCsvBtn').disabled);
+            if (performance.now() - t0 > 3000) return res('export never started');
+            setTimeout(poll, 2);
+        })();
+    }));
+    await page.waitForFunction(() => document.getElementById('exportCsvBtn').textContent === 'Export CSV', null, { timeout: 30000 });
+    const st = await page.evaluate(() => ({ atDialog: window.__imp[0], after: document.getElementById('importCsvBtn').disabled }));
+    check('Import is disabled while the export is being built', whileBuilding === true, String(whileBuilding));
+    check('…re-enabled when the save dialog opens, and after a cancel', st.atDialog === false && st.after === false, JSON.stringify(st));
     check('no page errors (export during import)', errors.length === 0, errors.join(' | '));
     await ctx.close();
 }
