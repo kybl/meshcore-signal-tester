@@ -3,7 +3,9 @@
 Web application for real-time monitoring of mesh traffic from a MeshCore **companion radio** (Bluetooth, USB, or — in the Android app — WiFi) or a MeshCore **repeater** (USB serial CLI). The connected device type is auto-detected.
 
 ### Live app: [meshcore.kyblsoft.cz/signal-tester](https://meshcore.kyblsoft.cz/signal-tester)
-#### Android app available in [repo releases](https://github.com/kybl/meshcore-signal-tester/releases).
+#### Android app available on [F-Droid](https://f-droid.org/packages/cz.kyblsoft.meshcore.signaltester/) or as an APK in [repo releases](https://github.com/kybl/meshcore-signal-tester/releases).
+
+[<img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80">](https://f-droid.org/packages/cz.kyblsoft.meshcore.signaltester/)
 
 ## Features
 
@@ -69,7 +71,7 @@ The key benefit over a browser tab: the radio link (Bluetooth, USB, or WiFi) and
 
 The Android app also adds a **WiFi** connection option — a raw TCP link to a companion running the WiFi firmware — which a browser can't provide, since browsers have no raw-socket API.
 
-APK releases are published on [GitHub](https://github.com/kybl/meshcore-signal-tester/releases).
+Install it from [F-Droid](https://f-droid.org/packages/cz.kyblsoft.meshcore.signaltester/) (updates arrive automatically in the F-Droid client), or download the APK from [GitHub releases](https://github.com/kybl/meshcore-signal-tester/releases).
 
 **iOS:** There is no iOS version. This is a hobby project and the author doesn't own an iOS device to build or test on.
 
