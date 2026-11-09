@@ -352,6 +352,8 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     check('#20 Radio tools appear for a companion, TX power read from SELF_INFO', st.tools && st.tx === '20' && st.max === '22', JSON.stringify(st));
     check('#20 companion console appears on firmware v14+', st.cli && st.title === 'Companion console', JSON.stringify(st));
     check('#20 no firmware warning on v14+', await page.$eval('#fwNote', e => e.classList.contains('hidden')));
+    const hdrFw = await page.$eval('#deviceFw', e => e.classList.contains('hidden') ? '' : e.textContent + (e.classList.contains('device-fw-old') ? ' OLD' : ''));
+    check('#20 protocol version shown next to the device info', hdrFw === 'fw protocol v14', hdrFw);
 
     await page.fill('#txPowerInput', '17'); await page.click('#txPowerSet'); await page.waitForTimeout(800);
     let note = await page.textContent('#txPowerNote');
@@ -396,6 +398,8 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
         cli: !document.getElementById('cliWrap').classList.contains('hidden') }));
     check('#20 older companion firmware: tools yes, console no', st.tools && !st.cli, JSON.stringify(st));
     const fwNote = await page.$eval('#fwNote', e => e.classList.contains('hidden') ? '' : e.textContent);
+    const hdrOld = await page.$eval('#deviceFw', e => e.textContent + (e.classList.contains('device-fw-old') ? ' OLD' : ''));
+    check('#20 older firmware is marked in the device info', hdrOld === 'fw protocol v9 OLD', hdrOld);
     check('#20 older firmware is named, with what is unavailable', /Older companion firmware \(protocol v9\)/.test(fwNote) && /console/.test(fwNote), fwNote);
     check('no page errors (#20 companion)', errors.length === 0, errors.join(' | '));
     await ctx.close();

@@ -2286,6 +2286,18 @@ class MeshCoreApp {
     // Tell the user what an older companion firmware can't do here, instead
     // of the console silently not appearing.
     _updateFwNote() {
+        // Header: firmware version next to the device name and radio preset.
+        const hdr = document.getElementById('deviceFw');
+        if (hdr) {
+            const show = this._fwVer != null;
+            const old = show && !this._companionCli();
+            hdr.textContent = show ? `fw ${this._fwName ? this._fwName + ' · ' : ''}protocol v${this._fwVer}` : '';
+            hdr.title = !show ? '' : old
+                ? 'Companion firmware and protocol version — older firmware: some Radio tools are unavailable (see Radio tools)'
+                : 'Companion firmware and protocol version';
+            hdr.classList.toggle('device-fw-old', old);
+            hdr.classList.toggle('hidden', !show);
+        }
         const el = document.getElementById('fwNote');
         if (!el) return;
         const missing = [];
@@ -2304,6 +2316,7 @@ class MeshCoreApp {
         this._fwVer = null;
         this._fwName = null;
         document.getElementById('fwNote')?.classList.add('hidden');
+        document.getElementById('deviceFw')?.classList.add('hidden');
         this._txPower = null;
         this._toolWaiter?.resolve(null);
         for (const done of this._traceWaiters?.values() ?? []) done(null);

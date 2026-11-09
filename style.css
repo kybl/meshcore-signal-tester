@@ -1695,6 +1695,13 @@ html.light-theme .loc-source-warn { color: #a97b13; }
 .radio-preset.radio-preset-custom { color: #e0b653; }   /* custom settings — no known preset */
 html.light-theme .radio-preset { color: #2e8b46; }
 html.light-theme .radio-preset.radio-preset-custom { color: #a97b13; }
+.device-fw {
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.device-fw.device-fw-old { color: #e0b653; }   /* older firmware — some tools unavailable */
+html.light-theme .device-fw.device-fw-old { color: #a97b13; }
 
 
 .help-dl {
