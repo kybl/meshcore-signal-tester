@@ -2974,3 +2974,5 @@ html.light-theme .theme-toggle-btn:hover {
     color: var(--text-primary);
     cursor: pointer;
 }
+
+.tools-row-end { justify-content: flex-end; margin: 6px 0 0; }

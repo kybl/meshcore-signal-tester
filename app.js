@@ -2237,6 +2237,8 @@ class MeshCoreApp {
 
     _showRepeaterConsole(show, title = 'Repeater console') {
         document.getElementById('cliWrap')?.classList.toggle('hidden', !show);
+        // The companion has its own Restart button in Radio tools.
+        document.getElementById('cliRestartRow')?.classList.toggle('hidden', !show || title !== 'Repeater console');
         const t = document.getElementById('cliTitle');
         if (t) t.textContent = title;
         if (!show) this._cliPending = null;
@@ -2298,12 +2300,49 @@ class MeshCoreApp {
         chk.disabled = false;
     }
 
+    // --- Device restart ---
+
+    // Restart the connected device and reconnect once it's back. Companion:
+    // CMD_REBOOT (19) + "reboot" (no reply — the radio just resets). Repeater:
+    // the "reboot" CLI command. We then close our side ourselves rather than
+    // wait for the link to die: over a USB-UART bridge (CH340/CP210x) the port
+    // stays open across the reset, and over BLE/TCP the drop can take a while
+    // to be noticed. The closure counts as intended (no alarm), and the
+    // reconnect cycle starts after a few seconds — even with Auto-reconnect
+    // off, since a restart asked for by the user implies "and come back".
+    async _restartDevice(confirmed = false) {
+        const mode = this.conn.mode;
+        if (!this.conn.established || (mode !== 'companion' && mode !== 'repeater')) return;
+        if (!confirmed && !confirm('Restart the device?\n\nThe connection drops while it restarts; the app reconnects automatically when it is back (about 10 s).')) return;
+        const id = this._lastConnectedId;
+        try {
+            if (mode === 'companion') await this._sendFrame(new Uint8Array([19, ...new TextEncoder().encode('reboot')]));
+            else await this._serialWriteText('reboot\r\n');
+        } catch (_) {}
+        this._cliAppend?.('Restarting the device…', 'cli-note');
+        await new Promise(r => setTimeout(r, 600));    // let the command leave before we close
+        this._restarting = true;
+        try { if (this.conn.established) await this.disconnect(); }
+        finally { this._restarting = false; }
+        this.updateStatus('Restarting device…', 'connecting');
+        if (!id) return;
+        clearTimeout(this._restartReconnectTimer);
+        this._restartReconnectTimer = setTimeout(() => {
+            if (this.device || this.serialPort || this.reconnect.active) return;
+            this._lastConnectedId = id;
+            this.reconnect.start();
+            this._startPairingWatch();
+        }, 4000);
+    }
+
     // --- Radio tools (companion) ---
 
     _setupRadioTools() {
         document.getElementById('txPowerForm')?.addEventListener('submit', e => { e.preventDefault(); this._setTxPower(); });
         document.getElementById('traceForm')?.addEventListener('submit', e => { e.preventDefault(); this._runTrace(); });
         document.getElementById('rxBoostChk')?.addEventListener('change', e => this._setRxGain('radio.rxgain', e.target));
+        document.getElementById('restartCompanionBtn')?.addEventListener('click', () => this._restartDevice());
+        document.getElementById('restartRepeaterBtn')?.addEventListener('click', () => this._restartDevice());
         document.getElementById('femLnaChk')?.addEventListener('change', e => this._setRxGain('radio.fem.rxgain', e.target));
     }
 
@@ -2558,6 +2597,11 @@ class MeshCoreApp {
                 ? 'This stops the repeater\'s packet log — the app will stop capturing packets until you send "log start" (or reconnect).'
                 : 'This restarts or modifies the repeater firmware/storage, and the connection will drop.';
             if (!confirm(`Send "${cmd}"?\n\n${why}`)) return;
+        }
+        if (/^reboot$/i.test(cmd)) {            // already confirmed above
+            this._cliInputEl.value = '';
+            this._restartDevice(true);
+            return;
         }
         if (this._cliHistory[this._cliHistory.length - 1] !== cmd) this._cliHistory.push(cmd);
         if (this._cliHistory.length > 50) this._cliHistory.shift();
@@ -7373,8 +7417,9 @@ class MeshCoreApp {
     async disconnect() {
         // The user explicitly asked to disconnect — suppress the surprise-
         // disconnect alarm that onDisconnected() would otherwise raise, and stop
-        // any auto-reconnect cycle.
+        // any auto-reconnect cycle (and a reconnect pending after a restart).
         this._cancelAutoReconnect();
+        if (!this._restarting) clearTimeout(this._restartReconnectTimer);
         this.conn.intendDisconnect();
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.conn.transportKind === 'serial') {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=195">
+    <link rel="stylesheet" href="style.css?v=196">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -24,7 +24,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=484">
+    <link rel="modulepreload" href="app.js?v=485">
     <link rel="modulepreload" href="capture-model.js?v=5">
     <link rel="modulepreload" href="chart-cache.js?v=2">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -325,6 +325,9 @@
                             <button type="submit" id="traceBtn" class="btn-primary">Trace</button>
                         </form>
                         <div id="traceResult" class="tools-result" aria-live="polite"></div>
+                        <div class="tools-row tools-row-end">
+                            <button type="button" id="restartCompanionBtn" class="btn-pause">Restart device</button>
+                        </div>
                         <div id="fwNote" class="tools-fw-note hidden"></div>
                     </div>
                 </div>
@@ -342,6 +345,9 @@
                             <input id="cliInput" type="text" class="msg-filter-input cli-input" placeholder="CLI command, e.g. get tx" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send">
                             <button type="submit" id="cliSend" class="btn-primary">Send</button>
                         </form>
+                        <div id="cliRestartRow" class="tools-row tools-row-end hidden">
+                            <button type="button" id="restartRepeaterBtn" class="btn-pause">Restart repeater</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -512,6 +518,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=484"></script>
+    <script type="module" src="app.js?v=485"></script>
 </body>
 </html>

@@ -299,6 +299,14 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
         a._onSerialBytes(new TextEncoder().encode('  -> <img src=x onerror="window.__cliXss=1">\r\n')); });
     await page.waitForTimeout(300);
     check('#20 replies are shown as text, never HTML', await page.evaluate(() => !window.__cliXss && !document.querySelector('#cliLog img')));
+    check('#20 repeater console shows a Restart repeater button', await page.$eval('#cliRestartRow', e => !e.classList.contains('hidden')));
+    await page.evaluate(() => { const a = window.__mcApp; a.conn.finalise(); a._lastConnectedId = 'usb1'; window.__rr = { disc: 0, rc: 0 };
+        a.disconnect = async () => { window.__rr.disc++; a.conn.intendDisconnect(); a.conn.drop(); a.serialPort = null; };
+        a.reconnect.start = () => { window.__rr.rc++; }; window.__sent.length = 0; });
+    await page.fill('#cliInput', 'reboot'); await page.press('#cliInput', 'Enter');
+    await page.waitForTimeout(5200);
+    const rr = await page.evaluate(() => ({ ...window.__rr, sent: window.__sent.join('|') }));
+    check('#20 "reboot" in the repeater console restarts and reconnects', rr.sent.includes('reboot\r\n') && rr.disc === 1 && rr.rc === 1, JSON.stringify(rr));
     await page.evaluate(() => { const a = window.__mcApp; a._stopRepeaterPolling(); a._showRepeaterConsole(false); });
     check('#20 console hides when the repeater disconnects', await page.$eval('#cliWrap', e => e.classList.contains('hidden')));
     check('no page errors (#20)', errors.length === 0, errors.join(' | '));
@@ -409,8 +417,21 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 20000 });
     check('#20 a trace with no answer times out with a message', /No answer within 10 s/.test(await page.textContent('#traceResult')));
 
+    // Restart: CMD_REBOOT, close our side, reconnect after ~4 s
+    await page.evaluate(() => { const a = window.__mcApp; a.conn.finalise(); a._lastConnectedId = 'dev1';
+        window.__rs = { disc: 0, rc: 0 };
+        a.disconnect = async () => { window.__rs.disc++; a.conn.intendDisconnect(); a.conn.drop(); };
+        a.reconnect.start = () => { window.__rs.rc++; }; });
+    await page.click('#restartCompanionBtn');
+    await page.waitForTimeout(1200);
+    let rs = await page.evaluate(() => ({ ...window.__rs, frame: window.__frames.filter(f => f[0] === 19).pop(), status: document.getElementById('statusText').textContent }));
+    check('#20 Restart sends CMD_REBOOT "reboot" and closes the link', rs.disc === 1 && rs.frame && new TextDecoder().decode(Uint8Array.from(rs.frame.slice(1))) === 'reboot' && /Restarting/.test(rs.status), JSON.stringify(rs));
+    await page.waitForTimeout(4000);
+    rs = await page.evaluate(() => window.__rs);
+    check('#20 …and starts reconnecting a few seconds later', rs.rc === 1, JSON.stringify(rs));
+
     // Old firmware: no console
-    await page.evaluate(() => { const a = window.__mcApp; a._hideCompanionTools(); a._showRepeaterConsole(false); window.__fw.ver = 9;
+    await page.evaluate(() => { const a = window.__mcApp; a.conn.setMode('companion'); a._hideCompanionTools(); a._showRepeaterConsole(false); window.__fw.ver = 9;
         const si = new Uint8Array(58); si[0] = 5; si[2] = 20; si[3] = 22; a.handlePayload(si); });
     await page.waitForTimeout(800);
     st = await page.evaluate(() => ({ tools: !document.getElementById('toolsWrap').classList.contains('hidden'),
