@@ -2951,3 +2951,10 @@ html.light-theme .theme-toggle-btn:hover {
 }
 .tools-result:empty { display: none; }
 .tools-result .tools-note { font-style: italic; }
+
+.tools-fw-note {
+    margin-top: 6px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+}

@@ -2265,16 +2265,45 @@ class MeshCoreApp {
         }
     }
 
+    // RESP_CODE_DEVICE_INFO: [1] = protocol version code, [60-79] = firmware
+    // version string (e.g. "v1.10.0", NUL-padded; older firmware may omit it).
     _handleDeviceInfo(payload) {
         if (payload.length < 2) return;
         this._fwVer = payload[1];
-        if (this.conn.mode === 'companion' && this._companionCli()) this._showRepeaterConsole(true, 'Companion console');
+        this._fwName = null;
+        if (payload.length >= 61) {
+            try {
+                const end = payload.indexOf(0, 60);
+                const v = new TextDecoder().decode(payload.subarray(60, end < 0 ? Math.min(payload.length, 80) : end)).trim();
+                if (/^[\x20-\x7e]{1,20}$/.test(v)) this._fwName = v;
+            } catch (_) {}
+        }
+        if (this.conn.mode !== 'companion') return;
+        if (this._companionCli()) this._showRepeaterConsole(true, 'Companion console');
+        this._updateFwNote();
+    }
+
+    // Tell the user what an older companion firmware can't do here, instead
+    // of the console silently not appearing.
+    _updateFwNote() {
+        const el = document.getElementById('fwNote');
+        if (!el) return;
+        const missing = [];
+        if (this._fwVer != null && !this._companionCli())
+            missing.push('the companion console (CLI commands such as "set radio.rxgain on") needs firmware with protocol v14 or newer');
+        const fw = this._fwName ? `firmware ${this._fwName}, protocol v${this._fwVer}` : `protocol v${this._fwVer}`;
+        el.textContent = missing.length
+            ? `⚠ Older companion firmware (${fw}): ${missing.join('; ')}. Update the radio's firmware to use it.`
+            : '';
+        el.classList.toggle('hidden', !missing.length);
     }
 
     _hideCompanionTools() {
         document.getElementById('toolsWrap')?.classList.add('hidden');
         this._devQuerySent = false;
         this._fwVer = null;
+        this._fwName = null;
+        document.getElementById('fwNote')?.classList.add('hidden');
         this._txPower = null;
         this._toolWaiter?.resolve(null);
         for (const done of this._traceWaiters?.values() ?? []) done(null);
@@ -2378,7 +2407,14 @@ class MeshCoreApp {
             this._traceWaiters ??= new Map();
             const result = new Promise(resolve => this._traceWaiters.set(tag, resolve));
             const r = await this._companionCall(frame, [6, 1]);
-            if (!r || r[0] !== 6) { this._traceWaiters.delete(tag); show(r ? 'The radio rejected the trace (path or firmware not supported).' : 'No reply from the radio.', 'tools-note'); return; }
+            if (!r || r[0] !== 6) {
+                this._traceWaiters.delete(tag);
+                show(!r ? 'No reply from the radio.'
+                    : p.sizeBits
+                        ? 'The radio rejected the trace. Longer IDs need firmware v1.11 or newer — with older firmware use 2-digit IDs, e.g. "' + p.ids[0].slice(0, 2) + '".'
+                        : 'The radio rejected the trace (invalid path).', 'tools-note');
+                return;
+            }
             // RESP_CODE_SENT: [6, flood, tag u32, est_timeout ms u32]
             const est = r.length >= 10 ? new DataView(r.buffer, r.byteOffset).getUint32(6, true) : 5000;
             const wait = Math.min(30000, Math.max(3000, est * 1.5 + 1000));
