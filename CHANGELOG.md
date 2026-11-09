@@ -7,6 +7,44 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
+## [1.3.3] - 2026-11-10
+
+### Added
+
+- **Radio tools for companion radios**: read and set the **TX power**;
+  **Trace** a path of repeater IDs — a single ID is a round trip to that
+  neighbour showing how well it hears you and you hear it, a path such as
+  `5E,8A,5E` shows the SNR of every hop (1-, 2- and 4-byte IDs); switch the
+  **RX gain** — the radio chip's boosted gain and, on boards that have one,
+  the external LNA (firmware v1.18.0+; boosted gain left off is flagged, as it
+  lowers the RSSI/SNR you measure); and **restart** the device, after which
+  the app reconnects by itself without the disconnect alarm.
+- **Device console**: type CLI commands and see the replies — for a
+  **repeater** over USB, and for a **companion** with firmware v1.18.0 or
+  newer. Commands that would stop the capture, or restart or erase the device,
+  ask for confirmation first; a repeater can also be restarted with a button.
+- The companion's **firmware and protocol version** are shown next to the
+  device name, in amber when the firmware is too old for some Radio tools
+  (which then says what needs a newer firmware).
+
+### Fixed
+
+- **Android: CSV export no longer produces an empty (0-byte) file**, and a
+  **CSV import no longer silently does nothing**, when the system closes the
+  app in the background while its file dialog is open — common on Xiaomi
+  phones. Before, only small exports survived this.
+- **Packet sounds no longer go silent for good after a while.** Android can
+  leave the audio engine stuck (after the phone dozed or the audio output
+  changed); every later beep — and the disconnect alarm — was then dropped
+  until the app was restarted.
+- **A packet filter that matches nothing no longer hides itself**: the filter
+  field disappeared together with the empty table, so it couldn't be fixed or
+  cleared without restarting the app. It now says that nothing matches.
+- Trace results with 2- or 4-byte repeater IDs (firmware v1.11+) were
+  misread and dropped.
+- Export CSV is disabled while an import is running, and Import CSV while an
+  export is being prepared.
+
 ## [1.3.2] - 2026-09-23
 
 ### Fixed
