@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>MeshCore Signal Tester</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg">
-    <link rel="stylesheet" href="style.css?v=194">
+    <link rel="stylesheet" href="style.css?v=195">
     <script>try{
         if(localStorage.getItem("theme")==="light")document.documentElement.classList.add("light-theme");
         const _s=localStorage.getItem("uiScale");
@@ -24,7 +24,7 @@
          mismatch silently downloads the file twice. The list is kept in sync
          by test/modulepreload.test.js (run `node --test` after changing any
          import or ?v= cache buster). -->
-    <link rel="modulepreload" href="app.js?v=483">
+    <link rel="modulepreload" href="app.js?v=484">
     <link rel="modulepreload" href="capture-model.js?v=5">
     <link rel="modulepreload" href="chart-cache.js?v=2">
     <link rel="modulepreload" href="chart-zoom.js?v=1">
@@ -313,6 +313,12 @@
                             <button type="submit" id="txPowerSet" class="btn-primary">Set</button>
                             <span id="txPowerNote" class="tools-note"></span>
                         </form>
+                        <div id="rxGainRow" class="tools-row hidden">
+                            <span class="tools-label">RX gain</span>
+                            <label id="rxBoostWrap" class="tools-check hidden"><input type="checkbox" id="rxBoostChk"> Boosted</label>
+                            <label id="femLnaWrap" class="tools-check hidden"><input type="checkbox" id="femLnaChk"> External LNA</label>
+                            <span id="rxGainNote" class="tools-note"></span>
+                        </div>
                         <form id="traceForm" class="tools-row" autocomplete="off">
                             <label class="tools-label" for="traceInput">Trace</label>
                             <input id="traceInput" type="text" class="msg-filter-input tools-text" placeholder="Repeater ID, e.g. 5E" autocapitalize="off" spellcheck="false">
@@ -506,6 +512,6 @@
         </div>
     </div>
 
-    <script type="module" src="app.js?v=483"></script>
+    <script type="module" src="app.js?v=484"></script>
 </body>
 </html>

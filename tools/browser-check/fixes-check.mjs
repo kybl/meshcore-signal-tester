@@ -323,7 +323,12 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
                 case 12: { const v = f[1] > 127 ? f[1] - 256 : f[1];
                            if (v >= -9 && v <= fw.max) { fw.tx = v; reply([0]); } else reply([1, 6]); break; }
                 case 66: { const cmd = new TextDecoder().decode(Uint8Array.from(f.slice(1)));
-                           const txt = cmd === 'get radio.rxgain' ? '> on' : cmd === 'set radio.rxgain off' ? 'OK' : 'Unknown command';
+                           fw.gain ??= { boost: true, fem: null };
+                           let txt = 'Unknown command';
+                           if (cmd === 'get radio.rxgain') txt = '> ' + (fw.gain.boost ? 'on' : 'off');
+                           else if (/^set radio\.rxgain (on|off)$/.test(cmd)) { fw.gain.boost = cmd.endsWith('on'); txt = 'OK'; }
+                           else if (cmd === 'get radio.fem.rxgain') txt = fw.gain.fem == null ? 'Unknown command' : '> ' + (fw.gain.fem ? 'on' : 'off');
+                           else if (/^set radio\.fem\.rxgain (on|off)$/.test(cmd)) txt = fw.gain.fem == null ? 'Unknown command' : 'Error: failed to apply LoRa FEM RX gain';
                            reply([29, ...new TextEncoder().encode(txt)]); break; }
                 case 36: { const tag = f.slice(1, 5), flags = f[9], path = f.slice(10);
                            reply([6, 0, ...tag, 0xe8, 0x03, 0, 0]);            // est 1000 ms
@@ -368,6 +373,20 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     const log = await page.$eval('#cliLog', e => e.innerText);
     check('#20 companion console sends CMD_RUN_CLI_COMMAND and shows the reply', /> get radio\.rxgain\n> on/.test(log), JSON.stringify(log));
 
+    // RX gain switches (v14): chip boost shown, no FEM on this board
+    let g = await page.evaluate(() => ({ row: !document.getElementById('rxGainRow').classList.contains('hidden'),
+        boost: !document.getElementById('rxBoostWrap').classList.contains('hidden') && document.getElementById('rxBoostChk').checked,
+        fem: !document.getElementById('femLnaWrap').classList.contains('hidden') }));
+    check('#20 RX gain: boosted switch shown and on; no LNA switch on a board without one', g.row && g.boost && !g.fem, JSON.stringify(g));
+    await page.click('#rxBoostChk'); await page.waitForTimeout(1500);
+    g = await page.evaluate(() => ({ fw: window.__fw.gain.boost, chk: document.getElementById('rxBoostChk').checked, note: document.getElementById('rxGainNote').textContent }));
+    check('#20 RX gain: switching boost off reaches the radio and warns', g.fw === false && !g.chk && /lower sensitivity/.test(g.note), JSON.stringify(g));
+    await page.evaluate(() => { window.__fw.gain.fem = true; return window.__mcApp._readRxGain(); });
+    await page.waitForTimeout(800);
+    await page.click('#femLnaChk'); await page.waitForTimeout(1500);
+    g = await page.evaluate(() => ({ chk: document.getElementById('femLnaChk').checked, note: document.getElementById('rxGainNote').textContent }));
+    check('#20 RX gain: a refused LNA change reverts the switch and shows the error', g.chk === true && /failed to apply/.test(g.note), JSON.stringify(g));
+
     // Trace: single ID = round trip
     await page.fill('#traceInput', '5e'); await page.click('#traceBtn');
     await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 10000 });
@@ -400,7 +419,8 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     const fwNote = await page.$eval('#fwNote', e => e.classList.contains('hidden') ? '' : e.textContent);
     const hdrOld = await page.$eval('#deviceFw', e => e.textContent + (e.classList.contains('device-fw-old') ? ' OLD' : ''));
     check('#20 older firmware is marked in the device info', hdrOld === 'fw protocol v9 OLD', hdrOld);
-    check('#20 older firmware is named, with what is unavailable', /Older companion firmware \(protocol v9\)/.test(fwNote) && /console/.test(fwNote), fwNote);
+    check('#20 older firmware is named, with what is unavailable', /Older companion firmware \(protocol v9\)/.test(fwNote) && /RX gain/.test(fwNote) && /v1\.18\.0/.test(fwNote), fwNote);
+    check('#20 older firmware: no RX gain switches', await page.$eval('#rxGainRow', e => e.classList.contains('hidden')));
     check('no page errors (#20 companion)', errors.length === 0, errors.join(' | '));
     await ctx.close();
 }

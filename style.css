@@ -2965,3 +2965,12 @@ html.light-theme .theme-toggle-btn:hover {
     line-height: 1.5;
     color: var(--text-secondary);
 }
+
+.tools-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+}

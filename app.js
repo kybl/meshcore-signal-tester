@@ -1186,7 +1186,7 @@ class MeshCoreApp {
             'messages':
                 'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then how many of the newest packets on the first page came via that repeater, then last RSSI, last SNR, total RX count, then alphabetically.',
             'tools':
-                'Shown while a companion radio is connected. TX power: the radio\'s transmit power, read from the device; "Set" changes it on the device (saved there, applies immediately) — the allowed maximum is reported by the radio itself. Trace: sends a trace along a path of repeater IDs and shows the SNR measured at every hop. A single ID (e.g. "5E", or a longer "5E9F") is a round trip to that neighbour: ↑ is how well the repeater heard you, ↓ how well you heard it back. For a longer route, give the way out and back, e.g. "5E,8A,5E". All IDs must be the same length (2, 4 or 8 hex digits). With a repeater selected, an empty field traces to that repeater. The trace also appears as a "Trace" row in Received packets.',
+                'Shown while a companion radio is connected. RX gain (firmware v1.18.0+): "Boosted" is the radio chip\'s boosted receive gain (on by default — off lowers sensitivity and so the RSSI/SNR you measure); "External LNA" is the extra receive amplifier some boards have (e.g. Heltec V4) and appears only on those. Both are saved on the radio. Keep them the same when comparing measurements. TX power: the radio\'s transmit power, read from the device; "Set" changes it on the device (saved there, applies immediately) — the allowed maximum is reported by the radio itself. Trace: sends a trace along a path of repeater IDs and shows the SNR measured at every hop. A single ID (e.g. "5E", or a longer "5E9F") is a round trip to that neighbour: ↑ is how well the repeater heard you, ↓ how well you heard it back. For a longer route, give the way out and back, e.g. "5E,8A,5E". All IDs must be the same length (2, 4 or 8 hex digits). With a repeater selected, an empty field traces to that repeater. The trace also appears as a "Trace" row in Received packets.',
             'cli':
                 'Shown while a repeater is connected over USB, or a companion radio with firmware that supports CLI commands (protocol v14+). Type any repeater CLI command (e.g. "ver", "get tx", "set tx 20", "neighbors", "clock") and press Enter or Send; the reply appears above. ↑/↓ recall earlier commands. While a command is running, the app pauses its own background polling (packet log, neighbours) so the reply isn\'t mixed with them. Commands that would stop the capture or restart/erase the repeater ask for confirmation first. Settings changed with "set" are saved on the repeater; some (radio parameters) take effect only after a reboot.',
             'msg-filter':
@@ -1208,7 +1208,7 @@ class MeshCoreApp {
             'loc-source':
                 'Where newly received packets get their map position from — already captured data keeps the positions it was stored with. "This phone / browser" (the default) stamps each packet with this device\'s own GPS fix and needs the location permission. "MeshCore device" instead uses the position the connected radio reports (re-read about once a second), so no phone location permission is needed — handy when the radio moves separately from you (mounted on a car while you measure from a laptop without GPS, or on a dog\'s collar roaming the garden). The radio must have a GPS fix, or at least a configured position, for packets to appear on the map. Works with a connected companion; a repeater only ever reports its fixed configured position.',
             'discover':
-                'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
+                'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Nodes don\'t answer when their owner has hidden them (adverts turned off, firmware v1.18.0+) or, on older firmware, when a repeater has "repeat off" — so a missing reply doesn\'t always mean the node is out of range. With a repeater connected over USB, the button instead asks the repeater to discover its own neighbours ("discover.neighbors") and then reads its neighbour table. Please don\'t press it more than once a minute.',
             'auto-reconnect':
                 'When the connection to the device drops unexpectedly (out of range, device reset, cable unplugged), automatically retry the last device. In the Android app it keeps retrying (a fast burst, then once a minute) for as long as the background service is alive, and also retries the moment you switch Bluetooth back on or return to the app — so a link the phone dropped while backgrounded recovers on its own. In a browser it tries a few times, then raises the disconnect alarm. This option only appears where a silent reconnect is possible: the Android app (Bluetooth, USB or WiFi) or desktop Chrome/Edge. It is hidden for Bluetooth in a mobile browser, because there the browser forces a manual device-picker confirmation on every connection for privacy reasons — so it can never reconnect on its own.',
         };
@@ -2245,11 +2245,66 @@ class MeshCoreApp {
     // Companion firmware with the text CLI over the companion protocol.
     _companionCli() { return (this._fwVer ?? 0) >= 14; }
 
+    // Run one CLI command on the companion (CMD_RUN_CLI_COMMAND, 66 →
+    // RESP_CODE_CLI_REPLY, 29). Resolves to the reply text, false when the
+    // firmware answered ERR, or null with no reply.
+    async _companionCli1(cmd) {
+        const text = new TextEncoder().encode(cmd);
+        const frame = new Uint8Array(1 + text.length);
+        frame[0] = 66; frame.set(text, 1);
+        const r = await this._companionCall(frame, [29, 1]);
+        if (!r) return null;
+        if (r[0] === 1) return false;
+        return new TextDecoder().decode(r.subarray(1)).replace(/\r/g, '');
+    }
+
+    // Read both RX gain states and show a switch for each one the board
+    // supports: "get radio.rxgain" → "> on|off" (radio chip, always present
+    // on v14); "get radio.fem.rxgain" → "> on|off" only on boards with a
+    // controllable external LNA ("Error: unsupported" / "Unknown command"
+    // otherwise).
+    async _readRxGain() {
+        const parse = r => { const m = typeof r === 'string' && r.match(/^>\s*(on|off)\b/i); return m ? m[1].toLowerCase() === 'on' : null; };
+        const boost = parse(await this._companionCli1('get radio.rxgain'));
+        const fem = parse(await this._companionCli1('get radio.fem.rxgain'));
+        if (this.conn.mode !== 'companion') return;
+        const apply = (wrapId, chkId, v) => {
+            document.getElementById(wrapId)?.classList.toggle('hidden', v == null);
+            const c = document.getElementById(chkId);
+            if (c && v != null) { c.checked = v; c.disabled = false; }
+        };
+        apply('rxBoostWrap', 'rxBoostChk', boost);
+        apply('femLnaWrap', 'femLnaChk', fem);
+        document.getElementById('rxGainRow')?.classList.toggle('hidden', boost == null && fem == null);
+        // Boosted gain is the firmware default; "off" is usually a leftover
+        // (e.g. the 1.14.1 upgrade bug) and silently costs sensitivity.
+        const note = document.getElementById('rxGainNote');
+        if (note && !note.dataset.msg) note.textContent = boost === false ? '⚠ boosted gain is off — lower sensitivity' : '';
+    }
+
+    async _setRxGain(key, chk) {
+        const want = chk.checked;
+        chk.disabled = true;
+        const reply = await this._companionCli1(`set ${key} ${want ? 'on' : 'off'}`);
+        const note = document.getElementById('rxGainNote');
+        const ok = typeof reply === 'string' && /^OK/i.test(reply.trim());
+        if (!ok) {
+            chk.checked = !want;
+            this._toolNote(note, reply == null ? 'No reply from the radio.'
+                : reply === false ? 'Not supported by this firmware.' : reply.trim() || 'The radio refused the change.',
+                () => { note.textContent = ''; this._readRxGain(); });
+        }
+        await this._readRxGain();
+        chk.disabled = false;
+    }
+
     // --- Radio tools (companion) ---
 
     _setupRadioTools() {
         document.getElementById('txPowerForm')?.addEventListener('submit', e => { e.preventDefault(); this._setTxPower(); });
         document.getElementById('traceForm')?.addEventListener('submit', e => { e.preventDefault(); this._runTrace(); });
+        document.getElementById('rxBoostChk')?.addEventListener('change', e => this._setRxGain('radio.rxgain', e.target));
+        document.getElementById('femLnaChk')?.addEventListener('change', e => this._setRxGain('radio.fem.rxgain', e.target));
     }
 
     // A companion is connected and identified (SELF_INFO): show the tools and,
@@ -2279,7 +2334,10 @@ class MeshCoreApp {
             } catch (_) {}
         }
         if (this.conn.mode !== 'companion') return;
-        if (this._companionCli()) this._showRepeaterConsole(true, 'Companion console');
+        if (this._companionCli()) {
+            this._showRepeaterConsole(true, 'Companion console');
+            this._readRxGain();
+        }
         this._updateFwNote();
     }
 
@@ -2302,7 +2360,7 @@ class MeshCoreApp {
         if (!el) return;
         const missing = [];
         if (this._fwVer != null && !this._companionCli())
-            missing.push('the companion console (CLI commands such as "set radio.rxgain on") needs firmware with protocol v14 or newer');
+            missing.push('the RX gain switches and the companion console need firmware v1.18.0 or newer (protocol v14)');
         const fw = this._fwName ? `firmware ${this._fwName}, protocol v${this._fwVer}` : `protocol v${this._fwVer}`;
         el.textContent = missing.length
             ? `⚠ Older companion firmware (${fw}): ${missing.join('; ')}. Update the radio's firmware to use it.`
@@ -2317,6 +2375,7 @@ class MeshCoreApp {
         this._fwName = null;
         document.getElementById('fwNote')?.classList.add('hidden');
         document.getElementById('deviceFw')?.classList.add('hidden');
+        for (const id of ['rxGainRow', 'rxBoostWrap', 'femLnaWrap']) document.getElementById(id)?.classList.add('hidden');
         this._txPower = null;
         this._toolWaiter?.resolve(null);
         for (const done of this._traceWaiters?.values() ?? []) done(null);
@@ -2334,12 +2393,18 @@ class MeshCoreApp {
         if (note && !note.dataset.msg) note.textContent = max > 0 && max <= 40 ? `max ${max} dBm` : '';
     }
 
-    _toolNote(el, msg) {
+    // A transient message in a tool's note slot; after 4 s the slot goes
+    // back to its normal content (`restore`, default: the TX power hint).
+    _toolNote(el, msg, restore) {
         if (!el) return;
         el.dataset.msg = '1';
         el.textContent = msg;
         clearTimeout(el._t);
-        el._t = setTimeout(() => { delete el.dataset.msg; this._noteTxPower(this._txPower, Number(document.getElementById('txPowerInput')?.max)); }, 4000);
+        el._t = setTimeout(() => {
+            delete el.dataset.msg;
+            if (restore) restore();
+            else this._noteTxPower(this._txPower, Number(document.getElementById('txPowerInput')?.max));
+        }, 4000);
     }
 
     // Send one companion command and wait for its reply frame (one of
@@ -2501,17 +2566,12 @@ class MeshCoreApp {
         this._cliAppend('> ' + cmd, 'cli-cmd');
         if (companion) {
             // CMD_RUN_CLI_COMMAND (66, protocol v14+) → RESP_CODE_CLI_REPLY (29).
-            const text = new TextEncoder().encode(cmd);
-            const frame = new Uint8Array(1 + text.length);
-            frame[0] = 66; frame.set(text, 1);
-            const r = await this._companionCall(frame, [29, 1]);
-            if (!r) this._cliAppend('(no reply)', 'cli-note');
-            else if (r[0] === 1) this._cliAppend('Error — command not supported by this firmware.', 'cli-note');
-            else {
-                const reply = new TextDecoder().decode(r.subarray(1)).replace(/\r/g, '');
-                if (!reply.trim()) this._cliAppend('(empty reply)', 'cli-note');
-                else for (const l of reply.split('\n')) this._cliAppend(l);
-            }
+            const reply = await this._companionCli1(cmd);
+            if (reply == null) this._cliAppend('(no reply)', 'cli-note');
+            else if (reply === false) this._cliAppend('Error — command not supported by this firmware.', 'cli-note');
+            else if (!reply.trim()) this._cliAppend('(empty reply)', 'cli-note');
+            else for (const l of reply.split('\n')) this._cliAppend(l);
+            if (/^set\s+radio\.(fem\.)?rxgain\b/i.test(cmd)) this._readRxGain();   // keep the switches in sync
             return;
         }
         const t = performance.now();
