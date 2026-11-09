@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
@@ -42,6 +43,8 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.IOException
 import java.util.Locale
 
 // Human-readable byte size in SI (decimal, base-1000) units — B, kB, MB, GB —
@@ -92,13 +95,9 @@ class MainActivity : AppCompatActivity() {
         // Each warning is shown at most once per process lifetime.
         private var batteryCheckShown = false
 
-        // Keys for persisting a pending CSV export across process death while the
-        // SAF "Save as" dialog is open (see onSaveInstanceState).
-        private const val KEY_PENDING_CSV = "pendingCsvContent"
-        private const val KEY_PENDING_CSV_NAME = "pendingCsvName"
-        // A Bundle isn't meant for many-MB payloads; skip persisting very large
-        // exports (accept the rare edge over risking a TransactionTooLarge).
-        private const val MAX_SAVED_CSV_CHARS = 256 * 1024
+        // Name the user picked for an export whose data is staged in the cache
+        // dir while the SAF "Save as" dialog is open (see saveCsvLauncher).
+        private const val PREF_PENDING_CSV_NAME = "pendingCsvName"
     }
 
     // ---- scanning state (one picker at a time) ----
@@ -173,24 +172,36 @@ class MainActivity : AppCompatActivity() {
         cb?.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
     }
 
-    // File picker for CSV export — shows "Save as" dialog via SAF
-    private var pendingCsvContent: String? = null
-    private var pendingCsvName: String? = null
+    // File picker for CSV export — shows "Save as" dialog via SAF.
+    //
+    // The CSV is staged in a cache file, NOT held in a field of this activity:
+    // the picker is another app, and while it is open the system may destroy
+    // this activity or kill the whole process (MIUI/HyperOS do so eagerly,
+    // more so with a large capture in memory). The result is then delivered
+    // to a NEW instance — where a field would be null, so nothing was written
+    // and the document the picker had already created stayed at 0 bytes,
+    // silently. A file survives both, and streaming it also avoids a second
+    // full in-memory copy of a large export.
+    private val pendingCsvFile get() = File(cacheDir, "pending-export.csv")
     private val saveCsvLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv")
     ) { uri: Uri? ->
-        val content = pendingCsvContent ?: return@registerForActivityResult
-        val suggested = pendingCsvName
-        pendingCsvContent = null
-        pendingCsvName = null
-        if (uri == null) return@registerForActivityResult   // user cancelled the dialog
+        val staged = pendingCsvFile
+        val suggested = prefs().getString(PREF_PENDING_CSV_NAME, null)
+        prefs().edit().remove(PREF_PENDING_CSV_NAME).apply()
+        if (uri == null) { staged.delete(); return@registerForActivityResult }   // cancelled
         try {
-            // Encode once and reuse for both the write and the reported size.
-            val bytes = content.toByteArray(Charsets.UTF_8)
-            contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-            Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(bytes.size)}).", Toast.LENGTH_LONG).show()
+            if (!staged.exists()) throw IOException("the export data was lost — please export again")
+            val out = contentResolver.openOutputStream(uri)
+                ?: throw IOException("cannot open the file for writing")
+            out.use { o -> staged.inputStream().use { it.copyTo(o) } }
+            Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(staged.length().toInt())}).", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
+            // Don't leave an empty / partial file behind looking like a save.
+            try { DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Exception) {}
             Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+        } finally {
+            staged.delete()
         }
     }
 
@@ -210,8 +221,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun launchCsvSavePicker(filename: String, content: String) {
-        pendingCsvContent = content
-        pendingCsvName = filename
+        try {
+            pendingCsvFile.writeText(content, Charsets.UTF_8)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
+            return
+        }
+        prefs().edit().putString(PREF_PENDING_CSV_NAME, filename).apply()
         saveCsvLauncher.launch(filename)
     }
 
@@ -281,27 +297,7 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(appUrl)
         wireBackHandler()
 
-        // Restore a pending CSV export if the process was killed while the SAF
-        // "Save as" dialog was open — otherwise the callback writes a 0-byte file.
-        if (savedInstanceState != null) {
-            pendingCsvContent = savedInstanceState.getString(KEY_PENDING_CSV)
-            pendingCsvName = savedInstanceState.getString(KEY_PENDING_CSV_NAME)
-        }
-
         // Permissions are requested lazily at BLE connect time.
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        // Persist the in-flight CSV content so a process death while the SAF
-        // picker is up doesn't leave the CreateDocument callback with nothing to
-        // write. Size-guarded to stay well under the Binder transaction limit.
-        pendingCsvContent?.let {
-            if (it.length <= MAX_SAVED_CSV_CHARS) {
-                outState.putString(KEY_PENDING_CSV, it)
-                outState.putString(KEY_PENDING_CSV_NAME, pendingCsvName)
-            }
-        }
     }
 
     // Build (or rebuild) this WebView's settings, JS bridges and clients.
