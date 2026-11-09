@@ -9,7 +9,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json' };
 function serve(dir) { return new Promise(res => { const s = http.createServer((rq, rs) => { const rel = decodeURIComponent(rq.url.split('?')[0]); const f = path.join(dir, rel === '/' ? '/index.html' : rel); if (!f.startsWith(dir)) { rs.writeHead(403).end(); return; } fs.readFile(f, (e, b) => { if (e) { rs.writeHead(404).end(); return; } rs.writeHead(200, { 'content-type': MIME[path.extname(f)] || 'application/octet-stream' }); rs.end(b); }); }); s.listen(0, '127.0.0.1', () => res(s)); }); }
-function findChromium() { for (const r of [process.env.PLAYWRIGHT_BROWSERS_PATH, '/opt/pw-browsers'].filter(Boolean)) { let d = []; try { d = fs.readdirSync(r).filter(x => x.startsWith('chromium-') && !x.includes('headless')); } catch { continue; } for (const x of d.sort().reverse()) { const e = `${r}/${x}/chrome-linux/chrome`; if (fs.existsSync(e)) return e; } } return null; }
+function findChromium() { for (const r of [process.env.PLAYWRIGHT_BROWSERS_PATH, '/opt/pw-browsers'].filter(Boolean)) { let d = []; try { d = fs.readdirSync(r).filter(x => x.startsWith('chromium-') && !x.includes('headless')); } catch { continue; } for (const x of d.sort().reverse()) { for (const e of [`${r}/${x}/chrome-linux/chrome`, `${r}/${x}/chrome-linux64/chrome`]) if (fs.existsSync(e)) return e; } } return null; }
 
 let failures = 0;
 const check = (name, ok, detail = '') => { console.log(`  ${ok ? '✓' : '✗'} ${name}${!ok && detail ? '  — ' + detail : ''}`); if (!ok) failures++; };
@@ -228,6 +228,80 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     a = await st();
     check('a never-started context is not replaced over and over', a.length === 3 && a[2].state === 'suspended', JSON.stringify(a));
     check('no page errors (sound)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
+// ---- #21: a packet filter that matches nothing keeps its input ----------------
+{
+    const ctx = await browser.newContext();
+    const { page, errors } = await openPage(ctx, base);
+    const now = Date.now();
+    const rows = []; for (let i = 0; i < 10; i++) rows.push(`${iso(now - 60000 + i * 1000)},Flood Advert,ab${String(i).padStart(4, '0')},5E,3,,-90,,,,,`);
+    await importCsv(page, tmp('flt', [HDR, ...rows].join('\n')));
+    const st = () => page.evaluate(() => ({
+        bar: !document.getElementById('msgFilterBar').classList.contains('hidden'),
+        rows: document.querySelectorAll('#msgTableBody tr[id^="row-"]').length,
+        empty: document.getElementById('msgTableEmpty').textContent,
+        count: document.getElementById('msgFilterCount').textContent }));
+    await page.fill('#msgFilter', 'zzzzqq'); await page.waitForTimeout(1200);
+    let a = await st();
+    check('#21 filter bar stays visible when the filter matches nothing', a.bar && a.rows === 0, JSON.stringify(a));
+    check('#21 …and says the filter matched nothing (not "Waiting for data")', /packet filter/.test(a.empty) && a.count.startsWith('0 /'), JSON.stringify(a));
+    await page.fill('#msgFilter', ''); await page.waitForTimeout(1200);
+    a = await st();
+    check('#21 clearing the filter brings the rows back', a.bar && a.rows === 10, JSON.stringify(a));
+    check('no page errors (#21)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
+// ---- #20: repeater console (fake USB repeater) ---------------------------------
+{
+    const ctx = await browser.newContext();
+    const { page, errors, dialogs } = await openPage(ctx, base);
+    // A fake serial port that behaves like the repeater CLI: echoes each line,
+    // then answers "  -> <reply>". Lines are fed back through _onSerialBytes.
+    await page.evaluate(() => {
+        const app = window.__mcApp, enc = new TextEncoder(), dec = new TextDecoder();
+        window.__sent = [];
+        const replies = { 'ver': '  -> v1.10.0-abc (Build: 1 Nov 2026)', 'get tx': '  -> > 22',
+                          'neighbors': '  -> 5E9F1234:12:40\n1A2B3C4D:300:-12' };
+        const port = { writable: { getWriter: () => ({ write: async b => {
+            const txt = dec.decode(b); window.__sent.push(txt);
+            for (const l of txt.split('\r\n').filter(Boolean)) {
+                setTimeout(() => {
+                    const out = l + '\r\n' + (replies[l] ? replies[l] + '\r\n' : (l === 'log' ? 'EOF\r\n' : ''));
+                    app._onSerialBytes(enc.encode(out));
+                }, 30);
+            }
+        }, releaseLock() {} }) } };
+        app.serialPort = port;
+        app.conn.setMode('repeater');
+        app._showRepeaterConsole(true);
+        app._startRepeaterPolling();
+    });
+    const wrapVisible = await page.$eval('#cliWrap', e => !e.classList.contains('hidden'));
+    check('#20 console appears for a repeater', wrapVisible);
+    const send = async c => { await page.fill('#cliInput', c); await page.press('#cliInput', 'Enter'); await page.waitForTimeout(1500); };
+    await send('ver');
+    await send('neighbors');
+    const log = await page.$eval('#cliLog', e => e.innerText);
+    check('#20 reply shown without the echo and "->" prefix', /> ver\n.*v1\.10\.0-abc/.test(log) && !/\nver\n/.test(log), JSON.stringify(log));
+    check('#20 multi-line reply shown in full', /5E9F1234:12:40\n1A2B3C4D:300:-12/.test(log), JSON.stringify(log));
+    check('#20 background poll output is not mirrored', !/EOF/.test(log), JSON.stringify(log));
+    // History
+    await page.focus('#cliInput'); await page.press('#cliInput', 'ArrowUp');
+    check('#20 ↑ recalls the last command', await page.inputValue('#cliInput') === 'neighbors');
+    // Risky command needs confirmation (the harness accepts dialogs) — and the
+    // page must never render device text as HTML.
+    await page.fill('#cliInput', 'log stop'); await page.press('#cliInput', 'Enter'); await page.waitForTimeout(300);
+    check('#20 "log stop" asks for confirmation', dialogs.some(d => /log stop/.test(d)), JSON.stringify(dialogs));
+    await page.evaluate(() => { const a = window.__mcApp; a._cliPending = { cmd: 'x', sentAt: 0, until: performance.now() + 2000, hardStop: performance.now() + 2000, echoed: true, got: 0 };
+        a._onSerialBytes(new TextEncoder().encode('  -> <img src=x onerror="window.__cliXss=1">\r\n')); });
+    await page.waitForTimeout(300);
+    check('#20 replies are shown as text, never HTML', await page.evaluate(() => !window.__cliXss && !document.querySelector('#cliLog img')));
+    await page.evaluate(() => { const a = window.__mcApp; a._stopRepeaterPolling(); a._showRepeaterConsole(false); });
+    check('#20 console hides when the repeater disconnects', await page.$eval('#cliWrap', e => e.classList.contains('hidden')));
+    check('no page errors (#20)', errors.length === 0, errors.join(' | '));
     await ctx.close();
 }
 

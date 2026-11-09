@@ -300,6 +300,7 @@ class MeshCoreApp {
         this._initWifiModal();
         this._initSignalMap();
         this._initDebug();
+        this._setupRepeaterConsole();
     }
 
     _setupChartArea() {
@@ -1183,6 +1184,8 @@ class MeshCoreApp {
                 'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "3E" matches "3E2F1234" and vice versa. Affects Seen Repeaters, charts, Received Packets, and the 3D map. A notice appears top-right while a filter is active.',
             'messages':
                 'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then how many of the newest packets on the first page came via that repeater, then last RSSI, last SNR, total RX count, then alphabetically.',
+            'cli':
+                'Shown while a repeater is connected over USB. Type any repeater CLI command (e.g. "ver", "get tx", "set tx 20", "neighbors", "clock") and press Enter or Send; the reply appears above. ↑/↓ recall earlier commands. While a command is running, the app pauses its own background polling (packet log, neighbours) so the reply isn\'t mixed with them. Commands that would stop the capture or restart/erase the repeater ask for confirmation first. Settings changed with "set" are saved on the repeater; some (radio parameters) take effect only after a reboot.',
             'msg-filter':
                 'Keeps only the packets that match what you type — a case-insensitive substring search across several fields at once: the packet type (full or abbreviated, e.g. "advert", "GT", "traceroute"), a repeater\'s short ID or its synced contact name, the decoded message text and sender (when available — most traffic is encrypted, so this is often empty), and the raw packet hex. The count next to the box shows matching / total. Clear with the ✕.',
             'msg-type':
@@ -1886,6 +1889,7 @@ class MeshCoreApp {
 
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (repeater)', 'connected');
+        this._showRepeaterConsole(true);
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());   // repeaters are USB-only
         this._updateSoundHighlight();
         this._collecting = true;
@@ -1988,6 +1992,11 @@ class MeshCoreApp {
     }
 
     _handleRepeaterLine(line) {
+        // Console tap: while a command typed in the Repeater console is in
+        // flight, mirror the CLI's reply lines there (packet-log lines excluded),
+        // then let the line through to the normal handlers below — a "get radio"
+        // or "neighbors" typed by hand updates the app just like its own polls.
+        if (this._cliPending) this._cliTap(line);
         // RAW packet dump (MESH_PACKET_LOGGING builds): decode for full path /
         // last-hop, hold it until the matching summary line brings SNR/RSSI.
         const raw = line.match(/U RAW:\s*([0-9A-Fa-f]+)/);
@@ -2200,14 +2209,115 @@ class MeshCoreApp {
     // packet log are polled over the CLI (reading them transmits nothing). The
     // log is a stored file with no streaming, so each cycle we dump it ('log')
     // and clear it ('log erase' on the EOF marker) to get only-new entries.
+    // --- Repeater console (USB repeater text CLI) ---
+
+    _setupRepeaterConsole() {
+        this._cliLogEl = document.getElementById('cliLog');
+        this._cliInputEl = document.getElementById('cliInput');
+        this._cliHistory = [];
+        this._cliHistIdx = 0;
+        this._cliPending = null;
+        document.getElementById('cliForm')?.addEventListener('submit', e => {
+            e.preventDefault();
+            this._cliSubmit();
+        });
+        this._cliInputEl?.addEventListener('keydown', e => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            const h = this._cliHistory;
+            if (!h.length) return;
+            e.preventDefault();
+            this._cliHistIdx = Math.max(0, Math.min(h.length, this._cliHistIdx + (e.key === 'ArrowUp' ? -1 : 1)));
+            this._cliInputEl.value = h[this._cliHistIdx] ?? '';
+        });
+    }
+
+    _showRepeaterConsole(show) {
+        document.getElementById('cliWrap')?.classList.toggle('hidden', !show);
+        if (!show) this._cliPending = null;
+    }
+
+    // A console command is in flight: its reply window is still open.
+    _cliBusy() {
+        const p = this._cliPending;
+        if (p && performance.now() > p.until) this._cliPending = null;
+        return !!this._cliPending;
+    }
+
+    _cliAppend(text, cls) {
+        const log = this._cliLogEl;
+        if (!log) return;
+        const div = document.createElement('div');
+        if (cls) div.className = cls;
+        div.textContent = text;          // never innerHTML: replies are device text
+        log.appendChild(div);
+        while (log.childElementCount > 400) log.firstElementChild.remove();
+        log.scrollTop = log.scrollHeight;
+    }
+
+    async _cliSubmit() {
+        const cmd = (this._cliInputEl?.value ?? '').trim();
+        if (!cmd) return;
+        if (this.conn.mode !== 'repeater' || !this.serialPort) {
+            this._cliAppend('Not connected to a repeater.', 'cli-note');
+            return;
+        }
+        // Commands that would silently break the capture, or restart / wipe
+        // the repeater, need an explicit OK.
+        const risky = /^(reboot|erase|start\s+ota|log\s+stop)\b/i.exec(cmd);
+        if (risky) {
+            const why = /^log/i.test(risky[1])
+                ? 'This stops the repeater\'s packet log — the app will stop capturing packets until you send "log start" (or reconnect).'
+                : 'This restarts or modifies the repeater firmware/storage, and the connection will drop.';
+            if (!confirm(`Send "${cmd}"?\n\n${why}`)) return;
+        }
+        if (this._cliHistory[this._cliHistory.length - 1] !== cmd) this._cliHistory.push(cmd);
+        if (this._cliHistory.length > 50) this._cliHistory.shift();
+        this._cliHistIdx = this._cliHistory.length;
+        this._cliInputEl.value = '';
+        this._cliAppend('> ' + cmd, 'cli-cmd');
+        const t = performance.now();
+        // Reply window: open for up to 4 s waiting for the first line, then
+        // kept open 1 s past the latest reply line (multi-line replies such as
+        // "neighbors"), never beyond 10 s in total.
+        this._cliPending = { cmd, sentAt: t, until: t + 4000, hardStop: t + 10000, echoed: false, got: 0 };
+        try { await this._serialWriteText(cmd + '\r\n'); }
+        catch (e) { this._cliPending = null; this._cliAppend('Write failed: ' + (e?.message || e), 'cli-note'); return; }
+        setTimeout(() => {
+            if (this._cliPending?.sentAt === t && !this._cliPending.got) {
+                this._cliPending = null;
+                this._cliAppend('(no reply)', 'cli-note');
+            }
+        }, 4100);
+    }
+
+    _cliTap(line) {
+        if (!this._cliBusy()) return;
+        const p = this._cliPending;
+        // Packet-log output is never a command reply.
+        if (/U RAW:/.test(line) || /^\d{2}:\d{2}:\d{2} - \d{1,2}\/\d{1,2}\/\d{4} U: /.test(line)) return;
+        // The CLI echoes the typed command first; anything before that echo
+        // is the tail of an earlier (background poll) command. Firmware that
+        // doesn't echo: start showing lines shortly after the send instead.
+        if (!p.echoed) {
+            if (line === p.cmd) { p.echoed = true; return; }
+            if (performance.now() - p.sentAt < 400) return;
+            p.echoed = true;
+        }
+        p.got++;
+        this._cliAppend(line.replace(/^->\s?/, ''));
+        p.until = Math.min(p.hardStop, performance.now() + 1000);
+    }
+
     _startRepeaterPolling() {
         this._stopRepeaterPolling();
         const alive = () => this.conn.mode === 'repeater' && this.serialPort;
+        // Skipped while a console command is in flight, so its reply isn't
+        // interleaved with the poll output (see _cliBusy).
         this._neighborPollTimer = setInterval(() => {
-            if (alive()) this._serialWriteText('neighbors\r\n').catch(() => {});
+            if (alive() && !this._cliBusy()) this._serialWriteText('neighbors\r\n').catch(() => {});
         }, 5000);
         this._logPollTimer = setInterval(() => {
-            if (alive()) this._serialWriteText('log\r\n').catch(() => {});
+            if (alive() && !this._cliBusy()) this._serialWriteText('log\r\n').catch(() => {});
         }, 2500);
         // Seed immediately on connect.
         this._serialWriteText('neighbors\r\n').catch(() => {});
@@ -3552,7 +3662,6 @@ class MeshCoreApp {
                 .map(tr => [tr.id.slice(7), tr.dataset.col ?? null])
         );
 
-        // Show filter bar only when there are visible rows
         const msgFilterBar = document.getElementById('msgFilterBar');
 
         const filter = this._msgFilter.toLowerCase().trim();
@@ -3581,27 +3690,38 @@ class MeshCoreApp {
         const msgTableEmpty = document.getElementById('msgTableEmpty');
         const msgTableScroll = this.msgTableHead?.closest('.msg-table-scroll');
 
+        // The filter bar is hidden only while the session holds no packets at
+        // all. An empty table caused by the filter itself must keep it — the
+        // text filter also narrows the disk page, so a typo used to empty the
+        // rows, hide the bar with the input, and leave no way to fix the filter.
+        const sessionHasData = this.model.recentSize > 0 || this.table.hashCount > 0;
+        if (msgFilterBar) msgFilterBar.classList.toggle('hidden', !sessionHasData && !filter);
+
         if (allRows.length === 0) {
-            if (msgFilterBar) msgFilterBar.classList.add('hidden');
             if (msgTableScroll) msgTableScroll.style.display = 'none';
             if (msgTableEmpty) {
                 // Narrowed to a repeater/filter with nothing in view: say so, so
                 // the empty table reads as "this selection is empty" (deselect via
-                // the top-right notice) rather than "no data captured at all".
-                msgTableEmpty.textContent = narrowFn
+                // the top-right notice, or edit the packet filter) rather than
+                // "no data captured at all".
+                msgTableEmpty.textContent = filter
+                    ? 'No packets match the packet filter in the current display window.'
+                    : narrowFn
                     ? (this.selection.col
                         ? 'No packets from this repeater in the current display window.'
                         : 'No packets match the filter in the current display window.')
                     : (cutoff ? 'No packets in the current display window.' : 'Waiting for data…');
                 msgTableEmpty.classList.remove('hidden');
             }
+            if (this.msgFilterCountEl) {
+                this.msgFilterCountEl.textContent = filter ? `0 / ${this.table.hashCount || this.model.recentSize}` : '';
+                this.msgFilterCountEl.classList.toggle('hidden', !filter);
+            }
             this.msgTableHead.innerHTML = '';
             this.msgTableBody.innerHTML = '';
             this._lastColKey = null;
             return;
         }
-
-        if (msgFilterBar) msgFilterBar.classList.remove('hidden');
 
         if (msgTableScroll) msgTableScroll.style.display = '';
         if (msgTableEmpty) msgTableEmpty.classList.add('hidden');
@@ -6988,6 +7108,7 @@ class MeshCoreApp {
     onDisconnected() {
         this.releaseWakeLock();
         this._stopRepeaterPolling();
+        this._showRepeaterConsole(false);
         clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
         this._monitorDelay = null;

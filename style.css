@@ -2874,3 +2874,44 @@ html.light-theme .theme-toggle-btn:hover {
     color: var(--text-primary);
     margin-bottom: 18px;
 }
+
+/* ── Repeater console ───────────────────────────────── */
+
+.cli-inner {
+    padding: 2px 4px 6px;
+}
+
+.cli-log {
+    margin: 0 0 6px;
+    min-height: 3em;
+    max-height: 260px;
+    overflow-y: auto;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.cli-log:empty::before {
+    content: 'Replies to your commands appear here.';
+    color: var(--text-secondary);
+}
+
+.cli-log .cli-cmd { color: var(--accent-fg); }
+.cli-log .cli-note { color: var(--text-secondary); font-style: italic; }
+
+.cli-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.cli-input {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
