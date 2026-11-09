@@ -186,6 +186,7 @@
   within the recorded time range, instead of drifting onto old or empty time.
 - **The 2D-chart tooltip shows the time down to the millisecond and the packet
   type**, plus how many receptions a clustered point stands for.
+  ([#13](https://github.com/kybl/meshcore-signal-tester/issues/13))
 - **Smoother, steadier 3D-map clustering** — points no longer flicker or shuffle
   as you move or zoom the camera, more individual points are shown when you zoom
   into a sparse area, and points appear right after zooming in.
