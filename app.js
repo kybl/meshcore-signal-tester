@@ -6832,7 +6832,7 @@ class MeshCoreApp {
     // --- Stats & status ---
 
     _updateStats() {
-        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.model.recentSize === 0 && !this.model.ready;
+        this._updateExportBtn();
         const displayCutoff = this.windows.displayCutoff();
         // "Active" = unique packets in the Display window. A finite window is
         // never wider than the RAM window (max Display = 1 h = the RAM budget),
@@ -6948,7 +6948,15 @@ class MeshCoreApp {
         this._updateCornerNotices();
     }
 
+    _updateExportBtn() {
+        if (!this.exportCsvBtn) return;
+        this.exportCsvBtn.disabled = !!this._importing || (this.model.recentSize === 0 && !this.model.ready);
+        this._exportTitle ??= this.exportCsvBtn.title;
+        this.exportCsvBtn.title = this._importing ? 'Available when the import has finished' : this._exportTitle;
+    }
+
     async _exportCsv() {
+        if (this._importing) return;
         const useDisk = this.model.ready;
         if (this.model.recentSize === 0 && !useDisk) return;
 
@@ -7112,9 +7120,21 @@ class MeshCoreApp {
     // together — so the user is prompted once and the expensive finalize (disk
     // flush, wide-view rebuild, re-render, camera fit) runs once for the whole
     // selection rather than once per file.
+    // Export is disabled for the whole import — reading, parsing and applying
+    // (an export mid-import would save a half-imported session).
     async _importCsvFiles(files) {
         files = Array.from(files || []).filter(Boolean);
         if (!files.length) return;
+        this._importing = (this._importing || 0) + 1;     // counter: imports can overlap
+        this._updateExportBtn();
+        try { await this._importCsvFilesBody(files); }
+        finally {
+            this._importing--;
+            this._updateExportBtn();
+        }
+    }
+
+    async _importCsvFilesBody(files) {
 
         // Read + parse every file up front. Contacts embedded in any file are
         // merged immediately (new keys only, keep existing) — done even for a

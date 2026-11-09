@@ -471,6 +471,30 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await ctx.close();
 }
 
+// ---- Export is disabled while an import runs -----------------------------------
+{
+    const ctx = await browser.newContext();
+    const { page, errors } = await openPage(ctx, base);
+    const now = Date.now();
+    const rows = []; for (let i = 0; i < 3000; i++) rows.push(`${iso(now - 3600000 + i * 1000)},Flood Advert,ef${String(i).padStart(5, '0')},5E,3,,-90,,,,,`);
+    await (await page.$('input[type=file]')).setInputFiles(tmp('big', [HDR, ...rows].join('\n')));
+    const during = await page.evaluate(() => new Promise(res => {
+        const t0 = performance.now();
+        (function poll() {
+            if (document.getElementById('importCsvBtn').disabled) return res(document.getElementById('exportCsvBtn').disabled);
+            if (performance.now() - t0 > 5000) return res('import never started');
+            setTimeout(poll, 5);
+        })();
+    }));
+    check('Export is disabled while the import runs', during === true, String(during));
+    await page.waitForFunction(() => !document.getElementById('importCsvBtn').disabled, null, { timeout: 30000 });
+    await page.waitForTimeout(300);
+    const after = await page.$eval('#exportCsvBtn', b => ({ d: b.disabled, t: b.title }));
+    check('…and enabled again afterwards, with its tooltip', !after.d && after.t === 'Export visible packets as CSV', JSON.stringify(after));
+    check('no page errors (export during import)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);
