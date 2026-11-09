@@ -387,8 +387,8 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     check('#20 mixed ID lengths are rejected', /same length/.test(await page.textContent('#traceResult')));
     await page.evaluate(() => { window.__fw.traceOk = false; });
     await page.fill('#traceInput', '5E'); await page.click('#traceBtn');
-    await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 15000 });
-    check('#20 a trace with no answer times out with a message', /No answer within/.test(await page.textContent('#traceResult')));
+    await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 20000 });
+    check('#20 a trace with no answer times out with a message', /No answer within 10 s/.test(await page.textContent('#traceResult')));
 
     // Old firmware: no console
     await page.evaluate(() => { const a = window.__mcApp; a._hideCompanionTools(); a._showRepeaterConsole(false); window.__fw.ver = 9;

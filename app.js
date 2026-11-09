@@ -2430,7 +2430,13 @@ class MeshCoreApp {
             }
             // RESP_CODE_SENT: [6, flood, tag u32, est_timeout ms u32]
             const est = r.length >= 10 ? new DataView(r.buffer, r.byteOffset).getUint32(6, true) : 5000;
-            const wait = Math.min(30000, Math.max(3000, est * 1.5 + 1000));
+            // The firmware's estimate is an ack timeout, tight for a trace: each
+            // repeater adds a random retransmit delay, may wait for a busy
+            // channel, and (EU) is bound by its duty cycle. So: at least 10 s,
+            // else twice the estimate plus slack, at most 45 s (long routes on
+            // slow presets).
+            const wait = Math.min(45000, Math.max(10000, est * 2 + 3000));
+            show(`Tracing ${p.ids.join(' → ')} … (waiting up to ${Math.round(wait / 1000)} s)`, 'tools-note');
             const res = await Promise.race([result, new Promise(rs => setTimeout(() => rs(undefined), wait))]);
             this._traceWaiters.delete(tag);
             if (res === null) return;                      // disconnected meanwhile
