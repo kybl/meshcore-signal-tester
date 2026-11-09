@@ -98,6 +98,9 @@ class MainActivity : AppCompatActivity() {
         // Name the user picked for an export whose data is staged in the cache
         // dir while the SAF "Save as" dialog is open (see saveCsvLauncher).
         private const val PREF_PENDING_CSV_NAME = "pendingCsvName"
+        // A staged import is handed to the page as one string; beyond this the
+        // copies risk running the app out of memory.
+        private const val MAX_STAGED_IMPORT_BYTES = 40L * 1000 * 1000
     }
 
     // ---- scanning state (one picker at a time) ----
@@ -180,7 +183,7 @@ class MainActivity : AppCompatActivity() {
     // that should receive the files died with the old page, so the import used
     // to vanish silently. Instead, read the picked files now (the URI grant is
     // valid for this result) into the cache, and let the reloaded page take
-    // them once it has started (FilesBridge.takePendingImports).
+    // them once it has started (FilesBridge.takePendingImport).
     private val pendingImportDir get() = File(cacheDir, "pending-import")
     private fun stageOrphanImport(uris: List<Uri>) {
         Thread {
@@ -189,12 +192,16 @@ class MainActivity : AppCompatActivity() {
                 val dir = pendingImportDir.apply { mkdirs() }
                 uris.forEachIndexed { i, uri ->
                     val name = (displayNameOf(uri) ?: "import-$i.csv").replace('/', '_')
+                    // Write under a .part name and rename when complete: the
+                    // page may ask for staged files while this copy still runs.
+                    val done = File(dir, "%03d-%s".format(Locale.US, i, name))
+                    val part = File(dir, done.name + ".part")
                     contentResolver.openInputStream(uri)?.use { input ->
-                        File(dir, "%03d-%s".format(Locale.US, i, name)).outputStream().use { input.copyTo(it) }
-                        staged++
+                        part.outputStream().use { input.copyTo(it) }
+                        if (part.renameTo(done)) staged++ else part.delete()
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 runOnUiThread { Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show() }
             }
             if (staged > 0) runOnUiThread {
@@ -205,17 +212,32 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    // Hand the staged files to the page as JSON [{name, text}] and delete them.
-    fun takePendingImportsJson(): String {
-        val out = JSONArray()
-        val files = pendingImportDir.listFiles()?.sortedBy { it.name } ?: return "[]"
-        for (f in files) {
+    // Hand ONE staged file to the page as JSON {name, text} ("" when none
+    // is left) — one per call keeps the in-memory copies to a single file.
+    // The file is deleted before it is handed over, so a crash while the page
+    // parses it can't make it come back on every start. Files that are too
+    // big, or were staged long ago (an import the page never took), are
+    // dropped with a message.
+    fun takePendingImportJson(): String {
+        while (true) {
+            val f = pendingImportDir.listFiles { x -> !x.name.endsWith(".part") }
+                ?.minByOrNull { it.name } ?: return ""
+            val name = f.name.substring(4)
             try {
-                out.put(JSONObject().put("name", f.name.substring(4)).put("text", f.readText(Charsets.UTF_8)))
-            } catch (_: Exception) {}
-            f.delete()
+                if (System.currentTimeMillis() - f.lastModified() > 15 * 60_000L) { f.delete(); continue }
+                if (f.length() > MAX_STAGED_IMPORT_BYTES) {
+                    f.delete()
+                    runOnUiThread { Toast.makeText(this, "Import of $name failed: file too large — please import it again.", Toast.LENGTH_LONG).show() }
+                    continue
+                }
+                val text = f.readText(Charsets.UTF_8)
+                f.delete()
+                return JSONObject().put("name", name).put("text", text).toString()
+            } catch (e: Throwable) {
+                f.delete()
+                runOnUiThread { Toast.makeText(this, "Import of $name failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
         }
-        return out.toString()
     }
 
     // File picker for CSV export — shows "Save as" dialog via SAF.
@@ -236,19 +258,30 @@ class MainActivity : AppCompatActivity() {
         val suggested = prefs().getString(PREF_PENDING_CSV_NAME, null)
         prefs().edit().remove(PREF_PENDING_CSV_NAME).apply()
         if (uri == null) { staged.delete(); return@registerForActivityResult }   // cancelled
-        try {
-            if (!staged.exists()) throw IOException("the export data was lost — please export again")
-            val out = contentResolver.openOutputStream(uri)
-                ?: throw IOException("cannot open the file for writing")
-            out.use { o -> staged.inputStream().use { it.copyTo(o) } }
-            Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(staged.length().toInt())}).", Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            // Don't leave an empty / partial file behind looking like a save.
-            try { DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Exception) {}
-            Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
-        } finally {
-            staged.delete()
-        }
+        // Copy off the main thread — a large export would otherwise freeze the UI.
+        Thread {
+            val msg = try {
+                if (!staged.exists()) throw IOException("the export data was lost — please export again")
+                val size = staged.length()
+                val out = contentResolver.openOutputStream(uri)
+                    ?: throw IOException("cannot open the file for writing")
+                out.use { o -> staged.inputStream().use { it.copyTo(o) } }
+                "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(size.toInt())})."
+            } catch (e: Throwable) {
+                // Don't leave an empty / partial file behind looking like a save.
+                try { DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Throwable) {}
+                "Save failed: ${e.message}"
+            } finally {
+                staged.delete()
+            }
+            runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+        }.start()
+    }
+
+    // Called on the JS bridge thread (not main): write the export to the
+    // staging file before the picker opens.
+    fun stageCsvExport(content: String) {
+        pendingCsvFile.writeText(content, Charsets.UTF_8)
     }
 
     // Hide/show the system bars while an HTML element is in fullscreen. The
@@ -266,13 +299,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun launchCsvSavePicker(filename: String, content: String) {
-        try {
-            pendingCsvFile.writeText(content, Charsets.UTF_8)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
-            return
-        }
+    // The CSV has already been staged by stageCsvExport.
+    fun launchCsvSavePicker(filename: String) {
         prefs().edit().putString(PREF_PENDING_CSV_NAME, filename).apply()
         saveCsvLauncher.launch(filename)
     }
@@ -288,6 +316,9 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A fresh start (not a recreation that may be about to receive a
+        // picker result): staged imports from an earlier run are stale.
+        if (savedInstanceState == null) pendingImportDir.deleteRecursively()
 
         webView = WebView(this)
         // True edge-to-edge: the WebView fills the whole window, including behind

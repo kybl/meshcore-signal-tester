@@ -2315,6 +2315,13 @@ class MeshCoreApp {
         if (!this.conn.established || (mode !== 'companion' && mode !== 'repeater')) return;
         if (!confirmed && !confirm('Restart the device?\n\nThe connection drops while it restarts; the app reconnects automatically when it is back (about 10 s).')) return;
         const id = this._lastConnectedId;
+        // Mark the drop as intended BEFORE sending: boards with native USB
+        // (nRF52, ESP32-S3) vanish from the bus the instant they reset, so the
+        // read loop can end — and would raise the alarm — before we close.
+        // _restartPending also keeps the Android capture service up across
+        // the gap until the reconnect starts.
+        this.conn.intendDisconnect();
+        this._restartPending = true;
         try {
             if (mode === 'companion') await this._sendFrame(new Uint8Array([19, ...new TextEncoder().encode('reboot')]));
             else await this._serialWriteText('reboot\r\n');
@@ -2324,10 +2331,18 @@ class MeshCoreApp {
         this._restarting = true;
         try { if (this.conn.established) await this.disconnect(); }
         finally { this._restarting = false; }
+        // Where a reconnect needs a user gesture (Bluetooth in a mobile
+        // browser), retrying would only fail and end in the alarm.
+        if (!id || !this._canAutoReconnect()) {
+            this._restartPending = false;
+            this._stopCaptureServiceIfIdle();
+            this.updateStatus('Device restarting — connect again when it is back', 'disconnected');
+            return;
+        }
         this.updateStatus('Restarting device…', 'connecting');
-        if (!id) return;
         clearTimeout(this._restartReconnectTimer);
         this._restartReconnectTimer = setTimeout(() => {
+            this._restartPending = false;
             if (this.device || this.serialPort || this.reconnect.active) return;
             this._lastConnectedId = id;
             this.reconnect.start();
@@ -2351,9 +2366,10 @@ class MeshCoreApp {
     // console needs v14+.
     _onCompanionReady() {
         document.getElementById('toolsWrap')?.classList.remove('hidden');
-        // Not mid contact dump — an injected command can stall it; the end of
-        // the dump calls back here.
-        if (!this._devQuerySent && !this._contactsFetchActive) {
+        // Only once the contact sync is over (finished or given up) — an
+        // injected command can stall the dump, and over BLE SELF_INFO arrives
+        // before the dump has even started. Its end calls back here.
+        if (!this._devQuerySent && this._contactsSynced && !this._contactsFetchActive) {
             this._devQuerySent = true;
             this._sendFrame(new Uint8Array([22, 3])).catch(() => {});   // CMD_DEVICE_QUERY, app protocol v3
         }
@@ -2410,11 +2426,14 @@ class MeshCoreApp {
     _hideCompanionTools() {
         document.getElementById('toolsWrap')?.classList.add('hidden');
         this._devQuerySent = false;
+        this._contactsSynced = false;
         this._fwVer = null;
         this._fwName = null;
         document.getElementById('fwNote')?.classList.add('hidden');
         document.getElementById('deviceFw')?.classList.add('hidden');
         for (const id of ['rxGainRow', 'rxBoostWrap', 'femLnaWrap']) document.getElementById(id)?.classList.add('hidden');
+        for (const id of ['traceResult', 'rxGainNote']) { const el = document.getElementById(id); if (el) { el.textContent = ''; delete el.dataset.msg; } }
+        this._toolLate = null;
         this._txPower = null;
         this._toolWaiter?.resolve(null);
         for (const done of this._traceWaiters?.values() ?? []) done(null);
@@ -2455,13 +2474,25 @@ class MeshCoreApp {
     _companionCall(bytes, codes, timeoutMs = 5000) {
         const run = async () => {
             if (this.conn.mode !== 'companion' || !this._canSend()) return null;
+            // Not into a contact dump or a Discover (whose OK/ERR would look
+            // like our reply), nor while a timed-out call's reply may still
+            // arrive (it would be taken as this call's) — up to 30 s.
+            const t0 = performance.now();
+            while ((this._contactsFetchActive || this._discoverActive || this._toolLateActive())
+                   && performance.now() - t0 < 30000) await new Promise(r => setTimeout(r, 100));
             this._toolBusy = true;
             try {
                 await new Promise(r => setTimeout(r, 300));
+                if (this.conn.mode !== 'companion' || !this._canSend()) return null;
                 return await new Promise(resolve => {
                     const finish = p => { clearTimeout(timer); if (this._toolWaiter === w) this._toolWaiter = null; resolve(p); };
                     const w = { codes, resolve: finish };
-                    const timer = setTimeout(() => finish(null), timeoutMs);
+                    const timer = setTimeout(() => {
+                        // A reply that turns up after this is still ours: swallow it
+                        // (for a few seconds) rather than hand it to the next call.
+                        this._toolLate = { codes, until: performance.now() + 5000 };
+                        finish(null);
+                    }, timeoutMs);
                     this._toolWaiter = w;
                     this._sendFrame(bytes).catch(() => finish(null));
                 });
@@ -2470,6 +2501,11 @@ class MeshCoreApp {
         const p = (this._toolChain ?? Promise.resolve()).then(run, run);
         this._toolChain = p.catch(() => {});
         return p;
+    }
+
+    _toolLateActive() {
+        if (this._toolLate && performance.now() > this._toolLate.until) this._toolLate = null;
+        return !!this._toolLate;
     }
 
     async _setTxPower() {
@@ -2543,7 +2579,7 @@ class MeshCoreApp {
             show(`Tracing ${p.ids.join(' → ')} … (waiting up to ${Math.round(wait / 1000)} s)`, 'tools-note');
             const res = await Promise.race([result, new Promise(rs => setTimeout(() => rs(undefined), wait))]);
             this._traceWaiters.delete(tag);
-            if (res === null) return;                      // disconnected meanwhile
+            if (res === null) { show('Disconnected — trace cancelled.', 'tools-note'); return; }
             if (!res) { show(`No answer within ${Math.round(wait / 1000)} s — the path is broken somewhere (or a repeater was busy). Try again.`, 'tools-note'); return; }
             show(this._formatTrace(res.ids, res.snrs));
         } finally {
@@ -2809,6 +2845,8 @@ class MeshCoreApp {
                 // so rather than stopping silently, so the user knows to reconnect.
                 this._setContactsError(`Synced ${fetched} contacts — some may be missing. Reconnect to retry.`);
             }
+            this._contactsSynced = true;          // done trying — tools may query now
+            this._onCompanionReady();
             return;
         }
         this._contactsLastStallSize = fetched;
@@ -2983,6 +3021,9 @@ class MeshCoreApp {
         }
         if (this._discoverActive) return; // prevent double-click overlap
         this._discoverActive = true;
+        // A Radio tools command is awaiting its OK/ERR: Discover's own reply
+        // would be taken for it — let it finish first.
+        for (let i = 0; this._toolBusy && i < 100; i++) await new Promise(r => setTimeout(r, 100));
 
         const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
         if (!this._discoverTags) this._discoverTags = new Map();
@@ -3155,6 +3196,7 @@ class MeshCoreApp {
         // Reply to a Radio tools / console command (see _companionCall):
         // RESP_CODE_OK/ERR/SENT/CLI_REPLY are only ever awaited there.
         if (this._toolWaiter?.codes.includes(pushCode)) { this._toolWaiter.resolve(payload); return; }
+        if (this._toolLateActive() && this._toolLate.codes.includes(pushCode)) { this._toolLate = null; return; }
         // RESP_CODE_DEVICE_INFO (0x0D): [1] = firmware protocol version.
         if (pushCode === 0x0d) { this._handleDeviceInfo(payload); return; }
         // RESP_CODE_BATT_AND_STORAGE (0x0C), reply to CMD_GET_BATT_AND_STORAGE:
@@ -3209,6 +3251,7 @@ class MeshCoreApp {
                 this.contacts.setLastmod(this._selfPubKey,
                     (payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24)) >>> 0);
             this.contacts.schedulePersist();   // full list received → persist with the new sync marker
+            this._contactsSynced = true;
             if (this.conn.mode === 'companion') this._onCompanionReady();
             this._updateContactsCount();
             this._lastColKey = null; // force column header redraw with names
@@ -6463,7 +6506,7 @@ class MeshCoreApp {
         // return. So while it isn't running, ask it to resume for next time and skip
         // this beep. (Only sound is gated; capture is unaffected.)
         if (ctx.state !== 'running') {
-            if (this._audioStuck() && !retried) this._playRxSound(snr, isNewHash, true);
+            if (this._audioStuck(false) && !retried) this._playRxSound(snr, isNewHash, true);
             return;
         }
         const now = ctx.currentTime;
@@ -6480,7 +6523,7 @@ class MeshCoreApp {
             this._audioAnchor = { audio: now, wall };   // clock is moving
         } else if (wall - this._audioAnchor.wall > 2000) {
             this._audioStalled = true;
-            if (this._audioStuck() && !retried) this._playRxSound(snr, isNewHash, true);
+            if (this._audioStuck(true) && !retried) this._playRxSound(snr, isNewHash, true);
             return;
         }
         this._audioStuckSince = 0;   // playing normally again
@@ -6586,15 +6629,23 @@ class MeshCoreApp {
     // visible, discard it and report true: the caller retries once on a fresh
     // context (closing the old one also drops any beeps queued on its frozen
     // clock, so they can't burst out later).
-    _audioStuck() {
+    //
+    // `frozen`: state 'running' but the clock stopped (the stuck case proper).
+    // Otherwise the context is merely suspended — normal for a moment after
+    // returning to the app, while resume() is still under way — so it is
+    // replaced only if it stays suspended for over 3 s in the foreground.
+    // In the background nothing is replaced (resume() only).
+    _audioStuck(frozen) {
         const ctx = this.audioCtx;
         if (!ctx) return false;
+        ctx.resume?.()?.catch?.(() => {});
         // Only a context that has played before is replaced: a fresh one may
         // still be starting up, or be held by the browser's autoplay policy
         // until a tap — replacing it would just churn new contexts.
-        if (!document.hidden && this._audioCtxRan) { this._dropAudioContext(); return true; }
-        ctx.resume?.()?.catch?.(() => {});
-        if (!this._audioStuckSince) this._audioStuckSince = performance.now();
+        if (document.hidden || !this._audioCtxRan) { this._audioStuckSince = 0; return false; }
+        const now = performance.now();
+        if (!this._audioStuckSince) this._audioStuckSince = now;
+        if (frozen || now - this._audioStuckSince > 3000) { this._dropAudioContext(); return true; }
         return false;
     }
 
@@ -7119,12 +7170,15 @@ class MeshCoreApp {
     // staged natively, imported here once startup has finished. Called at the
     // end of startup and by the native side after it staged files.
     _takeNativeImports() {
-        if (!this._startupDone || !window.AndroidFiles?.takePendingImports) return;
-        let list = [];
-        try { list = JSON.parse(window.AndroidFiles.takePendingImports() || '[]'); } catch (_) {}
-        if (!Array.isArray(list) || !list.length) return;
-        const files = list.map(f => new File([String(f.text ?? '')], String(f.name || 'import.csv'), { type: 'text/csv' }));
-        this._importCsvFiles(files).catch(e => console.error('CSV import failed:', e));
+        if (!this._startupDone || !window.AndroidFiles?.takePendingImport) return;
+        const files = [];
+        for (let i = 0; i < 50; i++) {
+            let f = null;
+            try { const j = window.AndroidFiles.takePendingImport(); f = j ? JSON.parse(j) : null; } catch (_) {}
+            if (!f) break;
+            files.push(new File([String(f.text ?? '')], String(f.name || 'import.csv'), { type: 'text/csv' }));
+        }
+        if (files.length) this._importCsvFiles(files).catch(e => console.error('CSV import failed:', e));
     }
 
     // Back-compat single-file entry point.
@@ -7472,7 +7526,7 @@ class MeshCoreApp {
         // disconnect alarm that onDisconnected() would otherwise raise, and stop
         // any auto-reconnect cycle (and a reconnect pending after a restart).
         this._cancelAutoReconnect();
-        if (!this._restarting) clearTimeout(this._restartReconnectTimer);
+        if (!this._restarting) { clearTimeout(this._restartReconnectTimer); this._restartPending = false; }
         this.conn.intendDisconnect();
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.conn.transportKind === 'serial') {
@@ -7616,7 +7670,7 @@ class MeshCoreApp {
     // Stop the native foreground service when nothing needs it: not connected
     // and not mid-reconnect. A later connect restarts it. No-op off-Android.
     _stopCaptureServiceIfIdle() {
-        if (this.device || this.serialPort || this.reconnect.active) return;
+        if (this.device || this.serialPort || this.reconnect.active || this._restartPending) return;
         try { window.AndroidScreen?.stopCapture?.(); } catch (_) {}
     }
 }

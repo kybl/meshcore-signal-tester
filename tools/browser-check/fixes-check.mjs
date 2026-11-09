@@ -352,6 +352,7 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
         app.conn.setMode('companion');
         app._canSend = () => true;
         app._collecting = true;            // a real connect starts collecting
+        app._contactsSynced = true;        // as after the contact dump
         // SELF_INFO: tx power 20, max 22
         const si = new Uint8Array(58); si[0] = 5; si[2] = 20; si[3] = 22;
         app.handlePayload(si);
@@ -417,21 +418,27 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await page.waitForFunction(() => document.getElementById('traceBtn').textContent === 'Trace', null, { timeout: 20000 });
     check('#20 a trace with no answer times out with a message', /No answer within 10 s/.test(await page.textContent('#traceResult')));
 
-    // Restart: CMD_REBOOT, close our side, reconnect after ~4 s
+    // Restart: CMD_REBOOT, close our side, reconnect after ~4 s. The device
+    // drops the link the moment it resets (native USB) — before our own close.
     await page.evaluate(() => { const a = window.__mcApp; a.conn.finalise(); a._lastConnectedId = 'dev1';
-        window.__rs = { disc: 0, rc: 0 };
+        window.__rs = { disc: 0, rc: 0, alarm: 0 };
+        a._playDisconnectAlarm = () => { window.__rs.alarm++; }; a._showDisconnectAlarm = () => { window.__rs.alarm++; };
+        a._canAutoReconnect = () => true;
+        const send = a._sendFrame;
+        a._sendFrame = async b => { const r = await send(b); if (b[0] === 19) setTimeout(() => a.onDisconnected(), 50); return r; };
         a.disconnect = async () => { window.__rs.disc++; a.conn.intendDisconnect(); a.conn.drop(); };
         a.reconnect.start = () => { window.__rs.rc++; }; });
     await page.click('#restartCompanionBtn');
     await page.waitForTimeout(1200);
     let rs = await page.evaluate(() => ({ ...window.__rs, frame: window.__frames.filter(f => f[0] === 19).pop(), status: document.getElementById('statusText').textContent }));
-    check('#20 Restart sends CMD_REBOOT "reboot" and closes the link', rs.disc === 1 && rs.frame && new TextDecoder().decode(Uint8Array.from(rs.frame.slice(1))) === 'reboot' && /Restarting/.test(rs.status), JSON.stringify(rs));
+    check('#20 Restart: a link drop right after the reboot raises no alarm', rs.alarm === 0, JSON.stringify(rs));
+    check('#20 Restart sends CMD_REBOOT "reboot" and closes the link', (rs.disc === 1 || rs.disc === 0) && rs.frame && new TextDecoder().decode(Uint8Array.from(rs.frame.slice(1))) === 'reboot' && /Restarting/.test(rs.status), JSON.stringify(rs));
     await page.waitForTimeout(4000);
     rs = await page.evaluate(() => window.__rs);
     check('#20 …and starts reconnecting a few seconds later', rs.rc === 1, JSON.stringify(rs));
 
     // Old firmware: no console
-    await page.evaluate(() => { const a = window.__mcApp; a.conn.setMode('companion'); a._hideCompanionTools(); a._showRepeaterConsole(false); window.__fw.ver = 9;
+    await page.evaluate(() => { const a = window.__mcApp; a.conn.setMode('companion'); a._hideCompanionTools(); a._contactsSynced = true; a._showRepeaterConsole(false); window.__fw.ver = 9;
         const si = new Uint8Array(58); si[0] = 5; si[2] = 20; si[3] = 22; a.handlePayload(si); });
     await page.waitForTimeout(800);
     st = await page.evaluate(() => ({ tools: !document.getElementById('toolsWrap').classList.contains('hidden'),
@@ -455,14 +462,14 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     // The native side has staged one file before the page starts.
     await ctx.addInitScript(text => {
         let pending = [{ name: 'capture.csv', text }];
-        window.AndroidFiles = { takePendingImports: () => { const j = JSON.stringify(pending); pending = []; return j; } };
+        window.AndroidFiles = { takePendingImport: () => { const f = pending.shift(); return f ? JSON.stringify(f) : ''; } };
     }, csv);
     const { page, errors } = await openPage(ctx, base);
     await page.waitForTimeout(2500);
     let n = await page.$$eval('#msgTableBody tr[id^="row-"]', t => t.length);
     check('Android: a staged import is taken at startup', n === 5, `rows=${n}`);
     // …and one staged after startup, announced by the native side.
-    await page.evaluate(text => { window.AndroidFiles.takePendingImports = () => JSON.stringify([{ name: 'b.csv', text }]); window.__mcApp._takeNativeImports(); window.AndroidFiles.takePendingImports = () => '[]'; },
+    await page.evaluate(text => { let q = [{ name: 'b.csv', text }]; window.AndroidFiles.takePendingImport = () => { const f = q.shift(); return f ? JSON.stringify(f) : ''; }; window.__mcApp._takeNativeImports(); },
         [HDR, `${iso(now - 1000)},Flood Advert,cdff00,5E,3,,-90,,,,,`].join('\n'));
     await page.waitForTimeout(2500);
     n = await page.$$eval('#msgTableBody tr[id^="row-"]', t => t.length);
@@ -511,6 +518,48 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     check('Import is disabled while the export is being built', whileBuilding === true, String(whileBuilding));
     check('…re-enabled when the save dialog opens, and after a cancel', st.atDialog === false && st.after === false, JSON.stringify(st));
     check('no page errors (export during import)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
+// ---- Companion command ordering: device query after contacts; late replies ----
+{
+    const ctx = await browser.newContext();
+    const { page, errors } = await openPage(ctx, base);
+    const r = await page.evaluate(async () => {
+        const a = window.__mcApp, out = {};
+        const frames = []; let lateReply = null;
+        a._sendFrame = async b => {
+            frames.push(Array.from(b));
+            if (b[0] === 12) {                                   // TX power: answer only after 6 s
+                setTimeout(() => a.handlePayload(Uint8Array.from([0])), lateReply);
+            }
+        };
+        a.conn.setMode('companion'); a._canSend = () => true;
+        // SELF_INFO before the contact dump (BLE order): no device query yet
+        a._contactsSynced = false; a._contactsFetchActive = false;
+        const si = new Uint8Array(58); si[0] = 5; si[2] = 20; si[3] = 22; a.handlePayload(si);
+        await new Promise(r => setTimeout(r, 300));
+        out.queryBeforeContacts = frames.some(f => f[0] === 22);
+        // contact dump ends → query
+        a._contactsReceiving = true; a.handlePayload(Uint8Array.from([4, 0, 0, 0, 0]));
+        await new Promise(r => setTimeout(r, 300));
+        out.queryAfterContacts = frames.some(f => f[0] === 22);
+        // A call whose reply comes late must not hand that reply to the next call
+        lateReply = 5600;
+        const first = await a._companionCall(new Uint8Array([12, 5]), [0, 1], 5000);
+        out.firstTimedOut = first === null;
+        const t0 = performance.now();
+        const second = a._companionCall(new Uint8Array([66, 0x76, 0x65, 0x72]), [29, 1], 5000);
+        setTimeout(() => a.handlePayload(Uint8Array.from([29, 0x6f, 0x6b])), 1500);   // the real reply to "ver"
+        const res = await second;
+        out.secondGotItsOwn = !!res && res[0] === 29;
+        out.waitedForLate = performance.now() - t0 > 500;
+        return out;
+    });
+    check('Companion: no device query before the contact dump', r.queryBeforeContacts === false, JSON.stringify(r));
+    check('Companion: device query once the contact dump ended', r.queryAfterContacts === true, JSON.stringify(r));
+    check('Companion: a late reply is not taken by the next command', r.firstTimedOut && r.secondGotItsOwn, JSON.stringify(r));
+    check('no page errors (command ordering)', errors.length === 0, errors.join(' | '));
     await ctx.close();
 }
 
