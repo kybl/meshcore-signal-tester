@@ -47,6 +47,38 @@
   misread and dropped.
 - Export CSV is disabled while an import is running, and Import CSV while an
   export is being prepared.
+- **Resuming a saved session no longer deletes its data** when Auto-remove is
+  set to a finite time (it switches to "Never", as an import does), and other
+  saved sessions are kept and offered later instead of being deleted unseen.
+- **Storage full no longer loses data**: the packets that couldn't be written
+  are retried, and room is made by removing the oldest quarter of the
+  history instead of everything older than an hour.
+- **Android: cancelling the Export dialog keeps the "unsaved packets"
+  warning.**
+- **Auto-reconnect no longer shows a blocking error dialog** on each attempt
+  when a USB/WiFi device doesn't answer yet (e.g. still starting after a
+  restart).
+- **A WiFi link to a radio that disappeared is noticed within a minute**
+  (was about 15 minutes), so the alarm / auto-reconnect kick in.
+- **Connecting**: Cancel while a USB/WiFi port is opening works; a cancelled
+  Bluetooth attempt can no longer take over a newer connection; a failed
+  Bluetooth setup releases the radio (it stayed invisible); a Bluetooth device
+  without the MeshCore service says so; Bluetooth coming back on or returning
+  to the app retries a running reconnect immediately; Android cleans up its
+  connections after a WebView crash.
+- **Charts**: time labels sit on local hours and midnight (they followed UTC),
+  long captures get day/week labels instead of overlapping ones, the Y-axis
+  gridlines land on round values, the SNR axis fits only the series shown,
+  zoom gestures and clicks hit exactly what is drawn, and Clear data / a new
+  import reset the zoom.
+- **CSV**: a trace's per-hop SNRs are kept (new `hop_snr` column, older files
+  still import), trailing spaces in the last field survive, and nonsense
+  coordinates no longer break the 3D map.
+- Smaller fixes: table header dots follow a theme switch; a detail row opened
+  right after closing another no longer vanishes; the tables no longer
+  rebuild every 2 s (which cleared text selection); one chart point could go
+  missing when a packet triggered a chart rebuild; sent SNR was recorded
+  while stopped.
 
 ## [1.3.2] - 2026-09-23
 

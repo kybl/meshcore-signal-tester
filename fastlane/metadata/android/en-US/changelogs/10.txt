@@ -1,8 +1,9 @@
 Version 1.3.3
 
-- Radio tools: TX power, trace to a repeater (SNR both ways), RX gain switches, device restart.
+- Radio tools: TX power, trace to a repeater (SNR both ways), RX gain, device restart.
 - CLI console for repeaters (USB) and companions (firmware 1.18+).
-- Firmware version shown next to the device name.
-- Fixed: empty CSV export / lost import when Android closed the app during the file dialog (Xiaomi).
-- Fixed: packet sounds going silent after a while.
-- Fixed: a filter matching nothing hid its own input.
+- Fixed: empty CSV export / lost import when Android closed the app during the file dialog.
+- Fixed: packet sounds going silent; a filter hiding its own input.
+- Fixed: resumed sessions deleted by Auto-remove; data lost when storage is full.
+- More reliable connecting and reconnecting; dead WiFi links noticed quickly.
+- Charts: local-time labels, cleaner axes; many smaller fixes.
