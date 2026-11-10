@@ -7463,6 +7463,7 @@ class MeshCoreApp {
         // check are collected and reported once at the end.
         const parsedFiles = [];
         const badFormat = [];
+        const emptyFiles = [];
         let skippedRows = 0;
         for (const file of files) {
             let text;
@@ -7470,7 +7471,10 @@ class MeshCoreApp {
             catch { console.warn('Could not read file:', file.name); badFormat.push(`${file.name} (unreadable)`); continue; }
 
             const parsed = parseCsv(text);
-            if (parsed.error === 'empty') continue;
+            // An empty file used to be skipped without a word — the user saw
+            // "nothing happened". Say so (an Android file picker that reports
+            // a wrong size of 0 bytes is a real-world cause).
+            if (parsed.error === 'empty') { emptyFiles.push(file.name || 'file'); continue; }
 
             for (const c of parsed.contacts) {
                 if (!this.contacts.has(c.pubKeyFullHex)) {
@@ -7486,6 +7490,8 @@ class MeshCoreApp {
         this._updateContactsCount();
         this.contacts.schedulePersist();   // persist any contacts embedded in the CSVs
 
+        if (emptyFiles.length)
+            alert(`Nothing to import — the file${emptyFiles.length > 1 ? 's are' : ' is'} empty (0 bytes): ${emptyFiles.join(', ')}`);
         if (badFormat.length)
             alert(`Unrecognised CSV format — expected columns: time, hash, repeater.\nSkipped: ${badFormat.join(', ')}`);
         if (skippedRows)

@@ -158,10 +158,7 @@ class MainActivity : AppCompatActivity() {
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        val cb = fileChooserCallback
-        fileChooserCallback = null
-        if (cb != null) cb.onReceiveValue(if (uri != null) arrayOf(uri) else null)
-        else if (uri != null) stageOrphanImport(listOf(uri))
+        handOverPickedFiles(if (uri != null) listOf(uri) else emptyList())
     }
 
     // Multi-file variant, used when the page's <input> has the `multiple`
@@ -171,19 +168,30 @@ class MainActivity : AppCompatActivity() {
     private val openMultipleFilesLauncher = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
-        val cb = fileChooserCallback
-        fileChooserCallback = null
-        if (cb != null) cb.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
-        else if (uris.isNotEmpty()) stageOrphanImport(uris)
+        handOverPickedFiles(uris)
     }
 
-    // The import picker's result arrived at a NEW instance of this activity:
-    // the system destroyed the old one (or killed the process) while the
-    // picker was open — MIUI/HyperOS do this eagerly. The WebView callback
-    // that should receive the files died with the old page, so the import used
-    // to vanish silently. Instead, read the picked files now (the URI grant is
-    // valid for this result) into the cache, and let the reloaded page take
-    // them once it has started (FilesBridge.takePendingImport).
+    // The picked CSV files are read HERE, natively, and handed to the page
+    // (stageOrphanImport → FilesBridge.takePendingImport) — not given to the
+    // WebView's <input>. The WebView reads a content:// file trusting the size
+    // the provider reports, and some providers report 0 for a file that isn't
+    // empty: on Xiaomi a CSV saved by our own export showed as "0 B" in the
+    // picker (the media database's size was never updated, the file on disk
+    // was fine) and imported nothing. A stream read goes to the real end of
+    // the file. The <input>'s callback is still settled (with no files), so
+    // the WebView isn't left waiting.
+    private fun handOverPickedFiles(uris: List<Uri>) {
+        val cb = fileChooserCallback
+        fileChooserCallback = null
+        cb?.onReceiveValue(null)
+        if (uris.isNotEmpty()) stageOrphanImport(uris)
+    }
+
+    // Read the picked files now (the URI grant is valid for this result) into
+    // the cache, and let the page take them (FilesBridge.takePendingImport):
+    // at once if it is up, else once it has started — the result may also
+    // arrive at a NEW instance of this activity, after the system destroyed
+    // the old one while the picker was open (MIUI/HyperOS do this eagerly).
     private val pendingImportDir get() = File(cacheDir, "pending-import")
     private fun stageOrphanImport(uris: List<Uri>) {
         Thread {
@@ -264,7 +272,10 @@ class MainActivity : AppCompatActivity() {
             val msg = try {
                 if (!staged.exists()) throw IOException("the export data was lost — please export again")
                 val size = staged.length()
-                val out = contentResolver.openOutputStream(uri)
+                // "wt" truncates, so overwriting an existing, longer file can't
+                // leave its old tail behind; not every provider supports it.
+                val out = (try { contentResolver.openOutputStream(uri, "wt") } catch (_: Exception) { null })
+                    ?: contentResolver.openOutputStream(uri)
                     ?: throw IOException("cannot open the file for writing")
                 out.use { o -> staged.inputStream().use { it.copyTo(o) } }
                 saved = true

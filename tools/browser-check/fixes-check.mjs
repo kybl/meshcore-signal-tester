@@ -472,7 +472,7 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
         let pending = [{ name: 'capture.csv', text }];
         window.AndroidFiles = { takePendingImport: () => { const f = pending.shift(); return f ? JSON.stringify(f) : ''; } };
     }, csv);
-    const { page, errors } = await openPage(ctx, base);
+    const { page, errors, dialogs } = await openPage(ctx, base);
     await page.waitForTimeout(2500);
     let n = await page.$$eval('#msgTableBody tr[id^="row-"]', t => t.length);
     check('Android: a staged import is taken at startup', n === 5, `rows=${n}`);
@@ -482,6 +482,11 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await page.waitForTimeout(2500);
     n = await page.$$eval('#msgTableBody tr[id^="row-"]', t => t.length);
     check('Android: a staged import announced later is imported too', n === 6, `rows=${n}`);
+    // An empty file is reported, not silently ignored
+    const dlgBefore = dialogs.length;
+    await page.evaluate(() => { let q = [{ name: 'empty.csv', text: '' }]; window.AndroidFiles.takePendingImport = () => { const f = q.shift(); return f ? JSON.stringify(f) : ''; }; window.__mcApp._takeNativeImports(); });
+    await page.waitForTimeout(800);
+    check('an empty CSV is reported (0 bytes), not silently ignored', dialogs.slice(dlgBefore).some(d => /empty \(0 bytes\): empty\.csv/.test(d)), JSON.stringify(dialogs.slice(dlgBefore)));
     check('no page errors (staged import)', errors.length === 0, errors.join(' | '));
     await ctx.close();
 }
