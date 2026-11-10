@@ -18,7 +18,10 @@
   **RX gain** — the radio chip's boosted gain and, on boards that have one,
   the external LNA (firmware v1.18.0+; boosted gain left off is flagged, as it
   lowers the RSSI/SNR you measure); and **restart** the device, after which
-  the app reconnects by itself without the disconnect alarm.
+  the app reconnects by itself without the disconnect alarm. On firmware
+  v1.18+ the restart uses the CLI `reboot`, which avoids a rare wipe of the
+  node's settings and key seen on nRF52 boards (T1000-E) with the classic
+  reboot command; on older firmware the confirmation recommends a backup.
   ([#20](https://github.com/kybl/meshcore-signal-tester/issues/20))
 - **Device console**: type CLI commands and see the replies — for a
   **repeater** over USB, and for a **companion** with firmware v1.18.0 or

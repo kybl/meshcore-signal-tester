@@ -316,7 +316,7 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
 // ---- #20: companion Radio tools + console (fake companion) ---------------------
 {
     const ctx = await browser.newContext();
-    const { page, errors } = await openPage(ctx, base);
+    const { page, errors, dialogs } = await openPage(ctx, base);
     // A fake companion behind _sendFrame: answers like the firmware does.
     await page.evaluate(() => {
         const app = window.__mcApp;
@@ -425,17 +425,25 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
         a._playDisconnectAlarm = () => { window.__rs.alarm++; }; a._showDisconnectAlarm = () => { window.__rs.alarm++; };
         a._canAutoReconnect = () => true;
         const send = a._sendFrame;
-        a._sendFrame = async b => { const r = await send(b); if (b[0] === 19) setTimeout(() => a.onDisconnected(), 50); return r; };
+        a._sendFrame = async b => { const r = await send(b); if (b[0] === 19 || (b[0] === 66 && new TextDecoder().decode(b.subarray(1)) === 'reboot')) setTimeout(() => a.onDisconnected(), 50); return r; };
         a.disconnect = async () => { window.__rs.disc++; a.conn.intendDisconnect(); a.conn.drop(); };
         a.reconnect.start = () => { window.__rs.rc++; }; });
     await page.click('#restartCompanionBtn');
     await page.waitForTimeout(1200);
-    let rs = await page.evaluate(() => ({ ...window.__rs, frame: window.__frames.filter(f => f[0] === 19).pop(), status: document.getElementById('statusText').textContent }));
+    let rs = await page.evaluate(() => ({ ...window.__rs, frame: window.__frames.filter(f => f[0] === 66 || f[0] === 19).pop(), status: document.getElementById('statusText').textContent }));
     check('#20 Restart: a link drop right after the reboot raises no alarm', rs.alarm === 0, JSON.stringify(rs));
-    check('#20 Restart sends CMD_REBOOT "reboot" and closes the link', (rs.disc === 1 || rs.disc === 0) && rs.frame && new TextDecoder().decode(Uint8Array.from(rs.frame.slice(1))) === 'reboot' && /Restarting/.test(rs.status), JSON.stringify(rs));
+    check('#20 Restart (firmware v14) uses the CLI "reboot", not CMD_REBOOT, and closes the link', (rs.disc === 1 || rs.disc === 0) && rs.frame?.[0] === 66 && new TextDecoder().decode(Uint8Array.from(rs.frame.slice(1))) === 'reboot' && /Restarting/.test(rs.status), JSON.stringify(rs));
     await page.waitForTimeout(4000);
     rs = await page.evaluate(() => window.__rs);
     check('#20 …and starts reconnecting a few seconds later', rs.rc === 1, JSON.stringify(rs));
+    // Older firmware (no CLI): CMD_REBOOT, and the confirmation warns about backups
+    await page.evaluate(() => { const a = window.__mcApp; a.conn.beginAttempt('ble'); a.conn.setMode('companion'); a.conn.finalise(); a._fwVer = 9; });
+    const nDlg = dialogs.length;
+    await page.evaluate(() => { window.__mcApp._restartDevice(); }); await page.waitForTimeout(1200);
+    const old = await page.evaluate(() => window.__frames.filter(f => f[0] === 66 || f[0] === 19).pop());
+    check('#20 Restart on older firmware uses CMD_REBOOT and warns about a backup',
+        old?.[0] === 19 && dialogs.slice(nDlg).some(d => /backup/i.test(d)), JSON.stringify({ old, d: dialogs.slice(nDlg) }));
+    await page.waitForTimeout(4200);
 
     // Old firmware: no console
     await page.evaluate(() => { const a = window.__mcApp; a.conn.setMode('companion'); a._hideCompanionTools(); a._contactsSynced = true; a._showRepeaterConsole(false); window.__fw.ver = 9;

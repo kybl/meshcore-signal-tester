@@ -1203,7 +1203,7 @@ class MeshCoreApp {
             'messages':
                 'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then how many of the newest packets on the first page came via that repeater, then last RSSI, last SNR, total RX count, then alphabetically.',
             'tools':
-                'Shown while a companion radio is connected. RX gain (firmware v1.18.0+): "Boosted" is the radio chip\'s boosted receive gain (on by default — off lowers sensitivity and so the RSSI/SNR you measure); "External LNA" is the extra receive amplifier some boards have (e.g. Heltec V4) and appears only on those. Both are saved on the radio. Keep them the same when comparing measurements. TX power: the radio\'s transmit power, read from the device; "Set" changes it on the device (saved there, applies immediately) — the allowed maximum is reported by the radio itself. Trace: sends a trace along a path of repeater IDs and shows the SNR measured at every hop. A single ID (e.g. "5E", or a longer "5E9F") is a round trip to that neighbour: ↑ is how well the repeater heard you, ↓ how well you heard it back. For a longer route, give the way out and back, e.g. "5E,8A,5E". All IDs must be the same length (2, 4 or 8 hex digits). With a repeater selected, an empty field traces to that repeater. The trace also appears as a "Trace" row in Received packets. Restart device: restarts the radio (after a confirmation); the app reconnects by itself once it is back, without the disconnect alarm.',
+                'Shown while a companion radio is connected. RX gain (firmware v1.18.0+): "Boosted" is the radio chip\'s boosted receive gain (on by default — off lowers sensitivity and so the RSSI/SNR you measure); "External LNA" is the extra receive amplifier some boards have (e.g. Heltec V4) and appears only on those. Both are saved on the radio. Keep them the same when comparing measurements. TX power: the radio\'s transmit power, read from the device; "Set" changes it on the device (saved there, applies immediately) — the allowed maximum is reported by the radio itself. Trace: sends a trace along a path of repeater IDs and shows the SNR measured at every hop. A single ID (e.g. "5E", or a longer "5E9F") is a round trip to that neighbour: ↑ is how well the repeater heard you, ↓ how well you heard it back. For a longer route, give the way out and back, e.g. "5E,8A,5E". All IDs must be the same length (2, 4 or 8 hex digits). With a repeater selected, an empty field traces to that repeater. The trace also appears as a "Trace" row in Received packets. Restart device: restarts the radio (after a confirmation); the app reconnects by itself once it is back, without the disconnect alarm. With older firmware (before v1.18) a restart can, rarely, wipe the settings and key of nRF52 boards such as the T1000-E — keep a backup.',
             'cli':
                 'Shown while a repeater is connected over USB, or a companion radio with firmware v1.18.0 or newer (protocol v14). Type a CLI command (e.g. "ver", "get tx", "set tx 20", "get radio.rxgain"; on a repeater also "neighbors", "clock") and press Enter or Send; the reply appears above. ↑/↓ recall earlier commands. While a command is running, the app pauses its own background polling so the reply isn\'t mixed with it. Commands that would stop the capture or restart/erase the device ask for confirmation first; "reboot" (or the Restart button) reconnects by itself afterwards. Settings changed with "set" are saved on the device; some (radio parameters) take effect only after a restart.',
             'msg-filter':
@@ -2396,9 +2396,16 @@ class MeshCoreApp {
 
     // --- Device restart ---
 
-    // Restart the connected device and reconnect once it's back. Companion:
-    // CMD_REBOOT (19) + "reboot" (no reply — the radio just resets). Repeater:
-    // the "reboot" CLI command. We then close our side ourselves rather than
+    // Restart the connected device and reconnect once it's back. Repeater: the
+    // "reboot" CLI command. Companion: on firmware v1.18+ (protocol v14) the
+    // CLI "reboot" via CMD_RUN_CLI_COMMAND, else CMD_REBOOT (19) + "reboot".
+    // Neither replies — the radio just resets. The CLI route is preferred
+    // because CMD_REBOOT first rewrites the contacts file when it has unsaved
+    // changes (on nRF52: delete, rewrite) and resets right after; a reset
+    // landing on that flash write can corrupt the file system, which the
+    // nRF52 core then formats at boot — the node loses its name, key and
+    // settings (seen on a T1000-E). The CLI reboot writes nothing first; the
+    // only cost is contacts not yet saved, which return with their next advert. We then close our side ourselves rather than
     // wait for the link to die: over a USB-UART bridge (CH340/CP210x) the port
     // stays open across the reset, and over BLE/TCP the drop can take a while
     // to be noticed. The closure counts as intended (no alarm), and the
@@ -2407,7 +2414,10 @@ class MeshCoreApp {
     async _restartDevice(confirmed = false) {
         const mode = this.conn.mode;
         if (!this.conn.established || (mode !== 'companion' && mode !== 'repeater')) return;
-        if (!confirmed && !confirm('Restart the device?\n\nThe connection drops while it restarts; the app reconnects automatically when it is back (about 10 s).')) return;
+        if (!confirmed && !confirm('Restart the device?\n\nThe connection drops while it restarts; the app reconnects automatically when it is back (about 10 s).'
+            + (mode === 'companion' && !this._companionCli()
+                ? '\n\nNote: with this older firmware a restart can, rarely, wipe the device\'s settings and key on nRF52 boards (e.g. T1000-E, RAK). Keep a backup (export it in the MeshCore app). Firmware v1.18 or newer restarts more safely.'
+                : ''))) return;
         const id = this._lastConnectedId;
         // Mark the drop as intended BEFORE sending: boards with native USB
         // (nRF52, ESP32-S3) vanish from the bus the instant they reset, so the
@@ -2417,8 +2427,10 @@ class MeshCoreApp {
         this.conn.intendDisconnect();
         this._restartPending = true;
         try {
-            if (mode === 'companion') await this._sendFrame(new Uint8Array([19, ...new TextEncoder().encode('reboot')]));
-            else await this._serialWriteText('reboot\r\n');
+            if (mode === 'companion') {
+                const reboot = new TextEncoder().encode('reboot');
+                await this._sendFrame(new Uint8Array([this._companionCli() ? 66 : 19, ...reboot]));
+            } else await this._serialWriteText('reboot\r\n');
         } catch (_) {}
         this._cliAppend?.('Restarting the device…', 'cli-note');
         await new Promise(r => setTimeout(r, 600));    // let the command leave before we close
