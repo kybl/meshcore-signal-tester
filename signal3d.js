@@ -22,6 +22,10 @@ const TILE_PX        = 256;
 // much area the (fixed-size) plane covers — so a long drive doesn't cap zoom at a
 // city-block view. minDistance is derived from it per map scale (see _applyZoomLimits).
 const ZOOM_MIN_VIEW_M = 30;
+// Zooming out past the base map grows it to cover the view (see
+// _maybeExtendForView), up to this distance from the view centre — enough to
+// bring the repeaters of a region (typically a few to ~20 km away) into view.
+const MAX_VIEW_EXTENT_M = 30000;
 // Markers (my-location cone, device, repeater pins) are sized to this fraction of
 // the smaller viewport dimension (clamped to a sensible pixel range), so they
 // don't look tiny on a small map nor balloon when the map is made much taller
@@ -356,6 +360,7 @@ export class Signal3DMap {
             // gesture just ended, so re-query the finer grid now. (The detail
             // TILES above already had this fallback; the dots didn't.)
             this._fireViewChange();
+            this._maybeExtendForView();
         });
         // User interaction cancels any running camera fly/turn animation.
         // Follow mode is NOT dropped immediately: small adjustments (pan a bit,
@@ -1185,6 +1190,7 @@ export class Signal3DMap {
     // ---- Map source ----
 
     clearPoints() {
+        this._viewExtent = null;
         this._rxPoints = [];
         this._outgoingPts = [];
         this._histPoints = null;
@@ -1380,6 +1386,52 @@ export class Signal3DMap {
         return ((bb.maxLat - bb.minLat) * 111320) / h;
     }
 
+    // Metres per world unit of the current base map (the plane is always
+    // PLANE_SIZE units along its long edge, whatever area it covers).
+    _metersPerUnit() {
+        if (!this._tileBounds) return null;
+        const { x0, y0, nx, ny, zoom } = this._tileBounds;
+        const lat = tileToLatLon(x0 + nx / 2, y0 + ny / 2, zoom).lat;
+        const mPerPx = 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
+        return Math.max(nx, ny) * TILE_PX * mPerPx / PLANE_SIZE;
+    }
+
+    // After a zoom/pan gesture: if the view now reaches well beyond the base
+    // map (zoomed out to look for a repeater a few km away — the map used to
+    // cover only the measured spot, a few hundred metres when standing
+    // still), grow the base map to the visible area. Fewer, coarser tiles
+    // (the grid stays ≤ MAX_TILES_AXIS²); zooming back in, the detail overlay
+    // supplies the fine tiles.
+    _maybeExtendForView() {
+        const mpu = this._metersPerUnit();
+        if (!mpu || !this._tileBounds) return;
+        const d = this.camera.position.distanceTo(this.controls.target);
+        const aspect = this.camera.aspect || 1;
+        // Ground half-extent seen from this distance (top-down approximation,
+        // generous for a tilted view).
+        const halfM = Math.min(MAX_VIEW_EXTENT_M, d * fovFactor(this.camera) / 2 * Math.max(1, aspect) * 1.2 * mpu);
+        const c = this._worldToLatLon(this.controls.target.x, this.controls.target.z);
+        if (!c) return;
+        const dLat = halfM / 111320;
+        const dLon = halfM / (111320 * Math.max(0.05, Math.cos(c.lat * Math.PI / 180)));
+        const want = { minLat: c.lat - dLat, maxLat: c.lat + dLat, minLon: c.lon - dLon, maxLon: c.lon + dLon };
+        // The base map's current coverage.
+        const { x0, y0, nx, ny, zoom } = this._tileBounds;
+        const nw = tileToLatLon(x0, y0, zoom), se = tileToLatLon(x0 + nx, y0 + ny, zoom);
+        const spanLat = nw.lat - se.lat, spanLon = se.lon - nw.lon;
+        // Only when the view sticks out by a good margin (no rebuild churn on
+        // small moves near the edge).
+        const out = want.minLat < se.lat - spanLat * 0.15 || want.maxLat > nw.lat + spanLat * 0.15
+                 || want.minLon < nw.lon - spanLon * 0.15 || want.maxLon > se.lon + spanLon * 0.15;
+        if (!out) return;
+        const ve = this._viewExtent;
+        this._viewExtent = ve ? {
+            minLat: Math.min(ve.minLat, want.minLat), maxLat: Math.max(ve.maxLat, want.maxLat),
+            minLon: Math.min(ve.minLon, want.minLon), maxLon: Math.max(ve.maxLon, want.maxLon),
+        } : want;
+        this._scheduleMapUpdate();
+    }
+
     // Set the closest zoom (controls.minDistance) from the map's real-world scale,
     // so the deepest zoom shows ~ZOOM_MIN_VIEW_M across whether the plane covers a
     // few hundred metres or tens of km. The plane is always PLANE_SIZE world units,
@@ -1534,6 +1586,10 @@ export class Signal3DMap {
         if (this._userLoc && (this._showMarker || this.isLiveCapture()))
             locs.push({ lat: this._userLoc.lat, lon: this._userLoc.lon });
         if (!locs.length) return null;
+        // The area the user zoomed out to see (corners), kept until the data
+        // is cleared — so the base map covers it.
+        const ve = this._viewExtent;
+        if (ve) locs.push({ lat: ve.minLat, lon: ve.minLon }, { lat: ve.maxLat, lon: ve.maxLon });
         let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
         for (const l of locs) {
             if (l.lat < minLat) minLat = l.lat;
@@ -1567,6 +1623,7 @@ export class Signal3DMap {
                 targetLL: this._worldToLatLon(this.controls.target.x, this.controls.target.z),
                 eyeLL:    this._worldToLatLon(this.camera.position.x,  this.camera.position.z),
                 eyeY:     this.camera.position.y,
+                mpu:      this._metersPerUnit(),
             };
         }
 
@@ -1644,8 +1701,14 @@ export class Signal3DMap {
                 const newTarget = this._latLonToWorld(savedCam.targetLL.lat, savedCam.targetLL.lon);
                 const newEye    = this._latLonToWorld(savedCam.eyeLL.lat,    savedCam.eyeLL.lon);
                 if (newTarget && newEye) {
+                    // A base map grown for a zoomed-out view has more metres
+                    // per unit: keep the camera's real height, or the view
+                    // would jump further out on every growth step.
+                    const newMpu = this._metersPerUnit();
+                    const keepY = this._viewExtent && savedCam.mpu && newMpu
+                        ? savedCam.eyeY * savedCam.mpu / newMpu : savedCam.eyeY;
                     this.controls.target.set(newTarget.x, 0, newTarget.z);
-                    this.camera.position.set(newEye.x, savedCam.eyeY, newEye.z);
+                    this.camera.position.set(newEye.x, keepY, newEye.z);
                     this.controls.update();
                     // Recompute with the now-correct camera distance so ball sizes
                     // match what they were before the tile rebuild.

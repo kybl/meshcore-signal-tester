@@ -684,6 +684,45 @@ console.log('\nMeshCore Signal Tester — 1.3.2 fix checks\n');
     await ctx.close();
 }
 
+// ---- 3D map: zooming out grows the base map (a repeater ~6 km away) ------------
+{
+    const ctx = await browser.newContext({ viewport: { width: 900, height: 1200 } });
+    const { page, errors } = await openPage(ctx, base);
+    const now = Date.now();
+    const rows = []; for (let i = 0; i < 10; i++) rows.push(`${iso(now - 60000 + i * 1000)},Flood Advert,ab${String(i).padStart(4, '0')},5E,3,,-90,,52.5773,7.0125,,`);
+    await importCsv(page, tmp('zoomout', [HDR, ...rows].join('\n')));
+    await page.evaluate(() => { const m = window.__mcApp.signalMap; m.setMapSource('none'); document.getElementById('signal3dCanvas')?.scrollIntoView?.(); });
+    await page.waitForFunction(() => !!window.__mcApp.signalMap._tileBounds, null, { timeout: 15000 }).catch(() => {});
+    const r = await page.evaluate(async () => {
+        const m = window.__mcApp.signalMap;
+        const before = { zoom: m._tileBounds?.zoom, mpu: m._metersPerUnit() };
+        // Zoom far out over the data (the user's gesture), then let the gesture end.
+        const t = m.controls.target;
+        m.camera.position.set(t.x, 290, t.z + 1); m.controls.update();
+        const heightM = m.camera.position.distanceTo(t) * before.mpu;
+        m._maybeExtendForView();
+        await new Promise(r => setTimeout(r, 2500));
+        const mid = { zoom: m._tileBounds.zoom, heightM: m.camera.position.distanceTo(m.controls.target) * m._metersPerUnit() };
+        // …and the user pinches out once more (now the larger map allows it).
+        const t2 = m.controls.target;
+        m.camera.position.set(t2.x, 290, t2.z + 1); m.controls.update();
+        m._maybeExtendForView();
+        await new Promise(r => setTimeout(r, 2500));
+        const tb = m._tileBounds;
+        const after = { zoom: tb.zoom, mpu: m._metersPerUnit(), heightM: m.camera.position.distanceTo(m.controls.target) * m._metersPerUnit() };
+        // Does the base map now cover a point 6 km north-east?
+        const geo = await import('./geo.js?v=1');
+        const nw = geo.tileToLatLon(tb.x0, tb.y0, tb.zoom), se = geo.tileToLatLon(tb.x0 + tb.nx, tb.y0 + tb.ny, tb.zoom);
+        const p = { lat: 52.5773 + 6000 / 111320 * 0.7, lon: 7.0125 + 6000 / (111320 * Math.cos(52.58 * Math.PI / 180)) * 0.7 };
+        const covers = p.lat < nw.lat && p.lat > se.lat && p.lon > nw.lon && p.lon < se.lon;
+        return { before, mid, after, heightM, covers };
+    });
+    check('3D map: zooming out grows the base map to cover a repeater ~6 km away', r.after.zoom < r.before.zoom && r.covers, JSON.stringify(r));
+    check('3D map: …keeping the camera at the same real height', Math.abs(r.mid.heightM / r.heightM - 1) < 0.15, JSON.stringify(r));
+    check('no page errors (map zoom-out)', errors.length === 0, errors.join(' | '));
+    await ctx.close();
+}
+
 await browser.close(); srv.close();
 console.log(`\n${failures ? 'FAIL' : 'PASS'} — ${failures} failing check(s)`);
 process.exit(failures ? 1 : 0);
