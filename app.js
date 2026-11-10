@@ -1,17 +1,17 @@
 // MeshCore Signal Tester Application
 import { MeshCoreDecoder, Utils } from './vendor/meshcore-decoder.js?v=6';
 import { Signal3DMap } from './signal3d.js?v=165';
-import { CaptureModel } from './capture-model.js?v=5';
+import { CaptureModel } from './capture-model.js?v=7';
 import { TableCache } from './table-cache.js?v=4';
 import { ChartCache } from './chart-cache.js?v=2';
-import { MapCache } from './map-cache.js?v=3';
+import { MapCache } from './map-cache.js?v=4';
 import { TimeWindows, formatWhen, formatWhenMs, msUntilNextMidnight } from './time-windows.js?v=3';
 import { ContactsDirectory } from './contacts-directory.js?v=2';
 import { SelectionModel } from './selection-model.js?v=1';
 import { ColumnModel } from './column-model.js?v=3';
-import { ConnectionState, ReconnectController } from './connection-state.js?v=5';
+import { ConnectionState, ReconnectController } from './connection-state.js?v=6';
 import { matchRadioPreset, formatRadioConfig, parseApiPresets, setActivePresets, PRESETS_CONFIG_URL } from './radio-presets.js?v=3';
-import { buildCsv, parseCsv } from './csv.js?v=6';
+import { buildCsv, parseCsv } from './csv.js?v=8';
 import { Store } from './storage.js?v=1';
 import * as ColumnKey from './column-key.js?v=2';
 import { extractFrames } from './frame.js?v=2';
@@ -31,7 +31,7 @@ import * as ChartZoom from './chart-zoom.js?v=1';
 // Custom channel keys can be added the same way: MeshCoreDecoder.addChannelKey(hexKey).
 MeshCoreDecoder.addChannelKey(MeshCoreDecoder.PUBLIC_CHANNEL_KEY);
 
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.3.3';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
 // burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow
@@ -300,6 +300,8 @@ class MeshCoreApp {
         this._initWifiModal();
         this._initSignalMap();
         this._initDebug();
+        this._setupRepeaterConsole();
+        this._setupRadioTools();
     }
 
     _setupChartArea() {
@@ -326,9 +328,24 @@ class MeshCoreApp {
         setInterval(() => {
             if (!this.windows.frozenAt) { this._advanceLiveZoom(); this._scheduleChartRender(); }
             if (isFinite(this.windows.displayMs)) {
-                this.signalMap?.setDisplayCutoff?.(this.windows.displayCutoff());
-                this._renderRepTable();
-                this._renderMsgTable();
+                const cutoff = this.windows.displayCutoff();
+                this.signalMap?.setDisplayCutoff?.(cutoff);
+                // Re-render the tables only when the moving cutoff actually
+                // drops something — rebuilding them every 2 s cleared any text
+                // the user had selected and cost a full table build each tick.
+                // Count + oldest visible: a row ageing out while a new one
+                // arrives leaves the count equal but moves the oldest.
+                let rows = 0, reps = 0, oldest = Infinity;
+                for (const d of this.model.recentValues()) {
+                    if (d.lastSeen >= cutoff) { rows++; if (d.firstSeen < oldest) oldest = d.firstSeen; }
+                }
+                for (const [, d] of this.columns.statsEntries()) if (d.lastSeen >= cutoff) reps++;
+                const sig = rows + '|' + reps + '|' + oldest + '|' + (cutoff > oldest ? 1 : 0);
+                if (sig !== this._displayTickSig) {
+                    this._displayTickSig = sig;
+                    this._renderRepTable();
+                    this._renderMsgTable();
+                }
             }
             this._updateStats();
             this._updateLocSourceWarning();
@@ -661,7 +678,9 @@ class MeshCoreApp {
                 // background (dark-theme values are ~1.3:1 on white; found by
                 // the F-Droid on-device review). Rebuild both tables.
                 this._renderRepTable();
+                this._lastColKey = null;     // header dots too (it skips an unchanged column set)
                 this._renderMsgTable();
+                this._updateCornerNotices();
             });
         }
 
@@ -1183,6 +1202,10 @@ class MeshCoreApp {
                 'Comma-separated list of repeater IDs to keep visible. Matching is prefix-based and works either way — "3E" matches "3E2F1234" and vice versa. Affects Seen Repeaters, charts, Received Packets, and the 3D map. A notice appears top-right while a filter is active.',
             'messages':
                 'Click any RSSI or SNR cell to expand full packet detail and raw hex, including reception time with millisecond precision. Click the hex string in an expanded row to copy it to the clipboard. Click a repeater column header to select that repeater — syncs with Seen Repeaters, charts, and 3D map. Repeater columns are ordered by: packets received in the last 5 min (desc), then how many of the newest packets on the first page came via that repeater, then last RSSI, last SNR, total RX count, then alphabetically.',
+            'tools':
+                'Shown while a companion radio is connected. RX gain (firmware v1.18.0+): "Boosted" is the radio chip\'s boosted receive gain (on by default — off lowers sensitivity and so the RSSI/SNR you measure); "External LNA" is the extra receive amplifier some boards have (e.g. Heltec V4) and appears only on those. Both are saved on the radio. Keep them the same when comparing measurements. TX power: the radio\'s transmit power, read from the device; "Set" changes it on the device (saved there, applies immediately) — the allowed maximum is reported by the radio itself. Trace: sends a trace along a path of repeater IDs and shows the SNR measured at every hop. A single ID (e.g. "5E", or a longer "5E9F") is a round trip to that neighbour: ↑ is how well the repeater heard you, ↓ how well you heard it back. For a longer route, give the way out and back, e.g. "5E,8A,5E". All IDs must be the same length (2, 4 or 8 hex digits). With a repeater selected, an empty field traces to that repeater. The trace also appears as a "Trace" row in Received packets. Restart device: restarts the radio (after a confirmation); the app reconnects by itself once it is back, without the disconnect alarm. With older firmware (before v1.18) a restart can, rarely, wipe the settings and key of nRF52 boards such as the T1000-E — keep a backup.',
+            'cli':
+                'Shown while a repeater is connected over USB, or a companion radio with firmware v1.18.0 or newer (protocol v14). Type a CLI command (e.g. "ver", "get tx", "set tx 20", "get radio.rxgain"; on a repeater also "neighbors", "clock") and press Enter or Send; the reply appears above. ↑/↓ recall earlier commands. While a command is running, the app pauses its own background polling so the reply isn\'t mixed with it. Commands that would stop the capture or restart/erase the device ask for confirmation first; "reboot" (or the Restart button) reconnects by itself afterwards. Settings changed with "set" are saved on the device; some (radio parameters) take effect only after a restart.',
             'msg-filter':
                 'Keeps only the packets that match what you type — a case-insensitive substring search across several fields at once: the packet type (full or abbreviated, e.g. "advert", "GT", "traceroute"), a repeater\'s short ID or its synced contact name, the decoded message text and sender (when available — most traffic is encrypted, so this is often empty), and the raw packet hex. The count next to the box shows matching / total. Clear with the ✕.',
             'msg-type':
@@ -1202,7 +1225,7 @@ class MeshCoreApp {
             'loc-source':
                 'Where newly received packets get their map position from — already captured data keeps the positions it was stored with. "This phone / browser" (the default) stamps each packet with this device\'s own GPS fix and needs the location permission. "MeshCore device" instead uses the position the connected radio reports (re-read about once a second), so no phone location permission is needed — handy when the radio moves separately from you (mounted on a car while you measure from a laptop without GPS, or on a dog\'s collar roaming the garden). The radio must have a GPS fix, or at least a configured position, for packets to appear on the map. Works with a connected companion; a repeater only ever reports its fixed configured position.',
             'discover':
-                'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Please don\'t press it more than once a minute.',
+                'Sends an active DISCOVER_REQ broadcast — this is not passive listening, it injects traffic into the mesh. Nearby nodes with firmware ≥ v1.10 reply with their public key, name, GPS position, and the SNR they measured for your signal (uplink). Nodes don\'t answer when their owner has hidden them (adverts turned off, firmware v1.18.0+) or, on older firmware, when a repeater has "repeat off" — so a missing reply doesn\'t always mean the node is out of range. With a repeater connected over USB, the button instead asks the repeater to discover its own neighbours ("discover.neighbors") and then reads its neighbour table. Please don\'t press it more than once a minute.',
             'auto-reconnect':
                 'When the connection to the device drops unexpectedly (out of range, device reset, cable unplugged), automatically retry the last device. In the Android app it keeps retrying (a fast burst, then once a minute) for as long as the background service is alive, and also retries the moment you switch Bluetooth back on or return to the app — so a link the phone dropped while backgrounded recovers on its own. In a browser it tries a few times, then raises the disconnect alarm. This option only appears where a silent reconnect is possible: the Android app (Bluetooth, USB or WiFi) or desktop Chrome/Edge. It is hidden for Bluetooth in a mobile browser, because there the browser forces a manual device-picker confirmation on every connection for privacy reasons — so it can never reconnect on its own.',
         };
@@ -1440,7 +1463,7 @@ class MeshCoreApp {
                 port = await navigator.serial.requestPort({ filters: [] });
             }
 
-            await this.connectToSerialPort(port);
+            await this.connectToSerialPort(port, opts);
         } catch (error) {
             this._handleConnectError(error, !!(this.serialPort || this.device), opts.auto);
         }
@@ -1508,11 +1531,25 @@ class MeshCoreApp {
         }
     }
 
+    // A BLE attempt the user cancelled (or that a newer connection replaced)
+    // may still reject — a write or notification setup failing because its
+    // link was dropped. That error belongs to a dead attempt: surfacing it
+    // would alert and tear down the live connection.
     async connectToDevice(device) {
+        try { return await this._connectToDeviceInner(device); }
+        catch (e) { if (this.device !== device) return; throw e; }
+    }
+
+    async _connectToDeviceInner(device) {
         this._setActiveTransportBtn('ble', 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting…', 'connecting');
         this.conn.beginAttempt('ble');   // BLE is always the companion protocol
         this.device = device;
+        // This attempt is over once the app's device is no longer THIS one —
+        // cancelled (null) or replaced by another connection (e.g. a USB/WiFi
+        // connect after a cancel). Checking only for null let a cancelled BLE
+        // attempt that completed late carry on over the newer connection.
+        const gone = () => this.device !== device;
 
         // Nordic UART Service (NUS) — a de-facto industry standard from Nordic
         // Semiconductor for tunnelling a serial-port-style byte stream over BLE.
@@ -1527,17 +1564,27 @@ class MeshCoreApp {
 
         let server, service;
         for (let attempt = 1; attempt <= 3; attempt++) {
-            if (!this.device) return;
+            if (gone()) return;
+            server = null;      // per attempt — the "no NUS service" message relies on it
             try {
                 server = await device.gatt.connect();
-                if (!this.device) { try { device.gatt.disconnect(); } catch (e) {} return; }
+                if (gone()) { try { device.gatt.disconnect(); } catch (e) {} return; }
                 service = await server.getPrimaryService(NUS_SERVICE);
                 break;
             } catch (e) {
-                if (!this.device) return;
+                if (gone()) { try { device.gatt.disconnect(); } catch (_) {} return; }
                 // BT off (native InvalidStateError) won't recover by retrying —
                 // it already prompted; surface it to the caller immediately.
-                if (attempt === 3 || e.name === 'InvalidStateError') throw e;
+                if (e.name === 'InvalidStateError') throw e;
+                if (attempt === 3) {
+                    // NotFoundError here = the device has no NUS service (not a
+                    // MeshCore companion). That name is also "picker cancelled",
+                    // which is shown silently — give it a message of its own.
+                    if (e.name === 'NotFoundError' && server) {
+                        throw new Error('This Bluetooth device has no MeshCore service (Nordic UART). Is it a MeshCore companion radio?');
+                    }
+                    throw e;
+                }
                 await new Promise(r => setTimeout(r, attempt * 500));
             }
         }
@@ -1545,38 +1592,38 @@ class MeshCoreApp {
         // Register the disconnect listener AFTER gatt.connect() so that any
         // lingering gattserverdisconnected event from the previous session
         // doesn't fire onDisconnected() and abort our new connection setup.
-        if (!this.device) return;
+        if (gone()) return;
         this._onGattDisconnected = () => this.onDisconnected();
         device.addEventListener('gattserverdisconnected', this._onGattDisconnected);
 
-        if (!this.device) return;
+        if (gone()) return;
         this.bleRxCharacteristic = await service.getCharacteristic(NUS_RX);
-        if (!this.device) return;
+        if (gone()) return;
         const txCharacteristic = await service.getCharacteristic(NUS_TX);
-        if (!this.device) return;
+        if (gone()) return;
         this.txCharacteristic = txCharacteristic;
         this._onDataReceived = e => this.handleData(e);
         // Reset Chrome's notify pipe — may retain state from a previous session
         try { await txCharacteristic.stopNotifications(); } catch (e) {}
-        if (!this.device) return;
+        if (gone()) return;
         await txCharacteristic.startNotifications();
-        if (!this.device) return;
+        if (gone()) return;
         txCharacteristic.addEventListener('characteristicvaluechanged', this._onDataReceived);
 
         await this.sendAppStart();
-        if (!this.device) return;
+        if (gone()) return;
         await new Promise(r => setTimeout(r, 300));
-        if (!this.device) return;
+        if (gone()) return;
         // Ask for the battery level before the contact dump starts — the device
         // only ever reports it on request (see sendBatteryQuery), and injecting
         // commands mid-dump can stall the contact stream.
         await this.sendBatteryQuery();
-        if (!this.device) return;
+        if (gone()) return;
         await this.sendGetContacts();
         // A drop (or user cancel) during any of the awaits above already ran
         // onDisconnected() and reset the UI — bail before we clobber it with a
         // stale "Connected" state that no live link backs.
-        if (!this.device) return;
+        if (gone()) return;
 
         this._startBatteryPoll();
         this._stopPairingWatch(); this._hideDisconnectAlarm();
@@ -1713,7 +1760,7 @@ class MeshCoreApp {
             this._beginConnectAttempt('wifi');
             this.updateStatus('Connecting…', 'connecting');
             const port_ = window.__mcMakeWifiPort(host, port);
-            await this.connectToSerialPort(port_);
+            await this.connectToSerialPort(port_, opts);
         } catch (error) {
             if (!opts.auto) alert('WiFi connection failed: ' + (error.message || error));
             if (this.serialPort || this.device) this.onDisconnected();
@@ -1729,7 +1776,10 @@ class MeshCoreApp {
         await this._doWifiConnect(saved.host, saved.port, opts);
     }
 
-    async connectToSerialPort(port) {
+    // opts.auto: an auto-reconnect attempt — no blocking alert() when the
+    // device doesn't answer (it may still be booting, e.g. after a restart);
+    // the reconnect cycle just tries again.
+    async connectToSerialPort(port, opts = {}) {
         // A WiFi/TCP companion is a serial-like port (same frame protocol) but
         // surfaced through the native host; track which so the right button acts
         // as Cancel/Disconnect and so we can tailor messaging.
@@ -1740,7 +1790,24 @@ class MeshCoreApp {
         this._setActiveTransportBtn(this._serialBtnKind, 'Cancel', () => this.disconnect());
         this.updateStatus('Connecting…', 'connecting');
 
-        await port.open({ baudRate: 115200 });
+        // The open can take a while (WiFi TCP connect up to ~8 s, a USB
+        // permission dialog on Android). A Cancel meanwhile is recorded by
+        // dropping the token (see disconnect); the port that opens afterwards
+        // is closed again instead of carrying on to "Connected".
+        const openToken = {};
+        this._serialOpenToken = openToken;
+        try {
+            await port.open({ baudRate: 115200 });
+        } catch (e) {
+            if (this._serialOpenToken !== openToken) return;     // cancelled — the failure is moot
+            this._serialOpenToken = null;
+            throw e;
+        }
+        if (this._serialOpenToken !== openToken) {
+            try { await port.close(); } catch (_) {}
+            return;
+        }
+        this._serialOpenToken = null;
 
         this.conn.beginAttempt('serial');  // mode unknown until detection completes
         this.serialPort = port;
@@ -1786,7 +1853,7 @@ class MeshCoreApp {
         // WiFi-specific message rather than falling through to the repeater path.
         if (isWifi) {
             this.updateStatus('No MeshCore companion found', 'disconnected');
-            alert('No MeshCore companion answered at that WiFi address.\n\n'
+            if (!opts.auto) alert('No MeshCore companion answered at that WiFi address.\n\n'
                 + 'Check that:\n'
                 + '• the IP and port are correct,\n'
                 + '• the device runs the WiFi companion firmware,\n'
@@ -1813,13 +1880,41 @@ class MeshCoreApp {
         } else {
             // Phase 3 — neither protocol answered.
             this.updateStatus('Unsupported device', 'disconnected');
-            alert('This USB serial device didn\'t respond as a MeshCore companion or repeater.\n\n'
+            if (!opts.auto) alert('This USB serial device didn\'t respond as a MeshCore companion or repeater.\n\n'
                 + 'Note: connecting a companion radio over USB usually requires a special USB firmware build. '
                 + 'Some companion devices do have this firmware, so if yours does, it should work here. '
                 + 'Standard companion radios connect via Bluetooth. '
                 + 'USB is also supported for MeshCore repeaters.');
             this.onDisconnected();
         }
+    }
+
+    // A WiFi (TCP) link to a radio that lost power or went out of range is not
+    // closed by anyone: reads just block and writes vanish into the socket
+    // buffer, so the app kept showing "Connected" — for about 15 minutes, until
+    // the kernel gave up retransmitting. A companion always answers the
+    // app's 10 s noise-floor poll (with stats, or ERR on old firmware), so a
+    // long silence means the link is dead: after 45 s of nothing, probe
+    // once more; after 90 s, treat it as an unexpected drop (alarm /
+    // auto-reconnect).
+    _startWifiWatchdog(port) {
+        clearInterval(this._wifiWatchdog);
+        this._lastRxAt = performance.now();
+        this._wifiWatchdog = setInterval(() => {
+            if (this.serialPort !== port || this.conn.mode !== 'companion') {
+                clearInterval(this._wifiWatchdog); this._wifiWatchdog = null; return;
+            }
+            const quiet = performance.now() - this._lastRxAt;
+            // Generous margins: a backgrounded WebView may run timers only
+            // about once a minute, which delays the polls that keep it fed.
+            if (quiet > 90000) {
+                clearInterval(this._wifiWatchdog); this._wifiWatchdog = null;
+                console.warn('WiFi link silent for 90 s — treating it as dropped');
+                this.onDisconnected();
+            } else if (quiet > 45000) {
+                this.sendBatteryQuery();
+            }
+        }, 10000);
     }
 
     // Finalise a companion (binary frame protocol) serial connection.
@@ -1837,6 +1932,8 @@ class MeshCoreApp {
         this._stopPairingWatch(); this._hideDisconnectAlarm();
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (companion)', 'connected');
+        if (this._serialBtnKind === 'wifi') this._startWifiWatchdog(port);
+        this._onCompanionReady();
         this._setActiveTransportBtn(this._serialBtnKind || 'serial', 'Disconnect', () => this.disconnect());
         this._updateSoundHighlight();
         this._collecting = true;
@@ -1886,6 +1983,7 @@ class MeshCoreApp {
 
         this._setConnectedDeviceName(this.saveSerialPort(port));
         this.updateStatus('Connected (repeater)', 'connected');
+        this._showRepeaterConsole(true);
         this._setActiveTransportBtn('serial', 'Disconnect', () => this.disconnect());   // repeaters are USB-only
         this._updateSoundHighlight();
         this._collecting = true;
@@ -1907,9 +2005,12 @@ class MeshCoreApp {
     // on error, but the returned promise still rejects to THIS write's caller.
     _serialWriteBytes(bytes) {
         const prev = this._serialWriteChain ?? Promise.resolve();
+        // The port this write was meant for — a write still queued when that
+        // connection ends must not land on the next one.
+        const target = this.serialPort;
         const p = prev.then(async () => {
             const port = this.serialPort;
-            if (!port) return;
+            if (!port || port !== target) return;
             const writer = port.writable.getWriter();
             try { await writer.write(bytes); }
             finally { try { writer.releaseLock(); } catch (e) {} }
@@ -1946,6 +2047,7 @@ class MeshCoreApp {
     // radio→app, 0x3c ('<') is app→radio. Unknown leading bytes are skipped to
     // resynchronise after any corruption.
     _onSerialBytes(chunk) {
+        this._lastRxAt = performance.now();   // any byte = the link is alive (see _startWifiWatchdog)
         // Repeater links speak text, not binary frames.
         if (this.conn.mode === 'repeater') { this._onSerialText(chunk); return; }
         if (this._serialReadBuffer.length) {
@@ -1988,6 +2090,11 @@ class MeshCoreApp {
     }
 
     _handleRepeaterLine(line) {
+        // Console tap: while a command typed in the Repeater console is in
+        // flight, mirror the CLI's reply lines there (packet-log lines excluded),
+        // then let the line through to the normal handlers below — a "get radio"
+        // or "neighbors" typed by hand updates the app just like its own polls.
+        if (this._cliPending) this._cliTap(line);
         // RAW packet dump (MESH_PACKET_LOGGING builds): decode for full path /
         // last-hop, hold it until the matching summary line brings SNR/RSSI.
         const raw = line.match(/U RAW:\s*([0-9A-Fa-f]+)/);
@@ -2200,14 +2307,502 @@ class MeshCoreApp {
     // packet log are polled over the CLI (reading them transmits nothing). The
     // log is a stored file with no streaming, so each cycle we dump it ('log')
     // and clear it ('log erase' on the EOF marker) to get only-new entries.
+    // --- Repeater console (USB repeater text CLI) ---
+
+    _setupRepeaterConsole() {
+        this._cliLogEl = document.getElementById('cliLog');
+        this._cliInputEl = document.getElementById('cliInput');
+        this._cliHistory = [];
+        this._cliHistIdx = 0;
+        this._cliPending = null;
+        document.getElementById('cliForm')?.addEventListener('submit', e => {
+            e.preventDefault();
+            this._cliSubmit();
+        });
+        this._cliInputEl?.addEventListener('keydown', e => {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+            const h = this._cliHistory;
+            if (!h.length) return;
+            e.preventDefault();
+            this._cliHistIdx = Math.max(0, Math.min(h.length, this._cliHistIdx + (e.key === 'ArrowUp' ? -1 : 1)));
+            this._cliInputEl.value = h[this._cliHistIdx] ?? '';
+        });
+    }
+
+    _showRepeaterConsole(show, title = 'Repeater console') {
+        document.getElementById('cliWrap')?.classList.toggle('hidden', !show);
+        // The companion has its own Restart button in Radio tools.
+        document.getElementById('cliRestartRow')?.classList.toggle('hidden', !show || title !== 'Repeater console');
+        const t = document.getElementById('cliTitle');
+        if (t) t.textContent = title;
+        if (!show) this._cliPending = null;
+    }
+
+    // Companion firmware with the text CLI over the companion protocol.
+    _companionCli() { return (this._fwVer ?? 0) >= 14; }
+
+    // Run one CLI command on the companion (CMD_RUN_CLI_COMMAND, 66 →
+    // RESP_CODE_CLI_REPLY, 29). Resolves to the reply text, false when the
+    // firmware answered ERR, or null with no reply.
+    async _companionCli1(cmd) {
+        const text = new TextEncoder().encode(cmd);
+        const frame = new Uint8Array(1 + text.length);
+        frame[0] = 66; frame.set(text, 1);
+        const r = await this._companionCall(frame, [29, 1]);
+        if (!r) return null;
+        if (r[0] === 1) return false;
+        return new TextDecoder().decode(r.subarray(1)).replace(/\r/g, '');
+    }
+
+    // Read both RX gain states and show a switch for each one the board
+    // supports: "get radio.rxgain" → "> on|off" (radio chip, always present
+    // on v14); "get radio.fem.rxgain" → "> on|off" only on boards with a
+    // controllable external LNA ("Error: unsupported" / "Unknown command"
+    // otherwise).
+    async _readRxGain() {
+        const parse = r => { const m = typeof r === 'string' && r.match(/^>\s*(on|off)\b/i); return m ? m[1].toLowerCase() === 'on' : null; };
+        const boost = parse(await this._companionCli1('get radio.rxgain'));
+        const fem = parse(await this._companionCli1('get radio.fem.rxgain'));
+        if (this.conn.mode !== 'companion') return;
+        const apply = (wrapId, chkId, v) => {
+            document.getElementById(wrapId)?.classList.toggle('hidden', v == null);
+            const c = document.getElementById(chkId);
+            if (c && v != null) { c.checked = v; c.disabled = false; }
+        };
+        apply('rxBoostWrap', 'rxBoostChk', boost);
+        apply('femLnaWrap', 'femLnaChk', fem);
+        document.getElementById('rxGainRow')?.classList.toggle('hidden', boost == null && fem == null);
+        // Boosted gain is the firmware default; "off" is usually a leftover
+        // (e.g. the 1.14.1 upgrade bug) and silently costs sensitivity.
+        const note = document.getElementById('rxGainNote');
+        if (note && !note.dataset.msg) note.textContent = boost === false ? '⚠ boosted gain is off — lower sensitivity' : '';
+    }
+
+    async _setRxGain(key, chk) {
+        const want = chk.checked;
+        chk.disabled = true;
+        const reply = await this._companionCli1(`set ${key} ${want ? 'on' : 'off'}`);
+        const note = document.getElementById('rxGainNote');
+        const ok = typeof reply === 'string' && /^OK/i.test(reply.trim());
+        if (!ok) {
+            chk.checked = !want;
+            this._toolNote(note, reply == null ? 'No reply from the radio.'
+                : reply === false ? 'Not supported by this firmware.' : reply.trim() || 'The radio refused the change.',
+                () => { note.textContent = ''; this._readRxGain(); });
+        }
+        await this._readRxGain();
+        chk.disabled = false;
+    }
+
+    // --- Device restart ---
+
+    // Restart the connected device and reconnect once it's back. Repeater: the
+    // "reboot" CLI command. Companion: on firmware v1.18+ (protocol v14) the
+    // CLI "reboot" via CMD_RUN_CLI_COMMAND, else CMD_REBOOT (19) + "reboot".
+    // Neither replies — the radio just resets. The CLI route is preferred
+    // because CMD_REBOOT first rewrites the contacts file when it has unsaved
+    // changes (on nRF52: delete, rewrite) and resets right after; a reset
+    // landing on that flash write can corrupt the file system, which the
+    // nRF52 core then formats at boot — the node loses its name, key and
+    // settings (seen on a T1000-E). The CLI reboot writes nothing first; the
+    // only cost is contacts not yet saved, which return with their next advert. We then close our side ourselves rather than
+    // wait for the link to die: over a USB-UART bridge (CH340/CP210x) the port
+    // stays open across the reset, and over BLE/TCP the drop can take a while
+    // to be noticed. The closure counts as intended (no alarm), and the
+    // reconnect cycle starts after a few seconds — even with Auto-reconnect
+    // off, since a restart asked for by the user implies "and come back".
+    async _restartDevice(confirmed = false) {
+        const mode = this.conn.mode;
+        if (!this.conn.established || (mode !== 'companion' && mode !== 'repeater')) return;
+        if (!confirmed && !confirm('Restart the device?\n\nThe connection drops while it restarts; the app reconnects automatically when it is back (about 10 s).'
+            + (mode === 'companion' && !this._companionCli()
+                ? '\n\nNote: with this older firmware a restart can, rarely, wipe the device\'s settings and key on nRF52 boards (e.g. T1000-E, RAK). Keep a backup (export it in the MeshCore app). Firmware v1.18 or newer restarts more safely.'
+                : ''))) return;
+        const id = this._lastConnectedId;
+        // Mark the drop as intended BEFORE sending: boards with native USB
+        // (nRF52, ESP32-S3) vanish from the bus the instant they reset, so the
+        // read loop can end — and would raise the alarm — before we close.
+        // _restartPending also keeps the Android capture service up across
+        // the gap until the reconnect starts.
+        this.conn.intendDisconnect();
+        this._restartPending = true;
+        try {
+            if (mode === 'companion') {
+                const reboot = new TextEncoder().encode('reboot');
+                await this._sendFrame(new Uint8Array([this._companionCli() ? 66 : 19, ...reboot]));
+            } else await this._serialWriteText('reboot\r\n');
+        } catch (_) {}
+        this._cliAppend?.('Restarting the device…', 'cli-note');
+        await new Promise(r => setTimeout(r, 600));    // let the command leave before we close
+        this._restarting = true;
+        try { if (this.conn.established) await this.disconnect(); }
+        finally { this._restarting = false; }
+        // Where a reconnect needs a user gesture (Bluetooth in a mobile
+        // browser), retrying would only fail and end in the alarm.
+        if (!id || !this._canAutoReconnect()) {
+            this._restartPending = false;
+            this._stopCaptureServiceIfIdle();
+            this.updateStatus('Device restarting — connect again when it is back', 'disconnected');
+            return;
+        }
+        this.updateStatus('Restarting device…', 'connecting');
+        clearTimeout(this._restartReconnectTimer);
+        this._restartReconnectTimer = setTimeout(() => {
+            this._restartPending = false;
+            if (this.device || this.serialPort || this.reconnect.active) return;
+            this._lastConnectedId = id;
+            this.reconnect.start();
+            this._startPairingWatch();
+        }, 4000);
+    }
+
+    // --- Radio tools (companion) ---
+
+    _setupRadioTools() {
+        document.getElementById('txPowerForm')?.addEventListener('submit', e => { e.preventDefault(); this._setTxPower(); });
+        document.getElementById('traceForm')?.addEventListener('submit', e => { e.preventDefault(); this._runTrace(); });
+        document.getElementById('rxBoostChk')?.addEventListener('change', e => this._setRxGain('radio.rxgain', e.target));
+        document.getElementById('restartCompanionBtn')?.addEventListener('click', () => this._restartDevice());
+        document.getElementById('restartRepeaterBtn')?.addEventListener('click', () => this._restartDevice());
+        document.getElementById('femLnaChk')?.addEventListener('change', e => this._setRxGain('radio.fem.rxgain', e.target));
+    }
+
+    // A companion is connected and identified (SELF_INFO): show the tools and,
+    // once per connection, ask which protocol version it speaks — the CLI
+    // console needs v14+.
+    _onCompanionReady() {
+        document.getElementById('toolsWrap')?.classList.remove('hidden');
+        // Only once the contact sync is over (finished or given up) — an
+        // injected command can stall the dump, and over BLE SELF_INFO arrives
+        // before the dump has even started. Its end calls back here.
+        if (!this._devQuerySent && this._contactsSynced && !this._contactsFetchActive) {
+            this._devQuerySent = true;
+            this._sendFrame(new Uint8Array([22, 3])).catch(() => {});   // CMD_DEVICE_QUERY, app protocol v3
+        }
+    }
+
+    // RESP_CODE_DEVICE_INFO: [1] = protocol version code, [60-79] = firmware
+    // version string (e.g. "v1.10.0", NUL-padded; older firmware may omit it).
+    _handleDeviceInfo(payload) {
+        if (payload.length < 2) return;
+        this._fwVer = payload[1];
+        this._fwName = null;
+        if (payload.length >= 61) {
+            try {
+                const end = payload.indexOf(0, 60);
+                const v = new TextDecoder().decode(payload.subarray(60, end < 0 ? Math.min(payload.length, 80) : end)).trim();
+                if (/^[\x20-\x7e]{1,20}$/.test(v)) this._fwName = v;
+            } catch (_) {}
+        }
+        if (this.conn.mode !== 'companion') return;
+        if (this._companionCli()) {
+            this._showRepeaterConsole(true, 'Companion console');
+            this._readRxGain();
+        }
+        this._updateFwNote();
+    }
+
+    // Tell the user what an older companion firmware can't do here, instead
+    // of the console silently not appearing.
+    _updateFwNote() {
+        // Header: firmware version next to the device name and radio preset.
+        const hdr = document.getElementById('deviceFw');
+        if (hdr) {
+            const show = this._fwVer != null;
+            const old = show && !this._companionCli();
+            hdr.textContent = show ? `fw ${this._fwName ? this._fwName + ' · ' : ''}protocol v${this._fwVer}` : '';
+            hdr.title = !show ? '' : old
+                ? 'Companion firmware and protocol version — older firmware: some Radio tools are unavailable (see Radio tools)'
+                : 'Companion firmware and protocol version';
+            hdr.classList.toggle('device-fw-old', old);
+            hdr.classList.toggle('hidden', !show);
+        }
+        const el = document.getElementById('fwNote');
+        if (!el) return;
+        const missing = [];
+        if (this._fwVer != null && !this._companionCli())
+            missing.push('the RX gain switches and the companion console need firmware v1.18.0 or newer (protocol v14)');
+        const fw = this._fwName ? `firmware ${this._fwName}, protocol v${this._fwVer}` : `protocol v${this._fwVer}`;
+        el.textContent = missing.length
+            ? `⚠ Older companion firmware (${fw}): ${missing.join('; ')}. Update the radio's firmware to use it.`
+            : '';
+        el.classList.toggle('hidden', !missing.length);
+    }
+
+    _hideCompanionTools() {
+        document.getElementById('toolsWrap')?.classList.add('hidden');
+        this._devQuerySent = false;
+        this._contactsSynced = false;
+        this._fwVer = null;
+        this._fwName = null;
+        document.getElementById('fwNote')?.classList.add('hidden');
+        document.getElementById('deviceFw')?.classList.add('hidden');
+        for (const id of ['rxGainRow', 'rxBoostWrap', 'femLnaWrap']) document.getElementById(id)?.classList.add('hidden');
+        for (const id of ['traceResult', 'rxGainNote']) { const el = document.getElementById(id); if (el) { el.textContent = ''; delete el.dataset.msg; } }
+        this._toolLate = null;
+        this._txPower = null;
+        this._toolWaiter?.resolve(null);
+        for (const done of this._traceWaiters?.values() ?? []) done(null);
+    }
+
+    _noteTxPower(dbm, max) {
+        const changed = dbm !== this._txPower;
+        this._txPower = dbm;
+        const input = document.getElementById('txPowerInput');
+        if (!input) return;
+        if (max > 0 && max <= 40) input.max = String(max);
+        // Don't overwrite what the user is typing.
+        if (changed && document.activeElement !== input) input.value = String(dbm);
+        const note = document.getElementById('txPowerNote');
+        if (note && !note.dataset.msg) note.textContent = max > 0 && max <= 40 ? `max ${max} dBm` : '';
+    }
+
+    // A transient message in a tool's note slot; after 4 s the slot goes
+    // back to its normal content (`restore`, default: the TX power hint).
+    _toolNote(el, msg, restore) {
+        if (!el) return;
+        el.dataset.msg = '1';
+        el.textContent = msg;
+        clearTimeout(el._t);
+        el._t = setTimeout(() => {
+            delete el.dataset.msg;
+            if (restore) restore();
+            else this._noteTxPower(this._txPower, Number(document.getElementById('txPowerInput')?.max));
+        }, 4000);
+    }
+
+    // Send one companion command and wait for its reply frame (one of
+    // `codes`). Calls run one at a time; while one is in flight the app's
+    // own battery / noise-floor polls pause, and a short head start lets a
+    // poll reply already on its way arrive first — replies come in request
+    // order, and an old firmware answers the stats poll with the same ERR
+    // code we wait for. Resolves to the reply payload, or null on timeout.
+    _companionCall(bytes, codes, timeoutMs = 5000) {
+        const run = async () => {
+            if (this.conn.mode !== 'companion' || !this._canSend()) return null;
+            // Not into a contact dump or a Discover (whose OK/ERR would look
+            // like our reply), nor while a timed-out call's reply may still
+            // arrive (it would be taken as this call's) — up to 30 s.
+            const t0 = performance.now();
+            while ((this._contactsFetchActive || this._discoverActive || this._toolLateActive())
+                   && performance.now() - t0 < 30000) await new Promise(r => setTimeout(r, 100));
+            this._toolBusy = true;
+            try {
+                await new Promise(r => setTimeout(r, 300));
+                if (this.conn.mode !== 'companion' || !this._canSend()) return null;
+                return await new Promise(resolve => {
+                    const finish = p => { clearTimeout(timer); if (this._toolWaiter === w) this._toolWaiter = null; resolve(p); };
+                    const w = { codes, resolve: finish };
+                    const timer = setTimeout(() => {
+                        // A reply that turns up after this is still ours: swallow it
+                        // (for a few seconds) rather than hand it to the next call.
+                        this._toolLate = { codes, until: performance.now() + 5000 };
+                        finish(null);
+                    }, timeoutMs);
+                    this._toolWaiter = w;
+                    this._sendFrame(bytes).catch(() => finish(null));
+                });
+            } finally { this._toolBusy = false; }
+        };
+        const p = (this._toolChain ?? Promise.resolve()).then(run, run);
+        this._toolChain = p.catch(() => {});
+        return p;
+    }
+
+    _toolLateActive() {
+        if (this._toolLate && performance.now() > this._toolLate.until) this._toolLate = null;
+        return !!this._toolLate;
+    }
+
+    async _setTxPower() {
+        const input = document.getElementById('txPowerInput');
+        const note = document.getElementById('txPowerNote');
+        const v = Number(input?.value);
+        const max = Number(input?.max) || 30;
+        if (!Number.isInteger(v) || v < -9 || v > max) { this._toolNote(note, `Enter a whole number from -9 to ${max}.`); return; }
+        // CMD_SET_RADIO_TX_POWER (12): [12, int8 dBm] → OK / ERR
+        const r = await this._companionCall(new Uint8Array([12, v & 0xff]), [0, 1]);
+        if (r?.[0] === 0) { this._txPower = v; this._toolNote(note, `TX power set to ${v} dBm.`); }
+        else this._toolNote(note, r ? 'The radio rejected this value.' : 'No reply from the radio.');
+    }
+
+    // Parse "5E", "5E9F" or "5E,8A,5E" into path bytes. IDs must share one
+    // length of 1, 2 or 4 bytes (the trace hash sizes, firmware v1.11+ for >1).
+    _parseTracePath(text) {
+        const ids = text.split(/[\s,>→-]+/).filter(Boolean);
+        if (!ids.length) return { error: 'Enter a repeater ID (e.g. 5E) or a path (e.g. 5E,8A,5E).' };
+        if (!ids.every(id => /^[0-9a-f]+$/i.test(id))) return { error: 'IDs are hex, e.g. 5E or 5E9F.' };
+        const len = ids[0].length;
+        if (![2, 4, 8].includes(len) || !ids.every(id => id.length === len))
+            return { error: 'All IDs must have the same length: 2, 4 or 8 hex digits.' };
+        if (ids.length * len / 2 > 64) return { error: 'Path too long.' };
+        const bytes = new Uint8Array(ids.length * len / 2);
+        ids.forEach((id, i) => { for (let j = 0; j < len / 2; j++) bytes[i * len / 2 + j] = parseInt(id.substr(j * 2, 2), 16); });
+        return { ids: ids.map(i => i.toUpperCase()), bytes, sizeBits: len === 2 ? 0 : len === 4 ? 1 : 2 };
+    }
+
+    async _runTrace() {
+        const input = document.getElementById('traceInput');
+        const out = document.getElementById('traceResult');
+        const btn = document.getElementById('traceBtn');
+        if (!out || this._traceRunning) return;
+        let text = (input?.value ?? '').trim();
+        // Empty field + a repeater selected → trace to that repeater.
+        const sel = this.selection.col;
+        if (!text && sel && /^[0-9a-f]+$/i.test(sel)) { text = sel.slice(0, sel.length >= 4 ? 4 : 2); if (input) input.value = text; }
+        const p = this._parseTracePath(text);
+        const show = (msg, cls) => { out.innerHTML = ''; const d = document.createElement('div'); if (cls) d.className = cls; d.textContent = msg; out.appendChild(d); };
+        if (p.error) { show(p.error, 'tools-note'); return; }
+        const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
+        // CMD_SEND_TRACE_PATH (36): [36, tag u32, auth u32, flags, path...]
+        const frame = new Uint8Array(10 + p.bytes.length);
+        const dv = new DataView(frame.buffer);
+        frame[0] = 36; dv.setUint32(1, tag, true); dv.setUint32(5, 0, true); frame[9] = p.sizeBits;
+        frame.set(p.bytes, 10);
+        this._traceRunning = true;
+        if (btn) { btn.disabled = true; btn.textContent = 'Tracing…'; }
+        show(`Tracing ${p.ids.join(' → ')} …`, 'tools-note');
+        try {
+            this._traceWaiters ??= new Map();
+            const result = new Promise(resolve => this._traceWaiters.set(tag, resolve));
+            const r = await this._companionCall(frame, [6, 1]);
+            if (!r || r[0] !== 6) {
+                this._traceWaiters.delete(tag);
+                show(!r ? 'No reply from the radio.'
+                    : p.sizeBits
+                        ? 'The radio rejected the trace. Longer IDs need firmware v1.11 or newer — with older firmware use 2-digit IDs, e.g. "' + p.ids[0].slice(0, 2) + '".'
+                        : 'The radio rejected the trace (invalid path).', 'tools-note');
+                return;
+            }
+            // RESP_CODE_SENT: [6, flood, tag u32, est_timeout ms u32]
+            const est = r.length >= 10 ? new DataView(r.buffer, r.byteOffset).getUint32(6, true) : 5000;
+            // The firmware's estimate is an ack timeout, tight for a trace: each
+            // repeater adds a random retransmit delay, may wait for a busy
+            // channel, and (EU) is bound by its duty cycle. So: at least 10 s,
+            // else twice the estimate plus slack, at most 45 s (long routes on
+            // slow presets).
+            const wait = Math.min(45000, Math.max(10000, est * 2 + 3000));
+            show(`Tracing ${p.ids.join(' → ')} … (waiting up to ${Math.round(wait / 1000)} s)`, 'tools-note');
+            const res = await Promise.race([result, new Promise(rs => setTimeout(() => rs(undefined), wait))]);
+            this._traceWaiters.delete(tag);
+            if (res === null) { show('Disconnected — trace cancelled.', 'tools-note'); return; }
+            if (!res) { show(`No answer within ${Math.round(wait / 1000)} s — the path is broken somewhere (or a repeater was busy). Try again.`, 'tools-note'); return; }
+            show(this._formatTrace(res.ids, res.snrs));
+        } finally {
+            this._traceRunning = false;
+            if (btn) { btn.disabled = false; btn.textContent = 'Trace'; }
+        }
+    }
+
+    // One line per hop: "you → 5E   7.25 dB". snrs[i] = SNR at hop i of the
+    // packet from the previous node; the last value is this radio hearing
+    // the final hop.
+    _formatTrace(ids, snrs) {
+        const fmt = v => (v > 0 ? '+' : '') + v.toFixed(2) + ' dB';
+        const name = id => { const n = this.contacts.nameForCol(id); return n ? `${id} (${n})` : id; };
+        if (ids.length === 1) return `↑ ${name(ids[0])} heard you: ${fmt(snrs[0])}\n↓ you heard ${name(ids[0])}: ${fmt(snrs[1])}`;
+        const nodes = ['you', ...ids.map(name), 'you'];
+        return snrs.map((v, i) => `${nodes[i]} → ${nodes[i + 1]}   ${fmt(v)}`).join('\n');
+    }
+
+    // A console command is in flight: its reply window is still open.
+    _cliBusy() {
+        const p = this._cliPending;
+        if (p && performance.now() > p.until) this._cliPending = null;
+        return !!this._cliPending;
+    }
+
+    _cliAppend(text, cls) {
+        const log = this._cliLogEl;
+        if (!log) return;
+        const div = document.createElement('div');
+        if (cls) div.className = cls;
+        div.textContent = text;          // never innerHTML: replies are device text
+        log.appendChild(div);
+        while (log.childElementCount > 400) log.firstElementChild.remove();
+        log.scrollTop = log.scrollHeight;
+    }
+
+    async _cliSubmit() {
+        const cmd = (this._cliInputEl?.value ?? '').trim();
+        if (!cmd) return;
+        const companion = this.conn.mode === 'companion' && this._companionCli();
+        if (!companion && (this.conn.mode !== 'repeater' || !this.serialPort)) {
+            this._cliAppend('Not connected.', 'cli-note');
+            return;
+        }
+        // Commands that would silently break the capture, or restart / wipe
+        // the repeater, need an explicit OK.
+        const risky = /^(reboot|erase|poweroff|shutdown|start\s+ota|log\s+stop)\b/i.exec(cmd);
+        if (risky) {
+            const why = /^log/i.test(risky[1])
+                ? 'This stops the repeater\'s packet log — the app will stop capturing packets until you send "log start" (or reconnect).'
+                : 'This restarts or modifies the repeater firmware/storage, and the connection will drop.';
+            if (!confirm(`Send "${cmd}"?\n\n${why}`)) return;
+        }
+        if (/^reboot$/i.test(cmd)) {            // already confirmed above
+            this._cliInputEl.value = '';
+            this._restartDevice(true);
+            return;
+        }
+        if (this._cliHistory[this._cliHistory.length - 1] !== cmd) this._cliHistory.push(cmd);
+        if (this._cliHistory.length > 50) this._cliHistory.shift();
+        this._cliHistIdx = this._cliHistory.length;
+        this._cliInputEl.value = '';
+        this._cliAppend('> ' + cmd, 'cli-cmd');
+        if (companion) {
+            // CMD_RUN_CLI_COMMAND (66, protocol v14+) → RESP_CODE_CLI_REPLY (29).
+            const reply = await this._companionCli1(cmd);
+            if (reply == null) this._cliAppend('(no reply)', 'cli-note');
+            else if (reply === false) this._cliAppend('Error — command not supported by this firmware.', 'cli-note');
+            else if (!reply.trim()) this._cliAppend('(empty reply)', 'cli-note');
+            else for (const l of reply.split('\n')) this._cliAppend(l);
+            if (/^set\s+radio\.(fem\.)?rxgain\b/i.test(cmd)) this._readRxGain();   // keep the switches in sync
+            return;
+        }
+        const t = performance.now();
+        // Reply window: open for up to 4 s waiting for the first line, then
+        // kept open 1 s past the latest reply line (multi-line replies such as
+        // "neighbors"), never beyond 10 s in total.
+        this._cliPending = { cmd, sentAt: t, until: t + 4000, hardStop: t + 10000, echoed: false, got: 0 };
+        try { await this._serialWriteText(cmd + '\r\n'); }
+        catch (e) { this._cliPending = null; this._cliAppend('Write failed: ' + (e?.message || e), 'cli-note'); return; }
+        setTimeout(() => {
+            if (this._cliPending?.sentAt === t && !this._cliPending.got) {
+                this._cliPending = null;
+                this._cliAppend('(no reply)', 'cli-note');
+            }
+        }, 4100);
+    }
+
+    _cliTap(line) {
+        if (!this._cliBusy()) return;
+        const p = this._cliPending;
+        // Packet-log output is never a command reply.
+        if (/U RAW:/.test(line) || /^\d{2}:\d{2}:\d{2} - \d{1,2}\/\d{1,2}\/\d{4} U: /.test(line)) return;
+        // The CLI echoes the typed command first; anything before that echo
+        // is the tail of an earlier (background poll) command. Firmware that
+        // doesn't echo: start showing lines shortly after the send instead.
+        if (!p.echoed) {
+            if (line === p.cmd) { p.echoed = true; return; }
+            if (performance.now() - p.sentAt < 400) return;
+            p.echoed = true;
+        }
+        p.got++;
+        this._cliAppend(line.replace(/^->\s?/, ''));
+        p.until = Math.min(p.hardStop, performance.now() + 1000);
+    }
+
     _startRepeaterPolling() {
         this._stopRepeaterPolling();
         const alive = () => this.conn.mode === 'repeater' && this.serialPort;
+        // Skipped while a console command is in flight, so its reply isn't
+        // interleaved with the poll output (see _cliBusy).
         this._neighborPollTimer = setInterval(() => {
-            if (alive()) this._serialWriteText('neighbors\r\n').catch(() => {});
+            if (alive() && !this._cliBusy()) this._serialWriteText('neighbors\r\n').catch(() => {});
         }, 5000);
         this._logPollTimer = setInterval(() => {
-            if (alive()) this._serialWriteText('log\r\n').catch(() => {});
+            if (alive() && !this._cliBusy()) this._serialWriteText('log\r\n').catch(() => {});
         }, 2500);
         // Seed immediately on connect.
         this._serialWriteText('neighbors\r\n').catch(() => {});
@@ -2285,7 +2880,7 @@ class MeshCoreApp {
     _startBatteryPoll() {
         clearInterval(this._batteryPollTimer);
         this._batteryPollTimer = setInterval(() => {
-            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive && !this._toolBusy) {
                 this.sendBatteryQuery();
             }
         }, 60000);
@@ -2293,7 +2888,7 @@ class MeshCoreApp {
         // line, so 10 s resolution matters; the request/reply is ~10 bytes.
         clearInterval(this._noisePollTimer);
         this._noisePollTimer = setInterval(() => {
-            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive) {
+            if (this.conn.mode === 'companion' && this._canSend() && !this._contactsFetchActive && !this._toolBusy) {
                 this._sendFrame(new Uint8Array([56, 1])).catch(() => {});   // CMD_GET_STATS type RADIO
             }
         }, 10000);
@@ -2356,6 +2951,8 @@ class MeshCoreApp {
                 // so rather than stopping silently, so the user knows to reconnect.
                 this._setContactsError(`Synced ${fetched} contacts — some may be missing. Reconnect to retry.`);
             }
+            this._contactsSynced = true;          // done trying — tools may query now
+            this._onCompanionReady();
             return;
         }
         this._contactsLastStallSize = fetched;
@@ -2530,6 +3127,9 @@ class MeshCoreApp {
         }
         if (this._discoverActive) return; // prevent double-click overlap
         this._discoverActive = true;
+        // A Radio tools command is awaiting its OK/ERR: Discover's own reply
+        // would be taken for it — let it finish first.
+        for (let i = 0; this._toolBusy && i < 100; i++) await new Promise(r => setTimeout(r, 100));
 
         const tag = (Math.random() * 0xFFFFFFFF) >>> 0;
         if (!this._discoverTags) this._discoverTags = new Map();
@@ -2699,6 +3299,12 @@ class MeshCoreApp {
 
     handlePayload(payload) {
         const pushCode = payload[0];
+        // Reply to a Radio tools / console command (see _companionCall):
+        // RESP_CODE_OK/ERR/SENT/CLI_REPLY are only ever awaited there.
+        if (this._toolWaiter?.codes.includes(pushCode)) { this._toolWaiter.resolve(payload); return; }
+        if (this._toolLateActive() && this._toolLate.codes.includes(pushCode)) { this._toolLate = null; return; }
+        // RESP_CODE_DEVICE_INFO (0x0D): [1] = firmware protocol version.
+        if (pushCode === 0x0d) { this._handleDeviceInfo(payload); return; }
         // RESP_CODE_BATT_AND_STORAGE (0x0C), reply to CMD_GET_BATT_AND_STORAGE:
         // bytes [1-2] = uint16 LE voltage in mV. The storage kB fields that
         // follow are ignored — they track the radio's internal config
@@ -2751,6 +3357,8 @@ class MeshCoreApp {
                 this.contacts.setLastmod(this._selfPubKey,
                     (payload[1] | (payload[2]<<8) | (payload[3]<<16) | (payload[4]<<24)) >>> 0);
             this.contacts.schedulePersist();   // full list received → persist with the new sync marker
+            this._contactsSynced = true;
+            if (this.conn.mode === 'companion') this._onCompanionReady();
             this._updateContactsCount();
             this._lastColKey = null; // force column header redraw with names
             this._renderMsgTable();
@@ -2806,6 +3414,9 @@ class MeshCoreApp {
         // Bytes 4..35 = the companion's public key: its identity, used to keep
         // the contact-sync marker per device.
         this._selfPubKey = Array.from(payload.subarray(4, 36), b => b.toString(16).padStart(2, '0')).join('');
+        // [2] = current TX power (dBm, signed), [3] = the radio's maximum.
+        this._noteTxPower(payload[2] > 127 ? payload[2] - 256 : payload[2], payload[3]);
+        if (this.conn.mode === 'companion') this._onCompanionReady();
         const lat = ((payload[36] | (payload[37] << 8) | (payload[38] << 16) | (payload[39] << 24)) | 0) / 1e6;
         const lon = ((payload[40] | (payload[41] << 8) | (payload[42] << 16) | (payload[43] << 24)) | 0) / 1e6;
         this._setDeviceLocation(lat, lon);
@@ -2987,22 +3598,26 @@ class MeshCoreApp {
             tagKnown,
         };
 
-        // Record uplink SNR in the Sent SNR History chart and 3D map. Persist the
-        // capture position too, so the map can show outgoing SNR from disk
-        // (clustered, surviving reload/export) the same way it shows incoming.
+        // Like the paired DSC row (dropped by _ingestPacket while stopped), the
+        // sent SNR is recorded only while collecting.
         const now = Date.now();
-        const sentLoc = this.signalMap?.currentLocation() ?? null;
-        // Canonicalise the column so the live star shares the exact column key
-        // the table/other charts use (and that disk-loaded sent points resolve to
-        // via _resolveColReadonly). Using the raw prefix could select a
-        // non-existent column on click. The stored rawId stays raw (resolved on
-        // read). The paired DSC ingest below resolves the same key.
-        const sentCol = this.columns.resolve(pubKeyHex);
-        this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: sentCol, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
-        this.model.bufferSent({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
-        this._scheduleChartRender();
-        if (sentLoc && remoteSnr != null) {
-            this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: sentCol, time: now, rawId: pubKeyHex });
+        if (this._collecting) {
+            // Record uplink SNR in the Sent SNR History chart and 3D map. Persist the
+            // capture position too, so the map can show outgoing SNR from disk
+            // (clustered, surviving reload/export) the same way it shows incoming.
+            const sentLoc = this.signalMap?.currentLocation() ?? null;
+            // Canonicalise the column so the live star shares the exact column key
+            // the table/other charts use (and that disk-loaded sent points resolve to
+            // via _resolveColReadonly). Using the raw prefix could select a
+            // non-existent column on click. The stored rawId stays raw (resolved on
+            // read). The paired DSC ingest below resolves the same key.
+            const sentCol = this.columns.resolve(pubKeyHex);
+            this._sentSnrHistory.push({ time: now, snr: remoteSnr, col: sentCol, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
+            this.model.bufferSent({ time: now, snr: remoteSnr, rawId: pubKeyHex, label: nodeName ?? pubKeyHex, lat: sentLoc?.lat ?? null, lon: sentLoc?.lon ?? null });
+            this._scheduleChartRender();
+            if (sentLoc && remoteSnr != null) {
+                this.signalMap.addSentSnrPacket({ lat: sentLoc.lat, lon: sentLoc.lon, snr: remoteSnr, col: sentCol, time: now, rawId: pubKeyHex });
+            }
         }
 
         // Each DSC response → new row in Received Packets; always use current time so order is correct.
@@ -3016,27 +3631,34 @@ class MeshCoreApp {
         this._ingestPacket(dscHash, pubKeyHex, typeName + ' DSC', rawHex, ourSnr, ourRssi, meta, null, { remoteSnr, ...this._myLocation() });
     }
 
+    // PUSH_CODE_TRACE_DATA layout: [0]=0x89, [1]=reserved, [2]=path_len (bytes
+    // of path hashes), [3]=flags (bits 0-1: hash size = 1 << n, firmware
+    // v1.11+), [4-7]=tag, [8-11]=auth, then the path hashes, one SNR byte per
+    // hop (signed, ×4) and a final SNR (the last hop as heard by this radio).
     _handleTracePush(payload) {
         if (payload.length < 12) return;
         const pathLen = payload[2];
+        const hashSize = 1 << (payload[3] & 0x03);
+        const hops = pathLen >> (payload[3] & 0x03);
         const tag = ((payload[4]) | (payload[5]<<8) | (payload[6]<<16) | (payload[7]<<24)) >>> 0;
-        const needed = 12 + pathLen + pathLen + 1;
-        if (payload.length < needed) return;
-        // SNRs: path_len+1 values (signed byte / 4)
+        if (payload.length < 12 + pathLen + hops + 1) return;
         const snrs = [];
-        for (let i = 0; i <= pathLen; i++) {
+        for (let i = 0; i <= hops; i++) {
             const b = payload[12 + pathLen + i];
             snrs.push((b > 127 ? b - 256 : b) / 4);
         }
-        // Last path hash = last repeater before destination
-        const lastHash = pathLen > 0 ? payload[12 + pathLen - 1] : null;
-        const repeaterCol = lastHash != null
-            ? lastHash.toString(16).padStart(2, '0').toUpperCase()
-            : 'direct';
+        const ids = [];
+        for (let i = 0; i < hops; i++) {
+            ids.push(Array.from(payload.subarray(12 + i * hashSize, 12 + (i + 1) * hashSize),
+                b => b.toString(16).padStart(2, '0')).join('').toUpperCase());
+        }
+        // Last path hash = the last repeater, the one this radio heard.
+        const repeaterCol = ids.length ? ids[ids.length - 1] : 'direct';
         const lastSnr = snrs[snrs.length - 1];
         const hash = 'TR:' + tag.toString(16).toUpperCase().padStart(8, '0');
-        const meta = { pathLen, tag, snrs };
+        const meta = { pathLen: hops, tag, snrs };
         this._ingestPacket(hash, repeaterCol, 'Trace', null, lastSnr, null, meta, null, this._myLocation());
+        this._traceWaiters?.get(tag)?.({ ids, snrs });
     }
 
     _bufferToHex(buffer) {
@@ -3376,6 +3998,7 @@ class MeshCoreApp {
             // re-export come out smaller than the file just imported; the
             // strongest-RSSI merge below keeps the representative correct.
             if (now > data.lastSeen) data.lastSeen = now;   // an imported older row must not rewind it
+            if (now < data.firstSeen) data.firstSeen = now; // …but may move the first sighting earlier
             // Keep the strongest-RSSI observation per (packet, repeater), matching
             // the disk grid/page representative so the table cell reads the same
             // value in every Display window.
@@ -3386,6 +4009,12 @@ class MeshCoreApp {
         }
 
         this.columns.noteObservation(canonicalKey, repeater, now, snr, rssi);
+        // Persist this observation (rawHex is per-path, so it lives per-obs)
+        // BEFORE the chart/map caches see it: an upsert can start a cache
+        // rebuild that flushes the store and scans the disk, which must
+        // already include this packet. Skipped only while replaying from disk
+        // to avoid writing it back.
+        if (!replaying) this._ingestToStore({ now, hash, repeater, rawHex, snr, rssi, meta, type, loc, remoteSnr: opts.remoteSnr }, isNewHash);
         if (snr != null || rssi != null) {
             this.chartPoints.push({ time: now, rssi, snr, col: canonicalKey, rawId: repeater, type, hash });
             // Fold it into the chart bucket cache so the charts show it without a
@@ -3405,9 +4034,6 @@ class MeshCoreApp {
             }
         }
 
-        // Persist this observation (rawHex is per-path, so it lives per-obs).
-        // Skipped only while replaying from disk to avoid writing it back.
-        if (!replaying) this._ingestToStore({ now, hash, repeater, rawHex, snr, rssi, meta, type, loc, remoteSnr: opts.remoteSnr }, isNewHash);
 
         if (!live) return;
 
@@ -3552,7 +4178,6 @@ class MeshCoreApp {
                 .map(tr => [tr.id.slice(7), tr.dataset.col ?? null])
         );
 
-        // Show filter bar only when there are visible rows
         const msgFilterBar = document.getElementById('msgFilterBar');
 
         const filter = this._msgFilter.toLowerCase().trim();
@@ -3581,27 +4206,38 @@ class MeshCoreApp {
         const msgTableEmpty = document.getElementById('msgTableEmpty');
         const msgTableScroll = this.msgTableHead?.closest('.msg-table-scroll');
 
+        // The filter bar is hidden only while the session holds no packets at
+        // all. An empty table caused by the filter itself must keep it — the
+        // text filter also narrows the disk page, so a typo used to empty the
+        // rows, hide the bar with the input, and leave no way to fix the filter.
+        const sessionHasData = this.model.recentSize > 0 || this.table.hashCount > 0;
+        if (msgFilterBar) msgFilterBar.classList.toggle('hidden', !sessionHasData && !filter);
+
         if (allRows.length === 0) {
-            if (msgFilterBar) msgFilterBar.classList.add('hidden');
             if (msgTableScroll) msgTableScroll.style.display = 'none';
             if (msgTableEmpty) {
                 // Narrowed to a repeater/filter with nothing in view: say so, so
                 // the empty table reads as "this selection is empty" (deselect via
-                // the top-right notice) rather than "no data captured at all".
-                msgTableEmpty.textContent = narrowFn
+                // the top-right notice, or edit the packet filter) rather than
+                // "no data captured at all".
+                msgTableEmpty.textContent = filter
+                    ? 'No packets match the packet filter in the current display window.'
+                    : narrowFn
                     ? (this.selection.col
                         ? 'No packets from this repeater in the current display window.'
                         : 'No packets match the filter in the current display window.')
                     : (cutoff ? 'No packets in the current display window.' : 'Waiting for data…');
                 msgTableEmpty.classList.remove('hidden');
             }
+            if (this.msgFilterCountEl) {
+                this.msgFilterCountEl.textContent = filter ? `0 / ${this.table.hashCount || this.model.recentSize}` : '';
+                this.msgFilterCountEl.classList.toggle('hidden', !filter);
+            }
             this.msgTableHead.innerHTML = '';
             this.msgTableBody.innerHTML = '';
             this._lastColKey = null;
             return;
         }
-
-        if (msgFilterBar) msgFilterBar.classList.remove('hidden');
 
         if (msgTableScroll) msgTableScroll.style.display = '';
         if (msgTableEmpty) msgTableEmpty.classList.add('hidden');
@@ -3724,7 +4360,10 @@ class MeshCoreApp {
     }
 
     toggleDetailRow(hash, col = null) {
-        const existing = document.getElementById(`detail-${hash}`);
+        let existing = document.getElementById(`detail-${hash}`);
+        // A row still playing its close animation has a removal timer pending
+        // — reusing it made a freshly opened detail vanish a moment later.
+        if (existing?.classList.contains('detail-closing')) { existing.remove(); existing = null; }
         this.msgTableBody?.querySelectorAll('.sig-active').forEach(el => el.classList.remove('sig-active'));
         // Same cell clicked again → close with animation
         if (existing && existing.dataset.col === (col ?? '')) { this._closeDetailRow(existing); return; }
@@ -4023,14 +4662,18 @@ class MeshCoreApp {
         const pts = this._visibleChartPoints();
         // Avoid spread on potentially large arrays (Math.min(...arr) has an arg-count limit)
         let vMin = Infinity, vMax = -Infinity;
-        for (const p of pts) {
+        // Only the series actually drawn: with Incoming unticked the SNR axis
+        // must fit the outgoing stars, not the hidden incoming range.
+        const showIn  = type !== 'snr' || this._snrShowIncoming !== false;
+        const showOut = type === 'snr' && this._snrShowOutgoing !== false;
+        for (const p of showIn ? pts : []) {
             if (!inWin(p)) continue;
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
             if (v < vMin) vMin = v;
             if (v > vMax) vMax = v;
         }
-        if (type === 'snr') {
+        if (showOut) {
             for (const p of this._visibleSentSnrPts()) {
                 if (!inWin(p)) continue;
                 if (p.snr < vMin) vMin = p.snr;
@@ -4069,11 +4712,12 @@ class MeshCoreApp {
         const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
         const mx = (e.clientX - rect.left) / scale;
         const my = (e.clientY - rect.top) / scale;
-        const { xOf, yOf } = this._lastDrawGeometry(svg, type);
+        const { xOf, yOf, tMin: wMin, tMax: wMax } = this._lastDrawGeometry(svg, type);
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
+            if (p.time < wMin || p.time > wMax) continue;   // clipped away — not drawn
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
             const d = dx * dx + dy * dy;
@@ -4126,12 +4770,25 @@ class MeshCoreApp {
 
     // Map a clientX over `svg` to a time, using the window the chart was last
     // drawn with (so it matches what's on screen).
+    // The horizontal data frame the points are drawn in (see _chartGeometry):
+    // the plot starts at pl + padX and is innerW wide, in SVG-local px; `scale`
+    // converts client (CSS) px to local px when the page is text-size scaled.
+    _chartXFrame(svg) {
+        const { l: pl, r: pr } = CHART_PAD;
+        const cw = Math.max(1, svg.clientWidth - pl - pr);
+        const padX = this._dotSize * 3.5 + 2;
+        const rect = svg.getBoundingClientRect();
+        const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
+        return { x0: pl + padX, innerW: Math.max(1, cw - 2 * padX), scale };
+    }
+
     _chartTimeAtClientX(svg, clientX) {
         const win = this._lastChartWindow ?? this._chartFullWindow;
         if (!win) return null;
-        const { l: pl, r: pr } = CHART_PAD;
-        const cw = Math.max(1, svg.clientWidth - pl - pr);
-        const frac = Math.max(0, Math.min(1, (this._chartLocalX(svg, clientX) - pl) / cw));
+        // Exact inverse of the drawing transform (incl. the dot inset), so the
+        // drag band, wheel and pinch anchors sit under the pointer.
+        const { x0, innerW } = this._chartXFrame(svg);
+        const frac = Math.max(0, Math.min(1, (this._chartLocalX(svg, clientX) - x0) / innerW));
         return win.tMin + frac * (win.tMax - win.tMin);
     }
 
@@ -4354,11 +5011,9 @@ class MeshCoreApp {
         svg.addEventListener('touchmove', e => {
             if (!pinch || e.touches.length !== 2) return;
             e.preventDefault();
-            const rect = svg.getBoundingClientRect();
-            const { l: pl, r: pr } = CHART_PAD;
-            const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
-            const x0 = e.touches[0].clientX - rect.left - pl;
-            const x1 = e.touches[1].clientX - rect.left - pl;
+            const { x0: fx, innerW: cw } = this._chartXFrame(svg);
+            const x0 = this._chartLocalX(svg, e.touches[0].clientX) - fx;
+            const x1 = this._chartLocalX(svg, e.touches[1].clientX) - fx;
             if (Math.abs(x0 - x1) < 1) return;
             const span = (pinch.t0 - pinch.t1) * cw / (x0 - x1);
             if (!isFinite(span) || span <= 0) return;
@@ -4388,11 +5043,9 @@ class MeshCoreApp {
             }
             if (pan.mode !== 'pan') return;        // vertical ⇒ let the page scroll
             e.preventDefault();
-            const rect = svg.getBoundingClientRect();
-            const { l: pl, r: pr } = CHART_PAD;
-            const cw = Math.max(1, (rect.width || svg.clientWidth) - pl - pr);
+            const { innerW, scale } = this._chartXFrame(svg);
             const span = this._chartZoom.tMax - this._chartZoom.tMin;
-            this._panChartZoom(-dx / cw * span);   // drag right → reveal earlier times
+            this._panChartZoom(-(dx / scale) / innerW * span);   // drag right → reveal earlier times
             pan.x = t.clientX; pan.y = t.clientY;  // incremental delta
             pan.moved = true;
             this.hideChartTooltip();
@@ -4409,12 +5062,53 @@ class MeshCoreApp {
         // ~50 px per label for readability
         const targetSteps = Math.max(2, Math.floor(chartWidthPx / 50));
         const targetStep = rangeMs / targetSteps;
+        const D = 24 * 3600000;
         const steps = [
             15000, 30000, 60000, 2*60000, 5*60000, 10*60000, 15*60000, 30*60000,
-            3600000, 2*3600000, 3*3600000, 6*3600000, 12*3600000, 24*3600000,
+            3600000, 2*3600000, 3*3600000, 6*3600000, 12*3600000, D,
+            2*D, 7*D, 14*D, 30*D,
         ];
         for (const s of steps) if (s >= targetStep) return s;
         return steps[steps.length - 1];
+    }
+
+    // Tick times in [tMin, tMax] every `step`, aligned to LOCAL time — a 6 h
+    // step falls on 00/06/12/18 h and a day step on local midnight, as on a
+    // clock. (Aligning to multiples of the step from the epoch is UTC: odd
+    // hours in Central Europe, :30 in India.) Day-or-longer steps walk the
+    // calendar, so a DST change doesn't shift them off midnight.
+    _chartTicks(tMin, tMax, step) {
+        const out = [];
+        if (!(step > 0) || !(tMax >= tMin)) return out;
+        const D = 24 * 3600000;
+        if (step >= D) {
+            const days = Math.round(step / D);
+            const d = new Date(tMin); d.setHours(0, 0, 0, 0);
+            if (d.getTime() < tMin) d.setDate(d.getDate() + 1);
+            // Multi-day steps: anchor on a fixed local calendar grid (day number
+            // since the epoch), so the ticks don't jump while panning.
+            if (days > 1) {
+                const dayNo = Math.round((d.getTime() - d.getTimezoneOffset() * 60000) / D);
+                d.setDate(d.getDate() + ((days - dayNo % days) % days));
+            }
+            for (let i = 0; d.getTime() <= tMax && i < 1000; i++) {
+                out.push(d.getTime());
+                // Re-snap to midnight every step: where DST starts AT midnight
+                // (Chile, Cuba …) that day's midnight is 01:00, and carrying
+                // it forward put every later tick an hour off.
+                d.setDate(d.getDate() + days); d.setHours(0, 0, 0, 0);
+            }
+            return out;
+        }
+        const off = t => -new Date(t).getTimezoneOffset() * 60000;
+        let t = Math.ceil((tMin + off(tMin)) / step) * step - off(tMin);
+        for (let i = 0; t <= tMax && i < 2000; i++, t += step) {
+            // Across a DST change re-align to the new offset.
+            const local = t + off(t);
+            const aligned = Math.round(local / step) * step - off(t);
+            if (aligned >= tMin && aligned <= tMax && out[out.length - 1] !== aligned) out.push(aligned);
+        }
+        return out;
     }
 
     // ----- shared chart plot geometry -------------------------------------
@@ -4445,7 +5139,7 @@ class MeshCoreApp {
     _lastDrawGeometry(svg, type) {
         const now = this.windows.frozenAt ?? Date.now();
         const win = this._lastChartWindow ?? { tMin: now - 5 * 60000, tMax: now };
-        const { yMin, yMax } = this._chartYBounds(type, win.tMin, win.tMax);
+        const { yMin, yMax } = this._lastChartY?.[type] ?? this._chartYBounds(type, win.tMin, win.tMax);
         return this._chartGeometry(svg, win.tMin, win.tMax, yMin, yMax);
     }
 
@@ -4513,14 +5207,23 @@ class MeshCoreApp {
         } else {
             ({ yMin, yMax, yStep } = this._chartYBounds(type, tMin, tMax));
         }
-        const g = this._chartGeometry(svg, tMin, tMax, yMin, yMax);
-        const { W, H, pl, pr, pt, pb, cw, ch, tRange, yRange } = g;
+        let g = this._chartGeometry(svg, tMin, tMax, yMin, yMax);
         // Adapt yStep so major gridlines are ~35 px apart (more when taller, fewer when short)
-        const maxMajorLines = Math.max(2, Math.floor(ch / 35));
+        const maxMajorLines = Math.max(2, Math.floor(g.ch / 35));
         const niceYSteps = [0.5, 1, 2, 5, 10, 20, 50, 100];
         const minYStep = (yMax - yMin) / maxMajorLines;
         const adaptedStep = niceYSteps.find(s => s >= minYStep);
-        if (adaptedStep && adaptedStep > yStep) yStep = adaptedStep;
+        if (adaptedStep && adaptedStep > yStep) {
+            yStep = adaptedStep;
+            // Re-snap the range to the wider step, or the gridlines land on odd
+            // values (−2, 3, 8 …) and the top one goes missing.
+            yMin = Math.floor(yMin / yStep) * yStep;
+            yMax = Math.ceil(yMax / yStep) * yStep;
+            g = this._chartGeometry(svg, tMin, tMax, yMin, yMax);
+        }
+        // Clicks and hovers are hit-tested against exactly this geometry.
+        (this._lastChartY ??= {})[type] = { yMin, yMax };
+        const { W, H, pl, pr, pt, pb, cw, ch, tRange, yRange } = g;
 
         // The SVG builders want fixed-precision strings; hit-testing uses the
         // same numeric transforms via _lastDrawGeometry — one math, two skins.
@@ -4579,20 +5282,27 @@ class MeshCoreApp {
 
         // X grid + labels — adaptive step based on chart width and visible range
         const labelStep = this._xLabelStepMs(tRange, cw);
-        const minorStep = labelStep / 2;
+        // Minor lines halve the step — except where half isn't whole days
+        // (a 7-day step), which would be rounded to an uneven grid: use days.
+        const D = 24 * 3600000;
+        const minorStep = labelStep > D && (labelStep / 2) % D !== 0 ? D : labelStep / 2;
         // Use date+time when the visible range spans more than ~12 h
         const useDate = tRange > 12 * 3600000;
-        const fmtOpts = useDate
+        const fmtOpts = labelStep >= 24 * 3600000
+            ? { month: '2-digit', day: '2-digit' }            // day ticks sit on midnight: the time adds nothing
+            : useDate
             ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
             : (labelStep < 60000
                 ? { hour: '2-digit', minute: '2-digit', second: '2-digit' }
                 : { hour: '2-digit', minute: '2-digit' });
-        for (let t = Math.ceil(tMin / minorStep) * minorStep; t <= tMax; t += minorStep) {
-            if (t % labelStep === 0) continue;
+        const majors = this._chartTicks(tMin, tMax, labelStep);
+        const majorSet = new Set(majors);
+        for (const t of this._chartTicks(tMin, tMax, minorStep)) {
+            if (majorSet.has(t)) continue;
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMinor}" stroke-width="1"/>`);
         }
-        for (let t = Math.ceil(tMin / labelStep) * labelStep; t <= tMax; t += labelStep) {
+        for (const t of majors) {
             const xp = xOf(t);
             parts.push(`<line x1="${xp}" y1="${pt}" x2="${xp}" y2="${pt + ch}" stroke="${gridMajor}" stroke-width="1"/>`);
             const lbl = new Date(t).toLocaleString('en-GB', fmtOpts).replace(',', '');
@@ -4808,12 +5518,13 @@ class MeshCoreApp {
         const scale = (rect.width && svg.clientWidth) ? rect.width / svg.clientWidth : 1;
         const mx = (e.clientX - rect.left) / scale;
         const my = (e.clientY - rect.top) / scale;
-        const { xOf, yOf } = this._lastDrawGeometry(svg, type);
+        const { xOf, yOf, tMin: wMin, tMax: wMax } = this._lastDrawGeometry(svg, type);
 
         let nearest = null, minDist = Infinity;
         for (const p of pts) {
             const v = type === 'rssi' ? p.rssi : p.snr;
             if (v == null) continue;
+            if (p.time < wMin || p.time > wMax) continue;   // clipped away — not drawn
             const dx = xOf(p.time) - mx;
             const dy = yOf(v) - my;
             const d = dx * dx + dy * dy;
@@ -5004,11 +5715,15 @@ class MeshCoreApp {
         if (candidates.length) {
             const [id, e] = candidates[0];
             const when = new Date(e.beat).toLocaleString();
-            if (confirm(`Load previously captured data?\n\n${e.count} packets received, last seen ${when}.`)) {
-                for (const [oid] of candidates.slice(1)) this._deleteSession(oid);  // drop the rest
+            // Other closed sessions with data (e.g. two tabs that captured two
+            // devices) are kept and offered on a later launch — they used to be
+            // deleted here without ever being mentioned.
+            const more = candidates.length - 1;
+            const moreNote = more ? `\n\n(${more} other saved capture${more > 1 ? 's' : ''} will be offered next time.)` : '';
+            if (confirm(`Load previously captured data?\n\n${e.count} packets received, last seen ${when}.${moreNote}`)) {
                 return setTab(id);
             }
-            for (const [oid] of candidates) this._deleteSession(oid);  // declined → discard all
+            this._deleteSession(id);   // declined → discard just this one
         }
         this._gcStaleSessions(live);
         return setTab(mk());
@@ -5187,6 +5902,14 @@ class MeshCoreApp {
                 try {
                     const span = await this.model.obsSpan(-Infinity, Infinity);
                     if (span) this.windows.frozenAt = span.max + 1000;
+                    // A resumed session holding data older than a finite
+                    // Auto-remove: the next cleanup tick would delete what the
+                    // user just chose to load — keep it, as an import does.
+                    // Only when ALL of it is older (an old session): a capture
+                    // that merely ran longer than its Auto-remove — e.g. after a
+                    // reload or crash recovery — keeps the user's setting.
+                    if (span && isFinite(this.windows.retentionMs)
+                        && span.max < Date.now() - this.windows.retentionMs) this._disableAutoRemove();
                 } catch (_) {}
             }
             await this._replayWindow();
@@ -5200,6 +5923,8 @@ class MeshCoreApp {
         } finally {
             doneLoading();
         }
+        this._startupDone = true;
+        this._takeNativeImports();
         // No periodic wide-view tick: charts, map and table page 0 are all kept
         // current in RAM (bucket/cell upserts + the live row tail); writes flush
         // themselves via the model's debounced flush. Disk is only read on view changes.
@@ -5249,12 +5974,20 @@ class MeshCoreApp {
     }
 
     _onStorageQuota() {
-        // Disk full: keep the newest history by trimming the oldest on disk down
-        // to the render budget. The session keeps running on its RAM window.
+        // Disk full: make room by deleting the OLDEST quarter of the stored
+        // time span — measured on the data, not the wall clock, which would
+        // wipe an imported or resumed historical capture entirely (and ignored
+        // Auto-remove "Never"). The batch that failed was put back into the
+        // model's buffers and is written by the flush after the prune.
         if (this._quotaPruning || !this.model.ready) return;
         this._quotaPruning = true;
-        this.model.pruneOlderThan(Date.now() - this.windows.renderBudgetMs)
-            .then(n => this._afterDiskPrune(n))
+        this.model.obsSpan(-Infinity, Infinity)
+            .then(span => {
+                if (!span || !(span.max > span.min)) return 0;
+                return this.model.pruneOlderThan(span.min + (span.max - span.min) / 4);
+            })
+            .then(n => { if (n) this._afterDiskPrune(n); return this.model.flush(); })
+            .catch(e => console.warn('Quota prune failed:', e))
             .finally(() => { this._quotaPruning = false; });
     }
 
@@ -5551,6 +6284,10 @@ class MeshCoreApp {
     }
 
     _clearAllData() {
+        // A zoom into the old data would leave the charts on an empty window
+        // (and "Reset zoom" showing) after a Clear or for the next import.
+        this._clearChartZoom();
+        this._chartFullWindow = null;
         // model.clearAll() below wipes the recent window, write buffers and disk.
         this.chartPoints = [];
         this._sentSnrHistory = [];
@@ -5639,11 +6376,20 @@ class MeshCoreApp {
     // within a short grace period — a fast rebuild shouldn't flash a spinner.
     // Returns a done() to call when the work settles (clears the pending show
     // and hides the modal). No-op unless armed.
+    // Overlapping loads share one modal: it hides when the LAST one finishes
+    // (each used to hide it on its own, while another was still running).
     _beginLoadingModal() {
         const modal = document.getElementById('loadingModal');
         if (!modal) return () => {};
+        this._loadingCount = (this._loadingCount || 0) + 1;
         const timer = setTimeout(() => modal.classList.remove('hidden'), 250);
-        return () => { clearTimeout(timer); modal.classList.add('hidden'); };
+        let done = false;
+        return () => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            if (--this._loadingCount <= 0) { this._loadingCount = 0; modal.classList.add('hidden'); }
+        };
     }
 
     _updateHideSelectOptions() {
@@ -5968,12 +6714,11 @@ class MeshCoreApp {
 
     // --- Sound ---
 
-    _playRxSound(snr, isNewHash = false) {
+    _playRxSound(snr, isNewHash = false, retried = false) {
         const mode = this.soundSelect?.value ?? 'off';
         // 'disconnect' = alarm on drop only, no per-packet beep (see _playDisconnectAlarm).
         if (mode === 'off' || mode === 'disconnect') return;
-        if (!this.audioCtx) this.audioCtx = new AudioContext();
-        const ctx = this.audioCtx;
+        const ctx = this._audioContext();
         // Only schedule when the context is actually RUNNING — not merely when the
         // page is visible. Backgrounding doesn't suspend audio right away, so beeps
         // keep playing for a while (which is fine); gating on document.hidden would
@@ -5982,7 +6727,10 @@ class MeshCoreApp {
         // resumes — and all the ones queued while suspended would blast at once on
         // return. So while it isn't running, ask it to resume for next time and skip
         // this beep. (Only sound is gated; capture is unaffected.)
-        if (ctx.state !== 'running') { ctx.resume?.(); return; }
+        if (ctx.state !== 'running') {
+            if (this._audioStuck(false) && !retried) this._playRxSound(snr, isNewHash, true);
+            return;
+        }
         const now = ctx.currentTime;
 
         // Deep sleep (Doze) can stall the audio renderer while state still
@@ -5997,9 +6745,11 @@ class MeshCoreApp {
             this._audioAnchor = { audio: now, wall };   // clock is moving
         } else if (wall - this._audioAnchor.wall > 2000) {
             this._audioStalled = true;
-            ctx.resume?.();
+            if (this._audioStuck(true) && !retried) this._playRxSound(snr, isNewHash, true);
             return;
         }
+        this._audioStuckSince = 0;   // playing normally again
+        this._audioCtxRan = true;
 
         // Master gain — the mute point for _muteAudioBurst (the disconnect
         // alarm bypasses it on purpose; it must never be swallowed).
@@ -6084,6 +6834,52 @@ class MeshCoreApp {
         bell(baseFreq * Math.pow(2, (snr ?? 0) / 10), isNewHash ? onset : 0, ring, 1.0);
     }
 
+    // The shared AudioContext, created on first use.
+    _audioContext() {
+        if (!this.audioCtx) { this.audioCtx = new AudioContext(); this._audioCtxRan = false; }
+        return this.audioCtx;
+    }
+
+    // Called when a beep can't play (context not running, or its clock
+    // frozen). In the background that's the OS suspending audio (Doze etc.):
+    // ask for a resume and skip the beep — scheduling onto the frozen clock
+    // would burst out on wake. In the FOREGROUND, though, Android can leave
+    // the context stuck for good (audio output re-routed, audio focus lost,
+    // after a long Doze): state says 'running' yet currentTime never moves,
+    // resume() is a no-op on a running context, and every later beep — and
+    // the disconnect alarm — was dropped until the app restarted. So when
+    // visible, discard it and report true: the caller retries once on a fresh
+    // context (closing the old one also drops any beeps queued on its frozen
+    // clock, so they can't burst out later).
+    //
+    // `frozen`: state 'running' but the clock stopped (the stuck case proper).
+    // Otherwise the context is merely suspended — normal for a moment after
+    // returning to the app, while resume() is still under way — so it is
+    // replaced only if it stays suspended for over 3 s in the foreground.
+    // In the background nothing is replaced (resume() only).
+    _audioStuck(frozen) {
+        const ctx = this.audioCtx;
+        if (!ctx) return false;
+        ctx.resume?.()?.catch?.(() => {});
+        // Only a context that has played before is replaced: a fresh one may
+        // still be starting up, or be held by the browser's autoplay policy
+        // until a tap — replacing it would just churn new contexts.
+        if (document.hidden || !this._audioCtxRan) { this._audioStuckSince = 0; return false; }
+        const now = performance.now();
+        if (!this._audioStuckSince) this._audioStuckSince = now;
+        if (frozen || now - this._audioStuckSince > 3000) { this._dropAudioContext(); return true; }
+        return false;
+    }
+
+    _dropAudioContext() {
+        try { this.audioCtx?.close?.()?.catch?.(() => {}); } catch (_) {}
+        this.audioCtx = null;
+        this._audioMaster = null;
+        this._audioAnchor = null;
+        this._audioStalled = false;
+        this._audioStuckSince = 0;
+    }
+
     // Belt to the stall detector's braces: when a stall WAS detected (some
     // beeps may have piled onto the frozen clock before the detector engaged),
     // mute the RX-sound master for the first 2 s after the renderer wakes, so
@@ -6109,9 +6905,11 @@ class MeshCoreApp {
         const mode = this.soundSelect?.value ?? 'off';
         if (mode === 'off') return;
         try {
-            if (!this.audioCtx) this.audioCtx = new AudioContext();
-            const ctx = this.audioCtx;
-            if (ctx.state === 'suspended') ctx.resume();
+            // The alarm must not be swallowed by a context the RX beeps already
+            // found stuck — start from a fresh one then (see _audioStuck).
+            if (this._audioStuckSince) this._dropAudioContext();
+            const ctx = this._audioContext();
+            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
             const now = ctx.currentTime;
             const freqs = [880, 440, 880, 440, 880, 440];
             const dur = 0.16, gap = 0.08;   // gap between tones → "interrupted"
@@ -6225,7 +7023,10 @@ class MeshCoreApp {
     // agree; start() itself is idempotent.
     _maybeReconnect() {
         if (!this._autoReconnect || !this.conn.lastDropWasSurprise) return;
-        if (this.device || this.serialPort || this.reconnect.active) return;
+        // A cycle already running may be waiting up to a minute for its next
+        // try (keepGoing) — try right away instead.
+        if (this.reconnect.active) { this.reconnect.kick(); return; }
+        if (this.device || this.serialPort) return;
         if (!this._lastConnectedId) return;
         this.reconnect.start();
         this._startPairingWatch();
@@ -6307,7 +7108,7 @@ class MeshCoreApp {
     // --- Stats & status ---
 
     _updateStats() {
-        if (this.exportCsvBtn) this.exportCsvBtn.disabled = this.model.recentSize === 0 && !this.model.ready;
+        this._updateExportBtn();
         const displayCutoff = this.windows.displayCutoff();
         // "Active" = unique packets in the Display window. A finite window is
         // never wider than the RAM window (max Display = 1 h = the RAM budget),
@@ -6423,7 +7224,23 @@ class MeshCoreApp {
         this._updateCornerNotices();
     }
 
+    // Called by the Android app once the CSV it was handed has been written.
+    // Packets received while the dialog was open stay counted as unsaved.
+    _onNativeExportSaved() {
+        const n = this._nativeExportUnsaved;
+        this._nativeExportUnsaved = null;
+        if (n != null) this._unsavedRxCount = Math.max(0, this._unsavedRxCount - n);
+    }
+
+    _updateExportBtn() {
+        if (!this.exportCsvBtn) return;
+        this.exportCsvBtn.disabled = !!this._importing || (this.model.recentSize === 0 && !this.model.ready);
+        this._exportTitle ??= this.exportCsvBtn.title;
+        this.exportCsvBtn.title = this._importing ? 'Available when the import has finished' : this._exportTitle;
+    }
+
     async _exportCsv() {
+        if (this._importing) return;
         const useDisk = this.model.ready;
         if (this.model.recentSize === 0 && !useDisk) return;
 
@@ -6437,12 +7254,25 @@ class MeshCoreApp {
         const prevText = btn?.textContent;
         const prevDisabled = btn?.disabled ?? false;
         if (btn) { btn.textContent = 'Exporting…'; btn.disabled = true; }
+        this._setExportPreparing(true);
         await new Promise(r => setTimeout(r, 0));
         try {
             await this._buildAndSaveCsv(useDisk);
         } finally {
+            this._setExportPreparing(false);
             if (btn) { btn.textContent = prevText; btn.disabled = prevDisabled; }
         }
+    }
+
+    // While the export is being built (until its save dialog / download is
+    // handed off), Import is disabled: an import then would change the data
+    // under the export. Cleared just before the dialog opens, whatever the
+    // outcome of the dialog.
+    _setExportPreparing(on) {
+        if (this._exportPreparing === on) return;
+        this._exportPreparing = on;
+        const importBtn = document.getElementById('importCsvBtn');
+        if (importBtn && !this._importing) importBtn.disabled = on;
     }
 
     async _buildAndSaveCsv(useDisk) {
@@ -6518,6 +7348,7 @@ class MeshCoreApp {
             lon:       rep.lon,
             text:      data.meta?.text,
             sender:    data.meta?.sender,
+            hopSnr:    Array.isArray(data.meta?.snrs) ? data.meta.snrs : undefined,
         }));
 
         const csv = buildCsv({
@@ -6530,11 +7361,15 @@ class MeshCoreApp {
         // Clear the "unsaved packets" guard only once a save actually happens —
         // resetting up front would disarm the beforeunload warning even when the
         // user then cancels the save dialog.
-        // Android native app: delegate to SAF picker (shows system "Save as" dialog).
-        // Fire-and-forget (no result callback), so treat delegation as the save.
+        // The CSV is built: from here on only the dialog is left.
+        this._setExportPreparing(false);
+        // Android native app: delegate to SAF picker (shows system "Save as"
+        // dialog). The native side reports a completed save back through
+        // _onNativeExportSaved — only then is the guard disarmed (a cancelled
+        // dialog must leave it armed).
         if (window.AndroidFiles?.saveCsvWithPicker) {
+            this._nativeExportUnsaved = filteredExport ? null : this._unsavedRxCount;
             window.AndroidFiles.saveCsvWithPicker(suggestedName, csv);
-            if (!filteredExport) this._unsavedRxCount = 0;
             return;
         }
 
@@ -6566,6 +7401,35 @@ class MeshCoreApp {
         if (!filteredExport) this._unsavedRxCount = 0;
     }
 
+    // Android: CSV files picked for import while the system recreated the
+    // activity (the WebView reloaded, so the file <input> never got them) —
+    // staged natively, imported here once startup has finished. Called at the
+    // end of startup and by the native side after it staged files.
+    // Switch Auto-remove to "Never" — for historical data the user just brought
+    // in (import, resumed session), which a finite Auto-remove measured on the
+    // wall clock would delete within seconds.
+    _disableAutoRemove() {
+        const ttlSelect = document.getElementById('ttlSelect');
+        if (ttlSelect && isFinite(this.windows.retentionMs)) {
+            ttlSelect.value = 'Infinity';
+            this.windows.retentionMs = Infinity;
+            Store.set('ttl', 'Infinity');
+            this._updateHideSelectOptions();
+        }
+    }
+
+    _takeNativeImports() {
+        if (!this._startupDone || !window.AndroidFiles?.takePendingImport) return;
+        const files = [];
+        for (let i = 0; i < 50; i++) {
+            let f = null;
+            try { const j = window.AndroidFiles.takePendingImport(); f = j ? JSON.parse(j) : null; } catch (_) {}
+            if (!f) break;
+            files.push(new File([String(f.text ?? '')], String(f.name || 'import.csv'), { type: 'text/csv' }));
+        }
+        if (files.length) this._importCsvFiles(files).catch(e => console.error('CSV import failed:', e));
+    }
+
     // Back-compat single-file entry point.
     _importCsv(file) { return this._importCsvFiles([file]); }
 
@@ -6574,9 +7438,24 @@ class MeshCoreApp {
     // together — so the user is prompted once and the expensive finalize (disk
     // flush, wide-view rebuild, re-render, camera fit) runs once for the whole
     // selection rather than once per file.
+    // Export is disabled for the whole import — reading, parsing and applying
+    // (an export mid-import would save a half-imported session).
     async _importCsvFiles(files) {
         files = Array.from(files || []).filter(Boolean);
         if (!files.length) return;
+        // An export is being built: let it finish first (Android's staged
+        // import can arrive at any moment; the Import button is disabled).
+        while (this._exportPreparing) await new Promise(r => setTimeout(r, 100));
+        this._importing = (this._importing || 0) + 1;     // counter: imports can overlap
+        this._updateExportBtn();
+        try { await this._importCsvFilesBody(files); }
+        finally {
+            this._importing--;
+            this._updateExportBtn();
+        }
+    }
+
+    async _importCsvFilesBody(files) {
 
         // Read + parse every file up front. Contacts embedded in any file are
         // merged immediately (new keys only, keep existing) — done even for a
@@ -6643,6 +7522,9 @@ class MeshCoreApp {
     // Returning early (e.g. the user declines the merge prompt) is fine — the
     // caller restores the UI.
     async _applyCsvImport(rows, sentSnrRows) {
+        // Show the whole import, not a zoom left over from earlier data.
+        this._clearChartZoom();
+        this._chartFullWindow = null;
         // Count what's actually stored, not just the small RAM window. The recent window
         // only holds the recent in-memory window (often a few dozen hashes), while
         // the disk may hold many thousands — so reporting its size here showed
@@ -6663,13 +7545,7 @@ class MeshCoreApp {
         rows.sort((a, b) => a.time - b.time);
 
         // Ensure imported historical data isn't immediately cleaned up by TTL
-        const ttlSelect = document.getElementById('ttlSelect');
-        if (ttlSelect && isFinite(this.windows.retentionMs)) {
-            ttlSelect.value = 'Infinity';
-            this.windows.retentionMs = Infinity;
-            Store.set('ttl', 'Infinity');
-            this._updateHideSelectOptions();
-        }
+        this._disableAutoRemove();
         // Show all imported data regardless of previous display window setting
         const hideSelect = document.getElementById('hideSelect');
         if (hideSelect && hideSelect.value !== 'all') {
@@ -6729,6 +7605,7 @@ class MeshCoreApp {
             }
             if (!meta.text   && row.csvText)   meta.text   = row.csvText;
             if (!meta.sender && row.csvSender)  meta.sender = row.csvSender;
+            if (row.hopSnr && !meta.snrs) { meta.snrs = row.hopSnr; meta.pathLen = row.hopSnr.length - 1; }
             if (packet) this._ingestContactFromPacket(packet);
 
             const type = packet
@@ -6755,7 +7632,7 @@ class MeshCoreApp {
             // that empty numeric cells parse as null) has nothing to plot.
             if (snr == null) continue;
             const lat = r.lat, lon = r.lon;
-            this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater });
+            this._sentSnrHistory.push({ time: r.time, snr, col: r.repeater, label: r.csvText || r.repeater, lat: lat ?? null, lon: lon ?? null });
             this.model.bufferSent({ time: r.time, snr, rawId: r.repeater, label: r.csvText || r.repeater, lat, lon });
         }
         if (sentSnrRows.length) {
@@ -6894,8 +7771,24 @@ class MeshCoreApp {
     async disconnect() {
         // The user explicitly asked to disconnect — suppress the surprise-
         // disconnect alarm that onDisconnected() would otherwise raise, and stop
-        // any auto-reconnect cycle.
+        // any auto-reconnect cycle (and a reconnect pending after a restart).
         this._cancelAutoReconnect();
+        if (!this._restarting) { clearTimeout(this._restartReconnectTimer); this._restartPending = false; }
+        // Cancel while a USB/WiFi port is still opening: nothing is connected
+        // yet (no transport kind), so the BLE teardown below would run and stop
+        // the capture service while the open carries on. Just drop the attempt.
+        if (this._serialOpenToken && !this.serialPort) {
+            this._serialOpenToken = null;
+            // Settle the connection state as a deliberate disconnect, so a
+            // later "Bluetooth on" / return to the app doesn't restart the
+            // reconnect the user just cancelled.
+            this.conn.intendDisconnect();
+            this.conn.drop();
+            this.updateStatus('Disconnected', 'disconnected');
+            this._resetConnectBtn();
+            this._stopCaptureServiceIfIdle();
+            return;
+        }
         this.conn.intendDisconnect();
         // Serial teardown is handled synchronously inside onDisconnected().
         if (this.conn.transportKind === 'serial') {
@@ -6933,7 +7826,13 @@ class MeshCoreApp {
                 const t = setTimeout(resolve, 3000);
                 try {
                     if (device.gatt.connected) device.gatt.disconnect();
-                    else { clearTimeout(t); device.removeEventListener('gattserverdisconnected', onDisc); resolve(); }
+                    else {
+                        // Still connecting: disconnect() aborts the pending
+                        // connect (natively it settles it), so a cancelled
+                        // attempt can't complete later on its own.
+                        try { device.gatt.disconnect(); } catch (_) {}
+                        clearTimeout(t); device.removeEventListener('gattserverdisconnected', onDisc); resolve();
+                    }
                 } catch (_) { clearTimeout(t); resolve(); }
             });
         }
@@ -6944,6 +7843,9 @@ class MeshCoreApp {
     onDisconnected() {
         this.releaseWakeLock();
         this._stopRepeaterPolling();
+        clearInterval(this._wifiWatchdog); this._wifiWatchdog = null;
+        this._showRepeaterConsole(false);
+        this._hideCompanionTools();
         clearTimeout(this._monitorDelay);
         clearInterval(this._connectionMonitor);
         this._monitorDelay = null;
@@ -6959,6 +7861,13 @@ class MeshCoreApp {
         }
         this.txCharacteristic = null;
         this.bleRxCharacteristic = null;
+        // A BLE attempt that failed half-way (e.g. no NUS service, a rejected
+        // notification setup) leaves the GATT link up — the radio then stops
+        // advertising and can't be found again. Drop it (a no-op when the
+        // link is already down).
+        if (this.device?.gatt) { try { this.device.gatt.disconnect(); } catch (_) {} }
+        // Writes queued for this connection must not run on the next one.
+        this._serialWriteChain = null;
         // Serial teardown: release the reader lock (this unblocks the read loop)
         // and close the port. Releasing the lock with a read pending makes that
         // read() reject with a TypeError, which the read loop swallows.
@@ -7037,7 +7946,7 @@ class MeshCoreApp {
     // Stop the native foreground service when nothing needs it: not connected
     // and not mid-reconnect. A later connect restarts it. No-op off-Android.
     _stopCaptureServiceIfIdle() {
-        if (this.device || this.serialPort || this.reconnect.active) return;
+        if (this.device || this.serialPort || this.reconnect.active || this._restartPending) return;
         try { window.AndroidScreen?.stopCapture?.(); } catch (_) {}
     }
 }
@@ -7066,7 +7975,7 @@ document.addEventListener('visibilitychange', () => {
         // the frozen-clock detector engaged — _muteAudioBurst silences those
         // for the first moments after the wake, so resume can't unleash them.
         monitor?._muteAudioBurst?.();
-        monitor?.audioCtx?.resume?.();
+        monitor?.audioCtx?.resume?.()?.catch?.(() => {});
         // Returned to a session the phone silently dropped in the background?
         // Retry now rather than waiting for the next reconnect tick / BT event.
         monitor?._maybeReconnect?.();

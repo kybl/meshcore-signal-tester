@@ -7,6 +7,82 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
+## [1.3.3] - 2026-11-10
+
+### Added
+
+- **Radio tools for companion radios**: read and set the **TX power**;
+  **Trace** a path of repeater IDs — a single ID is a round trip to that
+  neighbour showing how well it hears you and you hear it, a path such as
+  `5E,8A,5E` shows the SNR of every hop (1-, 2- and 4-byte IDs); switch the
+  **RX gain** — the radio chip's boosted gain and, on boards that have one,
+  the external LNA (firmware v1.18.0+; boosted gain left off is flagged, as it
+  lowers the RSSI/SNR you measure); and **restart** the device, after which
+  the app reconnects by itself without the disconnect alarm. On firmware
+  v1.18+ the restart uses the CLI `reboot`, which avoids a rare wipe of the
+  node's settings and key seen on nRF52 boards (T1000-E) with the classic
+  reboot command; on older firmware the confirmation recommends a backup.
+  ([#20](https://github.com/kybl/meshcore-signal-tester/issues/20))
+- **Device console**: type CLI commands and see the replies — for a
+  **repeater** over USB, and for a **companion** with firmware v1.18.0 or
+  newer. Commands that would stop the capture, or restart or erase the device,
+  ask for confirmation first; a repeater can also be restarted with a button.
+  ([#20](https://github.com/kybl/meshcore-signal-tester/issues/20))
+- The companion's **firmware and protocol version** are shown next to the
+  device name, in amber when the firmware is too old for some Radio tools
+  (which then says what needs a newer firmware).
+
+### Fixed
+
+- **Android: CSV export no longer produces an empty (0-byte) file**, and a
+  **CSV import no longer silently does nothing**, when the system closes the
+  app in the background while its file dialog is open — common on Xiaomi
+  phones. Before, only small exports survived this.
+- **Packet sounds no longer go silent for good after a while.** Android can
+  leave the audio engine stuck (after the phone dozed or the audio output
+  changed); every later beep — and the disconnect alarm — was then dropped
+  until the app was restarted.
+- **A packet filter that matches nothing no longer hides itself**: the filter
+  field disappeared together with the empty table, so it couldn't be fixed or
+  cleared without restarting the app. It now says that nothing matches.
+  ([#21](https://github.com/kybl/meshcore-signal-tester/issues/21))
+- Trace results with 2- or 4-byte repeater IDs (firmware v1.11+) were
+  misread and dropped.
+- Export CSV is disabled while an import is running, and Import CSV while an
+  export is being prepared.
+- **Resuming a saved session no longer deletes its data** when Auto-remove is
+  set to a finite time (it switches to "Never", as an import does), and other
+  saved sessions are kept and offered later instead of being deleted unseen.
+- **Storage full no longer loses data**: the packets that couldn't be written
+  are retried, and room is made by removing the oldest quarter of the
+  history instead of everything older than an hour.
+- **Android: cancelling the Export dialog keeps the "unsaved packets"
+  warning.**
+- **Auto-reconnect no longer shows a blocking error dialog** on each attempt
+  when a USB/WiFi device doesn't answer yet (e.g. still starting after a
+  restart).
+- **A WiFi link to a radio that disappeared is noticed within about 1.5 minutes**
+  (was about 15 minutes), so the alarm / auto-reconnect kick in.
+- **Connecting**: Cancel while a USB/WiFi port is opening works; a cancelled
+  Bluetooth attempt can no longer take over a newer connection; a failed
+  Bluetooth setup releases the radio (it stayed invisible); a Bluetooth device
+  without the MeshCore service says so; Bluetooth coming back on or returning
+  to the app retries a running reconnect immediately; Android cleans up its
+  connections after a WebView crash.
+- **Charts**: time labels sit on local hours and midnight (they followed UTC),
+  long captures get day/week labels instead of overlapping ones, the Y-axis
+  gridlines land on round values, the SNR axis fits only the series shown,
+  zoom gestures and clicks hit exactly what is drawn, and Clear data / a new
+  import reset the zoom.
+- **CSV**: a trace's per-hop SNRs are kept (new `hop_snr` column, older files
+  still import), trailing spaces in the last field survive, and nonsense
+  coordinates no longer break the 3D map.
+- Smaller fixes: table header dots follow a theme switch; a detail row opened
+  right after closing another no longer vanishes; the tables no longer
+  rebuild every 2 s (which cleared text selection); one chart point could go
+  missing when a packet triggered a chart rebuild; sent SNR was recorded
+  while stopped.
+
 ## [1.3.2] - 2026-09-23
 
 ### Fixed
@@ -145,6 +221,7 @@
   within the recorded time range, instead of drifting onto old or empty time.
 - **The 2D-chart tooltip shows the time down to the millisecond and the packet
   type**, plus how many receptions a clustered point stands for.
+  ([#13](https://github.com/kybl/meshcore-signal-tester/issues/13))
 - **Smoother, steadier 3D-map clustering** — points no longer flicker or shuffle
   as you move or zoom the camera, more individual points are shown when you zoom
   into a sparse area, and points appear right after zooming in.

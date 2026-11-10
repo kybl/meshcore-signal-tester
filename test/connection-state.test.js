@@ -246,3 +246,20 @@ test('progressing attempt is still aborted after MAX_ATTEMPT_WAIT_MS', async () 
     assert.equal(aborted, 1);
     assert.equal(rc.active, true);
 });
+
+test('kick() runs the next attempt right away while waiting, not during one', async () => {
+    let attempts = 0, back = false;
+    const timers = [];
+    const rc = new ReconnectController({
+        attempt: () => { attempts++; },
+        isBack: () => back, onAttemptStart() {}, onGiveUp() {}, keepGoing: () => true,
+    }, { setTimeoutFn: (fn, ms) => { const t = { fn, ms }; timers.push(t); return t; },
+         clearTimeoutFn: t => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); } });
+    rc.start();
+    assert.equal(timers.at(-1).ms, ReconnectController.FIRST_DELAY_MS);
+    rc.kick();
+    assert.equal(timers.at(-1).ms, 0, 'kick reschedules immediately');
+    rc.cancel();
+    rc.kick();
+    assert.equal(timers.length, 0, 'no-op when inactive');
+});

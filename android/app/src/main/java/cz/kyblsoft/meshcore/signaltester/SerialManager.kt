@@ -207,14 +207,20 @@ class SerialManager(private val context: Context, private val js: JsApi) {
 
             port = p
             openPortId = portId
+            var self: SerialInputOutputManager? = null
             val io = SerialInputOutputManager(p, object : SerialInputOutputManager.Listener {
                 override fun onNewData(data: ByteArray) {
                     if (data.isNotEmpty()) js.serialData(portId, Base64.encodeToString(data, Base64.NO_WRAP))
                 }
                 override fun onRunError(e: Exception) {
-                    main.post { handleDisconnect(portId) }
+                    // Tied to THIS io manager: a late error from a closed port
+                    // must not tear down the same port reopened meanwhile (the
+                    // port id alone matches both).
+                    val mine = self
+                    main.post { handleDisconnect(portId, mine) }
                 }
             })
+            self = io
             ioManager = io
             io.start()
             js.resolve(reqId, true, null)
@@ -253,6 +259,12 @@ class SerialManager(private val context: Context, private val js: JsApi) {
         }
     }
 
+    // The page was rebuilt (WebView renderer crash): close the port it can no
+    // longer drive, keeping the USB receivers.
+    fun dropConnection() {
+        try { ioExecutor.execute { closeInternal() } } catch (_: Exception) {}
+    }
+
     private fun closeInternal() {
         // A late onRunError after stop() is harmless — handleDisconnect() guards
         // on openPortId, which we clear here.
@@ -266,10 +278,11 @@ class SerialManager(private val context: Context, private val js: JsApi) {
     // Unexpected drop (read error / USB detach). The port teardown must run on
     // ioExecutor like every other port access — running closeInternal() on the
     // caller's thread raced an in-flight write()/open() on the port object.
-    private fun handleDisconnect(portId: String) {
+    private fun handleDisconnect(portId: String, io: SerialInputOutputManager? = null) {
         if (portId != openPortId) return   // cheap pre-check (volatile read)
         ioExecutor.execute {
             if (portId != openPortId) return@execute   // authoritative re-check
+            if (io != null && io !== ioManager) return@execute   // a previous connection's late error
             closeInternal()
             main.post { js.serialDisconnected(portId) }
         }

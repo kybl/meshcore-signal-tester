@@ -22,8 +22,23 @@ class FilesBridge(private val activity: MainActivity) {
     /** Show a native "Save as" dialog (Storage Access Framework). */
     @JavascriptInterface
     fun saveCsvWithPicker(filename: String, content: String) {
-        main.post { activity.launchCsvSavePicker(filename, content) }
+        // Stage on this (bridge) thread — not main — then open the picker.
+        try {
+            activity.stageCsvExport(content)
+        } catch (e: Throwable) {
+            main.post { Toast.makeText(activity, "Save failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            return
+        }
+        main.post { activity.launchCsvSavePicker(filename) }
     }
+
+    /**
+     * CSV files picked for import whose result reached a recreated activity
+     * (see MainActivity.stageOrphanImport): one file per call as JSON
+     * {name, text}, removed as it is taken; "" when none is left.
+     */
+    @JavascriptInterface
+    fun takePendingImport(): String = try { activity.takePendingImportJson() } catch (_: Throwable) { "" }
 
     /** Save directly to the public Downloads folder (legacy fallback). */
     @JavascriptInterface

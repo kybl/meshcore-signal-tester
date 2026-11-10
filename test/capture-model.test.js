@@ -152,3 +152,46 @@ test('persistNow writes buffered data (and totals) immediately, without waiting 
     m.persistNow();
     assert.equal(store.calls.filter(c => c[0] === 'putObs').length, 1, 'nothing left to write the second time');
 });
+
+test('a batch whose write fails (quota) is retried, not lost — and only a few times', async () => {
+    const store = stubStore();
+    let fail = 1;
+    store.putObs = r => { store.calls.push(['putObs', r.length]); return Promise.resolve(fail-- > 0 ? [] : r); };
+    const m = new CaptureModel({ store, flushMs: 5 });
+    await m.open('db');
+    m.bufferObservation({ time: 1, hash: 'a' });
+    m.bufferObservation({ time: 2, hash: 'b' });
+    await m.flush();                          // fails → re-queued
+    await m.flush();                          // succeeds
+    assert.deepEqual(store.calls.filter(c => c[0] === 'putObs').map(c => c[1]), [2, 2]);
+
+    // A store that keeps failing: the records are dropped after the retry cap.
+    store.calls.length = 0; fail = Infinity;
+    m.bufferObservation({ time: 3, hash: 'c' });
+    for (let i = 0; i < 5; i++) await m.flush();
+    assert.equal(store.calls.filter(c => c[0] === 'putObs').length, 3, 'three tries, then given up');
+});
+
+test('flush() also persists the totals', async () => {
+    const store = stubStore();
+    const m = new CaptureModel({ store });
+    m.totalsProvider = () => ({ total: 7 });
+    await m.open('db');
+    m.bufferObservation({ time: 1, hash: 'a' });
+    await m.flush();
+    assert.ok(store.calls.some(c => c[0] === 'setKV' && c[1] === 'totals' && c[2].total === 7));
+});
+
+test('a failed write that settles after clearAll() is not re-queued', async () => {
+    const store = stubStore();
+    let release;
+    store.putObs = r => { store.calls.push(['putObs', r.length]); return new Promise(res => { release = () => res([]); }); };
+    const m = new CaptureModel({ store, flushMs: 5 });
+    await m.open('db');
+    m.bufferObservation({ time: 1, hash: 'a' });
+    m.persistNow();                 // write in flight
+    m.clearAll();                   // user clears meanwhile
+    release();                      // …then the write fails
+    await tick(30);
+    assert.equal(store.calls.filter(c => c[0] === 'putObs').length, 1, 'nothing written back');
+});

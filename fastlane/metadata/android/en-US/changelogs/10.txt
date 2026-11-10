@@ -1,0 +1,9 @@
+Version 1.3.3
+
+- Radio tools: TX power, trace (SNR both ways), RX gain, device restart.
+- CLI console for repeaters (USB) and companions (firmware 1.18+).
+- Fixed: empty CSV export / lost import on Xiaomi and others.
+- Fixed: sounds going silent; a filter hiding its own input.
+- Fixed: resumed sessions deleted by Auto-remove; data lost when storage is full.
+- More reliable (re)connecting; dead WiFi links noticed quickly.
+- Charts: local-time labels, cleaner axes; many smaller fixes.

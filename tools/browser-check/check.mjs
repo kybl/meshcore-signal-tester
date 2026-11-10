@@ -52,8 +52,10 @@ function findChromium() {
         try { dirs = fs.readdirSync(r).filter(d => d.startsWith('chromium-') && !d.includes('headless')); } catch { continue; }
         dirs.sort();
         for (const d of dirs.reverse()) {
-            const exe = path.join(r, d, 'chrome-linux', 'chrome');
-            if (fs.existsSync(exe)) return exe;
+            for (const sub of ['chrome-linux', 'chrome-linux64']) {
+                const exe = path.join(r, d, sub, 'chrome');
+                if (fs.existsSync(exe)) return exe;
+            }
         }
     }
     return null;

@@ -159,6 +159,12 @@ export class MapCache {
             // Build the base layer only when absent (Display change drops it).
             // Freshness and expiry are handled in RAM — no periodic rescan.
             if (!this.#base) {
+                // Points that arrived without a base were already buffered to
+                // the store (the app buffers before it upserts), so the flush
+                // puts them on disk and the build below counts them; only the
+                // ones arriving after this point must be replayed — replaying
+                // all of them counted the early ones twice.
+                const flushedPending = this.#pending?.length ?? 0;
                 await this.#model.flush();   // the disk build must include everything buffered
                 const s = await this.#model.regionStats(from, Infinity, null);
                 if (s.count) {
@@ -175,7 +181,7 @@ export class MapCache {
                 // Packets that arrived while there was no base yet (startup race)
                 const pend = this.#pending;
                 this.#pending = null;
-                if (pend) for (const o of pend) this.upsert(o);
+                if (pend) for (const o of pend.slice(flushedPending)) this.upsert(o);
             }
             const base = this.#base;
             const baseLevel = base.cell ? MapLod.levelForCellMeters(base.cell) : Infinity;

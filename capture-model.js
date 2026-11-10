@@ -18,7 +18,7 @@
 // The store is injectable (constructor option) so the model is unit-testable in
 // Node without IndexedDB — see test/capture-model.test.js.
 
-import { PacketStore } from './packet-store.js?v=24';
+import { PacketStore } from './packet-store.js?v=25';
 
 export class CaptureModel {
     #recent = new Map();     // hash → packet aggregate (the RAM window)
@@ -31,6 +31,7 @@ export class CaptureModel {
     #ready = false;          // disk store opened OK
     #dead  = false;          // disk store failed to open — RAM-only session
     #dataVer = 0;            // bumped whenever new records land on disk
+    #epoch = 0;              // bumped by clearAll — a failed write from before must not come back
 
     // Called when the disk store hits the storage quota (forwarded from it).
     onQuotaExceeded = null;
@@ -109,17 +110,42 @@ export class CaptureModel {
     }
 
     // Hand every buffered record to the store, starting all the IndexedDB
-    // transactions synchronously (no await between them).
+    // transactions synchronously (no await between them). A batch whose write
+    // fails (typically the storage quota) goes back into its buffer for the
+    // next flush — after the host has pruned — instead of being lost; each
+    // record gets a few tries so a persistently failing store can't grow the
+    // buffers without bound.
     #writeBuffers() {
         const obs  = this.#obsBuf;  this.#obsBuf  = [];
         const sent = this.#sentBuf; this.#sentBuf = [];
         const hs   = this.#hashBuf; this.#hashBuf = [];
-        if (hs.length)   this.#store.putHashesMerge(hs);   // before obs: readers join obs → hashes; merge keeps disk firstSeen/type/meta
-        if (obs.length)  this.#store.putObs(obs);
-        if (sent.length) this.#store.putSent(sent);
+        const ep = this.#epoch;
+        if (hs.length)   this.#store.putHashesMerge(hs).then(ok => { if (ok === false) this.#requeue('hash', hs, ep); });   // before obs: readers join obs → hashes
+        if (obs.length)  this.#store.putObs(obs).then(r => { if (Array.isArray(r) && !r.length) this.#requeue('obs', obs, ep); });
+        if (sent.length) this.#store.putSent(sent).then(ok => { if (ok === false) this.#requeue('sent', sent, ep); });
         if (obs.length || sent.length || hs.length) this.#dataVer++;
+        this.#writeTotals();
+    }
+
+    #writeTotals() {
         const totals = this.totalsProvider?.();
         if (totals) this.#store.setKV('totals', totals);
+    }
+
+    static #MAX_WRITE_TRIES = 3;
+    #requeue(kind, recs, epoch) {
+        if (this.#dead || epoch !== this.#epoch) return;
+        const keep = [];
+        for (const r of recs) {
+            const tries = (r.__tries ?? 0) + 1;
+            if (tries >= CaptureModel.#MAX_WRITE_TRIES) continue;   // give up on this record
+            Object.defineProperty(r, '__tries', { value: tries, configurable: true, writable: true, enumerable: false });
+            keep.push(r);
+        }
+        if (!keep.length) return;
+        const buf = kind === 'obs' ? this.#obsBuf : kind === 'sent' ? this.#sentBuf : this.#hashBuf;
+        buf.unshift(...keep);
+        this.#scheduleFlush();
     }
 
     // Write everything buffered NOW, without awaiting — for the page being
@@ -140,10 +166,11 @@ export class CaptureModel {
         if (!this.#ready) return;
         if (this.#flushTimer) { clearTimeout(this.#flushTimer); this.#flushTimer = null; }
         const dirty = this.#hashBuf.length || this.#obsBuf.length || this.#sentBuf.length;
-        if (this.#hashBuf.length) { const h = this.#hashBuf; this.#hashBuf = []; await this.#store.putHashesMerge(h); }
-        if (this.#obsBuf.length)  { const o = this.#obsBuf;  this.#obsBuf  = []; await this.#store.putObs(o); }
-        if (this.#sentBuf.length) { const s = this.#sentBuf; this.#sentBuf = []; await this.#store.putSent(s); }
-        if (dirty) this.#dataVer++;
+        const ep = this.#epoch;
+        if (this.#hashBuf.length) { const h = this.#hashBuf; this.#hashBuf = []; if (await this.#store.putHashesMerge(h) === false) this.#requeue('hash', h, ep); }
+        if (this.#obsBuf.length)  { const o = this.#obsBuf;  this.#obsBuf  = []; const r = await this.#store.putObs(o); if (Array.isArray(r) && !r.length) this.#requeue('obs', o, ep); }
+        if (this.#sentBuf.length) { const s = this.#sentBuf; this.#sentBuf = []; if (await this.#store.putSent(s) === false) this.#requeue('sent', s, ep); }
+        if (dirty) { this.#dataVer++; this.#writeTotals(); }
     }
 
     // ---- full on-disk history (async) ---------------------------------------
@@ -170,6 +197,7 @@ export class CaptureModel {
     // Wipe everything this model owns: the recent window, the write buffers,
     // and the on-disk history.
     clearAll() {
+        this.#epoch++;
         this.#recent.clear();
         this.#obsBuf = []; this.#sentBuf = []; this.#hashBuf = [];
         if (this.#flushTimer) { clearTimeout(this.#flushTimer); this.#flushTimer = null; }

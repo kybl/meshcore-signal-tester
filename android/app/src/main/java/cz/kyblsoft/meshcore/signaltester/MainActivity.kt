@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
@@ -42,6 +43,8 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewClientCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.IOException
 import java.util.Locale
 
 // Human-readable byte size in SI (decimal, base-1000) units — B, kB, MB, GB —
@@ -92,13 +95,12 @@ class MainActivity : AppCompatActivity() {
         // Each warning is shown at most once per process lifetime.
         private var batteryCheckShown = false
 
-        // Keys for persisting a pending CSV export across process death while the
-        // SAF "Save as" dialog is open (see onSaveInstanceState).
-        private const val KEY_PENDING_CSV = "pendingCsvContent"
-        private const val KEY_PENDING_CSV_NAME = "pendingCsvName"
-        // A Bundle isn't meant for many-MB payloads; skip persisting very large
-        // exports (accept the rare edge over risking a TransactionTooLarge).
-        private const val MAX_SAVED_CSV_CHARS = 256 * 1024
+        // Name the user picked for an export whose data is staged in the cache
+        // dir while the SAF "Save as" dialog is open (see saveCsvLauncher).
+        private const val PREF_PENDING_CSV_NAME = "pendingCsvName"
+        // A staged import is handed to the page as one string; beyond this the
+        // copies risk running the app out of memory.
+        private const val MAX_STAGED_IMPORT_BYTES = 40L * 1000 * 1000
     }
 
     // ---- scanning state (one picker at a time) ----
@@ -158,7 +160,8 @@ class MainActivity : AppCompatActivity() {
     ) { uri: Uri? ->
         val cb = fileChooserCallback
         fileChooserCallback = null
-        cb?.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+        if (cb != null) cb.onReceiveValue(if (uri != null) arrayOf(uri) else null)
+        else if (uri != null) stageOrphanImport(listOf(uri))
     }
 
     // Multi-file variant, used when the page's <input> has the `multiple`
@@ -170,28 +173,123 @@ class MainActivity : AppCompatActivity() {
     ) { uris: List<Uri> ->
         val cb = fileChooserCallback
         fileChooserCallback = null
-        cb?.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
+        if (cb != null) cb.onReceiveValue(if (uris.isNotEmpty()) uris.toTypedArray() else null)
+        else if (uris.isNotEmpty()) stageOrphanImport(uris)
     }
 
-    // File picker for CSV export — shows "Save as" dialog via SAF
-    private var pendingCsvContent: String? = null
-    private var pendingCsvName: String? = null
+    // The import picker's result arrived at a NEW instance of this activity:
+    // the system destroyed the old one (or killed the process) while the
+    // picker was open — MIUI/HyperOS do this eagerly. The WebView callback
+    // that should receive the files died with the old page, so the import used
+    // to vanish silently. Instead, read the picked files now (the URI grant is
+    // valid for this result) into the cache, and let the reloaded page take
+    // them once it has started (FilesBridge.takePendingImport).
+    private val pendingImportDir get() = File(cacheDir, "pending-import")
+    private fun stageOrphanImport(uris: List<Uri>) {
+        Thread {
+            var staged = 0
+            try {
+                val dir = pendingImportDir.apply { mkdirs() }
+                uris.forEachIndexed { i, uri ->
+                    val name = (displayNameOf(uri) ?: "import-$i.csv").replace('/', '_')
+                    // Write under a .part name and rename when complete: the
+                    // page may ask for staged files while this copy still runs.
+                    val done = File(dir, "%03d-%s".format(Locale.US, i, name))
+                    val part = File(dir, done.name + ".part")
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        part.outputStream().use { input.copyTo(it) }
+                        if (part.renameTo(done)) staged++ else part.delete()
+                    }
+                }
+            } catch (e: Throwable) {
+                runOnUiThread { Toast.makeText(this, "Import failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+            if (staged > 0) runOnUiThread {
+                // Page already up → import now; otherwise its startup takes them.
+                if (::webView.isInitialized)
+                    webView.evaluateJavascript("window.__mcApp && window.__mcApp._takeNativeImports && window.__mcApp._takeNativeImports()", null)
+            }
+        }.start()
+    }
+
+    // Hand ONE staged file to the page as JSON {name, text} ("" when none
+    // is left) — one per call keeps the in-memory copies to a single file.
+    // The file is deleted before it is handed over, so a crash while the page
+    // parses it can't make it come back on every start. Files that are too
+    // big, or were staged long ago (an import the page never took), are
+    // dropped with a message.
+    fun takePendingImportJson(): String {
+        while (true) {
+            val f = pendingImportDir.listFiles { x -> !x.name.endsWith(".part") }
+                ?.minByOrNull { it.name } ?: return ""
+            val name = f.name.substring(4)
+            try {
+                if (System.currentTimeMillis() - f.lastModified() > 15 * 60_000L) { f.delete(); continue }
+                if (f.length() > MAX_STAGED_IMPORT_BYTES) {
+                    f.delete()
+                    runOnUiThread { Toast.makeText(this, "Import of $name failed: file too large — please import it again.", Toast.LENGTH_LONG).show() }
+                    continue
+                }
+                val text = f.readText(Charsets.UTF_8)
+                f.delete()
+                return JSONObject().put("name", name).put("text", text).toString()
+            } catch (e: Throwable) {
+                f.delete()
+                runOnUiThread { Toast.makeText(this, "Import of $name failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    // File picker for CSV export — shows "Save as" dialog via SAF.
+    //
+    // The CSV is staged in a cache file, NOT held in a field of this activity:
+    // the picker is another app, and while it is open the system may destroy
+    // this activity or kill the whole process (MIUI/HyperOS do so eagerly,
+    // more so with a large capture in memory). The result is then delivered
+    // to a NEW instance — where a field would be null, so nothing was written
+    // and the document the picker had already created stayed at 0 bytes,
+    // silently. A file survives both, and streaming it also avoids a second
+    // full in-memory copy of a large export.
+    private val pendingCsvFile get() = File(cacheDir, "pending-export.csv")
     private val saveCsvLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv")
     ) { uri: Uri? ->
-        val content = pendingCsvContent ?: return@registerForActivityResult
-        val suggested = pendingCsvName
-        pendingCsvContent = null
-        pendingCsvName = null
-        if (uri == null) return@registerForActivityResult   // user cancelled the dialog
-        try {
-            // Encode once and reuse for both the write and the reported size.
-            val bytes = content.toByteArray(Charsets.UTF_8)
-            contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-            Toast.makeText(this, "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(bytes.size)}).", Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        val staged = pendingCsvFile
+        val suggested = prefs().getString(PREF_PENDING_CSV_NAME, null)
+        prefs().edit().remove(PREF_PENDING_CSV_NAME).apply()
+        if (uri == null) { staged.delete(); return@registerForActivityResult }   // cancelled
+        // Copy off the main thread — a large export would otherwise freeze the UI.
+        Thread {
+            var saved = false
+            val msg = try {
+                if (!staged.exists()) throw IOException("the export data was lost — please export again")
+                val size = staged.length()
+                val out = contentResolver.openOutputStream(uri)
+                    ?: throw IOException("cannot open the file for writing")
+                out.use { o -> staged.inputStream().use { it.copyTo(o) } }
+                saved = true
+                "File ${displayNameOf(uri) ?: suggested} saved (${formatBytesSI(size.toInt())})."
+            } catch (e: Throwable) {
+                // Don't leave an empty / partial file behind looking like a save.
+                try { DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Throwable) {}
+                "Save failed: ${e.message}"
+            } finally {
+                staged.delete()
+            }
+            runOnUiThread {
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                // Tell the page the capture is saved (disarms its unsaved-data
+                // guard). Only on success; a cancel or failure leaves it armed.
+                if (saved && ::webView.isInitialized)
+                    webView.evaluateJavascript("window.__mcApp && window.__mcApp._onNativeExportSaved && window.__mcApp._onNativeExportSaved()", null)
+            }
+        }.start()
+    }
+
+    // Called on the JS bridge thread (not main): write the export to the
+    // staging file before the picker opens.
+    fun stageCsvExport(content: String) {
+        pendingCsvFile.writeText(content, Charsets.UTF_8)
     }
 
     // Hide/show the system bars while an HTML element is in fullscreen. The
@@ -209,9 +307,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun launchCsvSavePicker(filename: String, content: String) {
-        pendingCsvContent = content
-        pendingCsvName = filename
+    // The CSV has already been staged by stageCsvExport.
+    fun launchCsvSavePicker(filename: String) {
+        prefs().edit().putString(PREF_PENDING_CSV_NAME, filename).apply()
         saveCsvLauncher.launch(filename)
     }
 
@@ -226,6 +324,9 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A fresh start (not a recreation that may be about to receive a
+        // picker result): staged imports from an earlier run are stale.
+        if (savedInstanceState == null) pendingImportDir.deleteRecursively()
 
         webView = WebView(this)
         // True edge-to-edge: the WebView fills the whole window, including behind
@@ -281,27 +382,7 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(appUrl)
         wireBackHandler()
 
-        // Restore a pending CSV export if the process was killed while the SAF
-        // "Save as" dialog was open — otherwise the callback writes a 0-byte file.
-        if (savedInstanceState != null) {
-            pendingCsvContent = savedInstanceState.getString(KEY_PENDING_CSV)
-            pendingCsvName = savedInstanceState.getString(KEY_PENDING_CSV_NAME)
-        }
-
         // Permissions are requested lazily at BLE connect time.
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        // Persist the in-flight CSV content so a process death while the SAF
-        // picker is up doesn't leave the CreateDocument callback with nothing to
-        // write. Size-guarded to stay well under the Binder transaction limit.
-        pendingCsvContent?.let {
-            if (it.length <= MAX_SAVED_CSV_CHARS) {
-                outState.putString(KEY_PENDING_CSV, it)
-                outState.putString(KEY_PENDING_CSV_NAME, pendingCsvName)
-            }
-        }
     }
 
     // Build (or rebuild) this WebView's settings, JS bridges and clients.
@@ -531,6 +612,16 @@ class MainActivity : AppCompatActivity() {
     private fun recreateWebView() {
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
+        // The rebuilt page starts disconnected and knows nothing of the old
+        // page's links: close them (a kept BLE link stops the radio
+        // advertising, so it couldn't be found again), and release the
+        // capture service and the keep-screen-on flag, which the new page
+        // re-acquires when it connects.
+        try { ble.dropConnection() } catch (_: Exception) {}
+        try { serial.dropConnection() } catch (_: Exception) {}
+        try { wifi.close() } catch (_: Exception) {}
+        try { MeshcoreService.stop(this) } catch (_: Exception) {}
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         // Drop any lingering HTML5-fullscreen overlay left over from the old page,
         // and undo its immersive mode — onHideCustomView never runs for a dead
         // renderer, so the system bars would otherwise stay hidden (and the
