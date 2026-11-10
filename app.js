@@ -31,7 +31,10 @@ import * as ChartZoom from './chart-zoom.js?v=1';
 // Custom channel keys can be added the same way: MeshCoreDecoder.addChannelKey(hexKey).
 MeshCoreDecoder.addChannelKey(MeshCoreDecoder.PUBLIC_CHANNEL_KEY);
 
-const APP_VERSION = '1.3.3';
+// Between releases this carries a "-dev" suffix (the version being worked
+// towards), shown highlighted in the header so a test build is never mistaken
+// for a release; the release commit drops the suffix.
+const APP_VERSION = '1.3.4-dev';
 
 // Contact-sync resilience. The companion streams its whole contact list as a
 // burst of frames after one CMD_GET_CONTACTS; over BLE that burst can overflow
@@ -1168,7 +1171,13 @@ class MeshCoreApp {
 
     _initHelpSystem() {
         const verEl = document.getElementById('appVersion');
-        if (verEl) verEl.textContent = 'v' + APP_VERSION;
+        if (verEl) {
+            verEl.textContent = 'v' + APP_VERSION;
+            if (/-/.test(APP_VERSION)) {
+                verEl.classList.add('app-version-dev');
+                verEl.title = `Development build towards ${APP_VERSION.replace(/-.*/, '')} — not a release`;
+            }
+        }
         const HELP = {
             'active':
                 'Unique packets in the current display window. Data outside the window is still stored (see Auto-remove) but not shown (see Display).',

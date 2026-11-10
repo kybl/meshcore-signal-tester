@@ -229,6 +229,16 @@ header {
     margin-left: -2px;
 }
 .app-version:hover { text-decoration: underline; }
+/* Development build: an amber badge, so a test build is never taken for a release. */
+.app-version.app-version-dev {
+    color: #1a1200;
+    background: #e0b653;
+    border-radius: 4px;
+    padding: 0 5px;
+    font-weight: 600;
+    opacity: 1;
+    margin-left: 2px;
+}
 
 .header-stats {
     display: flex;
