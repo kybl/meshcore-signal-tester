@@ -7,6 +7,27 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
+## [1.3.4] - 2026-11-24
+
+### Added
+
+- **The 3D map can be zoomed out to see the surroundings**: zooming out past
+  the map now grows it to cover the visible area (up to ~30 km around), so a
+  repeater several kilometres away can be brought into view. Before, the map
+  covered only the measured spot.
+
+### Fixed
+
+- **Android: CSV import did nothing on some phones (Xiaomi)** where the system
+  file picker reports an exported file as 0 bytes. The app now reads the
+  selected file itself, whatever size is reported.
+- An empty CSV file is now reported instead of being silently ignored.
+
+### Changed
+
+- Development (test) builds show their version as an amber `-dev` badge in the
+  header, so they can't be mistaken for a release.
+
 ## [1.3.3] - 2026-11-10
 
 ### Added
