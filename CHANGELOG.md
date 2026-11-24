@@ -7,7 +7,7 @@
        - a new dated entry below
        - fastlane/metadata/android/en-US/changelogs/<versionCode>.txt -->
 
-## [1.3.4] - 2026-11-24
+## [1.3.4] - 2026-11-25
 
 ### Added
 
